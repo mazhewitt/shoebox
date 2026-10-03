@@ -1,0 +1,63 @@
+schema: spec-driven
+
+# Project context: constraints that guide every artifact. Background and
+# rationale live in handoff.md (original brief) and PLAN.md (agreed plan).
+context: |
+  Shoebox: self-hosted, searchable index of ~210 GB of personal photos
+  (2002–present) from Google Photos (Takeout) and Google Drive scans (rclone).
+
+  Hard constraints
+  - Open-source only. Nothing commercial, proprietary, phoning home, or that
+    locks the archive into a format or service.
+  - Originals are immutable. Nothing writes to originals/; metadata fixes
+    (incl. Takeout sidecar data) live in the DB with per-field provenance.
+  - Evals before scale. No labelling stage runs over the full archive until it
+    passes a gate scored on a frozen ground-truth test split, with thresholds
+    fixed in evals/gates.toml before the run. Report results per stratum
+    (era, capture source, colour/mono), not just overall.
+  - Search is an HTTP API; web UI now and phone app later are thin clients.
+
+  Languages
+  - Rust for anything fast or long-running: shoebox-api (Axum), shoebox-scan,
+    shoebox-worker, shared shoebox-core.
+  - Python (uv) for pipeline CLIs, model runners and evals. Batch CLIs and
+    supervised runners only (JSONL over stdin/stdout); no Python daemons or
+    services.
+  - TypeScript for the web UI.
+
+  Machines and data rules
+  - Synology NAS (older x86, Docker): storage, SQLite, API, serving. Assume no
+    model inference on it until Phase 0 recon says otherwise.
+  - M1 Mac Studio: always-on incremental worker. M5 Max: one-off bulk run.
+  - SQLite is opened only by processes on the NAS; shoebox-api is the single
+    writer. Other machines use HTTP or drop Parquet bundles in results/.
+  - Assets are keyed by BLAKE3 of the original bytes. Every model output
+    carries model_id + params_hash; a model change means a new model_id,
+    a re-eval, and an explicit backfill, never silent mixing.
+  - Never delete source media; duplicates are grouped with a canonical member.
+  - Auth: trust only the Cloudflare Access JWT, verified against the team JWKS.
+
+  Human labels (face names, eval ground truth) are the most irreplaceable data;
+  any design that stores them must cover their backup.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always state what is out of scope
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
+
+# Per-operation guidance (optional)
+# Add advisory guidance for how apply and archive work should be conducted.
+# This is separate from artifact rules above.
+# Example:
+#   operations:
+#     apply:
+#       guidance:
+#         - Keep test summaries concise
+#     archive:
+#       guidance:
+#         - Summarize the archive outcome before finishing
