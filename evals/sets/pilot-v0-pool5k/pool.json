@@ -1,0 +1,47 @@
+{
+  "base_set": "pilot-v0",
+  "frame": {
+    "path": "/Users/mazhewitt/mnt/shoebox/frame/frame-2026-10-10.parquet",
+    "sha256": "3a846cbd30479b2d91062f7cc5bbec02345a4517d7acaf6510196001e9d7ad95",
+    "rows": 80497
+  },
+  "seed": 20261010,
+  "n_requested": 5000,
+  "n_drawn": 5000,
+  "eligible_assets": 52322,
+  "draw": "numpy.random.default_rng(seed).choice over the sorted eligible asset_ids, without replacement; written sorted by asset_id",
+  "dedupe": "one row per asset_id: the smallest (source, relpath) among its eligible paths",
+  "eligibility": {
+    "not_image": "kind == 'image'",
+    "status_not_ok": "status == 'ok'",
+    "no_asset_id": "asset_id is not null",
+    "unrenderable": "ext has a derive decoder and src_kind in ['heif', 'jpeg', 'png', 'psd', 'raw', 'tiff', 'webp']",
+    "unknown_source": "source is in config/shoebox.toml",
+    "not_owner_source": "the source's person is 'owner' (others' photos are never drawn)",
+    "base_set": "asset_id is not in the base set",
+    "never_send": "not on evals/never-send.txt (asset_id or path glob, shoebox.privacy parsing)",
+    "target_group": "not in a frame capture group (group_id) that holds a target",
+    "never_send_group": "not in a frame capture group that holds a never-send path",
+    "too_large": "bytes <= 629145600 (shoebox.pilot.select.MAX_BYTES)"
+  },
+  "asset_level_reasons": [
+    "unknown_source",
+    "not_owner_source",
+    "base_set",
+    "never_send",
+    "target_group",
+    "never_send_group"
+  ],
+  "max_bytes": 629145600,
+  "never_send_sha256": "85c509f683032f35d09e1170bf91819c7c982f8f88a4d809a1149e4a9b3139d4",
+  "exclusions": {
+    "not_image": 8875,
+    "status_not_ok": 29,
+    "unrenderable": 101,
+    "base_set": 73,
+    "target_group": 2,
+    "too_large": 3,
+    "copy_excluded": 2
+  },
+  "duplicate_paths": 19090
+}
