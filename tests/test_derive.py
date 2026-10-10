@@ -842,3 +842,19 @@ def test_cli_workers_flag(env, tmp_path, capsys):
     f = _write_items(tmp_path, items)
     assert main(["derive", "--profile", PROFILE, "--items", str(f), "--workers", "3"]) == 0
     assert "ok 6" in capsys.readouterr().out
+
+
+def test_jpeg_named_nef_is_decoded_as_jpeg(env):
+    """Old Google Photos exports hold JPEGs saved with .NEF/.DNG names; go by content, not extension."""
+    cfg, src = env
+    rgb = np.full((40, 60, 3), (200, 40, 40), np.uint8)
+    Image.fromarray(rgb).save(src / "DSC_7123.NEF", format="JPEG", quality=95)
+    rec = _derive_one(cfg, src, "DSC_7123.NEF")
+    assert rec["status"] == "ok", rec["error"]
+    assert (rec["src_kind"], rec["rendered_from"]) == ("jpeg", "decoded")
+
+
+def test_content_kind_leaves_tiff_based_raws_alone():
+    assert derive.content_kind(b"II*\x00" + b"\x00" * 12) is None  # NEF/DNG are TIFF containers
+    assert derive.sniff_kind(b"II*\x00" + b"\x00" * 12, "NEF") == "raw"
+    assert derive.sniff_kind(b"\xff\xd8\xff\xe0" + b"\x00" * 12, "dng") == "jpeg"

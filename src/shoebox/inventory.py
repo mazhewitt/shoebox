@@ -315,7 +315,7 @@ def decode_thumb(data: bytes | None, ext: str, settings: dict, path: Path | None
     `data` is the file's bytes; `None` means too large to hold, so libvips reads `path` instead.
     Raws use their embedded preview (else a half-size LibRaw render); PSDs their merged composite.
     """
-    kind = SRC_KIND.get(ext)
+    kind = (derive.content_kind(data) if data is not None else None) or SRC_KIND.get(ext)
     if data is not None and kind == "raw":
         return {**_thumb_raw(data, settings), "src_kind": "raw"}
     if data is not None and kind == "psd":
@@ -633,6 +633,7 @@ class Options:
     date: str = field(default_factory=lambda: datetime.now().date().isoformat())
     out_dir: Path | None = None
     resume: bool = False
+    retry_errors: bool = False  # with resume: probe again files whose record is an error
     lister: Lister = scandir_list
     exiftool: str = "exiftool"
     # Local scratch for ExifTool's copies (default: a fresh dir under the system temp dir).
@@ -645,8 +646,10 @@ class Options:
     after_run: Callable[[], None] | None = None
 
 
-def load_checkpoint(path: Path) -> dict[tuple, dict]:
-    """Records by (source, relpath, bytes, mtime); an unparseable (torn) line is skipped."""
+def load_checkpoint(path: Path, retry_errors: bool = False) -> dict[tuple, dict]:
+    """Records by (source, relpath, bytes, mtime), the latest line per key winning; an unparseable
+    (torn) line is skipped. With `retry_errors`, keys whose latest record is an error are left out,
+    so the run probes them again (its new record is appended and wins)."""
     out: dict[tuple, dict] = {}
     if path.exists():
         for line in path.read_text().splitlines():
@@ -655,6 +658,8 @@ def load_checkpoint(path: Path) -> dict[tuple, dict]:
                 out[(r["source"], r["relpath"], r["bytes"], r["mtime"])] = r
             except (json.JSONDecodeError, KeyError, TypeError):
                 continue
+    if retry_errors:
+        out = {k: r for k, r in out.items() if r.get("status") != "error"}
     return out
 
 
@@ -715,7 +720,7 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
     before["started"] = started
     before["dirs"] = {f"{n}:{rel}": listing for n in names for rel, listing in walks[n].dirs.items()}
 
-    done = load_checkpoint(ckpt) if opts.resume else {}
+    done = load_checkpoint(ckpt, opts.retry_errors) if opts.resume else {}
     todo = [f for f in files if f.key not in done]
     log(f"{len(files)} files, {len(files) - len(todo)} already recorded, {len(todo)} to do")
     settings = derive.load_profile("infer-v1")

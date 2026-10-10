@@ -413,3 +413,27 @@ def test_exiftool_reads_local_copies_and_cleans_them(env, tmp_path, monkeypatch)
     assert exif["ExifIFD:DateTimeOriginal"] == "2004:05:06 07:08:09"
     assert not any(k.startswith("System:") for k in exif)
     assert row["asset_id"] == ids.asset_id(trip / "exif.jpg")
+
+
+def test_jpeg_named_nef_probed_as_jpeg_and_retry_errors(env, monkeypatch):
+    """A JPEG with a .NEF name decodes as JPEG; --retry-errors re-probes only error records."""
+    cfg, src, out = env
+    d = src / "Pictures" / "Google Photos" / "2005"
+    d.mkdir(parents=True)
+    _jpeg(d / "tmp.jpg")
+    (d / "tmp.jpg").rename(d / "DSC_7123.NEF")
+    real = inventory.decode_thumb
+    monkeypatch.setattr(inventory, "decode_thumb", lambda *a, **k: (_ for _ in ()).throw(ValueError("boom")))
+    _run(cfg, out)
+    rel = f"{d.relative_to(src)}/DSC_7123.NEF"
+    first = _rows(out)
+    errors_before = {p for p, r in first.items() if r["status"] == "error"}
+    assert rel in errors_before
+    monkeypatch.setattr(inventory, "decode_thumb", real)
+    probed = []
+    real_probe = inventory.probe
+    monkeypatch.setattr(inventory, "probe", lambda cfg_, f, *a, **k: probed.append(f.relpath) or real_probe(cfg_, f, *a, **k))
+    _run(cfg, out, resume=True, retry_errors=True)
+    row = _rows(out)[rel]
+    assert (row["status"], row["src_kind"]) == ("ok", "jpeg")
+    assert set(probed) == errors_before  # only the error records were probed again

@@ -223,9 +223,39 @@ def load_index(cfg: Config, profile: str) -> dict[str, dict]:
 # --- rendering ------------------------------------------------------------------
 
 
+_HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1", b"avif", b"avis")
+
+
+def content_kind(data: bytes) -> str | None:
+    """The kind the bytes plainly are (JPEG, PNG, HEIF, WebP, PSD), else None.
+
+    TIFF magic is deliberately not a kind here: most raws (NEF, DNG, ...) are TIFF containers.
+    """
+    if data[:3] == b"\xff\xd8\xff":
+        return "jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if data[4:8] == b"ftyp" and data[8:12] in _HEIF_BRANDS:
+        return "heif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    if data[:4] == b"8BPS":
+        return "psd"
+    return None
+
+
+def sniff_kind(data: bytes, ext: str) -> str | None:
+    """Decode kind: what the bytes plainly are, else what the extension says.
+
+    The archive holds JPEGs saved with .NEF/.DNG names (old Google Photos exports); by extension
+    they went to LibRaw and failed.
+    """
+    return content_kind(data) or KIND_BY_EXT.get(ext.lower().lstrip("."))
+
+
 def render(data: bytes, ext: str, settings: dict) -> Rendered:
     """Render an original's bytes to the profile's JPEG. Raises DecodeError or pyvips.Error."""
-    kind = KIND_BY_EXT.get(ext.lower().lstrip("."))
+    kind = sniff_kind(data, ext)
     if kind is None:
         raise DecodeError(f"unsupported file type .{ext}")
     if kind == "raw":

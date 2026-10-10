@@ -17,6 +17,8 @@ def register(sub) -> None:
     p.add_argument("--date", default=None, help="run date YYYY-MM-DD (default today); names the outputs")
     p.add_argument("--out-dir", type=Path, default=None, help="default <shoebox_root>/frame")
     p.add_argument("--resume", action="store_true", help="continue work-<date>/records.jsonl")
+    p.add_argument("--retry-errors", action="store_true",
+                   help="with --resume: probe again the files whose latest record is an error")
     p.set_defaults(func=cmd_run)
     isub = p.add_subparsers(dest="inventory_command", required=False)
     r = isub.add_parser("readme", help="write the frame summary README (no photo file names)")
@@ -28,7 +30,7 @@ def register(sub) -> None:
 
 def cmd_run(args) -> int:
     opts = inventory.Options(sources=args.sources, only=args.only, workers=args.workers, out_dir=args.out_dir,
-                             resume=args.resume)
+                             resume=args.resume, retry_errors=args.retry_errors)
     if args.date:
         opts.date = args.date
     try:
