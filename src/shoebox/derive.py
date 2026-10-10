@@ -125,7 +125,7 @@ class Rendered:
     src_height: int
     src_bits: int
     src_kind: str
-    rendered_from: str  # decoded | raw | composite
+    rendered_from: str  # decoded | libheif | raw | composite
     tone: dict  # clip check: see _tone_check
 
 
@@ -233,8 +233,13 @@ def render(data: bytes, ext: str, settings: dict) -> Rendered:
     elif kind == "psd":
         (img, bits), src_from = _decode_psd(data), "composite"
     else:
-        img, kind, bits = _decode_vips(data, settings)
-        src_from = "decoded"
+        try:
+            img, kind, bits = _decode_vips(data, settings)
+            src_from = "decoded"
+        except pyvips.Error:
+            if data[4:8] != b"ftyp":
+                raise
+            (img, bits), kind, src_from = _decode_heif_libheif(data), "heif", "libheif"
     src_w, src_h = img.width, img.height
     img = _flatten(img)
     tonal = img.bands in (1, 3) and img.interpretation not in _NON_TONAL
@@ -273,11 +278,41 @@ def _decode_vips(data: bytes, settings: dict) -> tuple[pyvips.Image, str, int]:
     loader = img.get("vips-loader")
     if loader not in KIND_BY_LOADER:
         raise DecodeError(f"unsupported format (libvips loader {loader})")
+    if loader == "heifload_buffer":
+        img = img.copy_memory()  # an HEVC HEIC only fails here, when pixels are read
     if img.get_typeof("bits-per-sample"):
         bits = int(img.get("bits-per-sample"))
     else:
         bits = _BITS_BY_FORMAT.get(img.format, 8)
     return img.autorot(), KIND_BY_LOADER[loader], bits
+
+
+def _decode_heif_libheif(data: bytes) -> tuple[pyvips.Image, int]:
+    """HEIF/HEIC via pillow-heif's libheif: this libvips build has no HEVC decoder (iPhone HEICs).
+
+    libheif applies the HEIF orientation transforms itself; the embedded ICC profile (often
+    Display P3) is attached so `_to_srgb8` converts it like any other. Decoded at 8 bits;
+    `bits` is the source's own bit depth.
+    """
+    import pillow_heif
+
+    try:
+        hf = pillow_heif.open_heif(data, convert_hdr_to_8bit=True)
+    except Exception as e:  # libheif errors become a decode error
+        raise DecodeError(f"libheif: {type(e).__name__}: {e}") from e
+    mode = hf.mode
+    arr = np.asarray(hf)
+    if arr.ndim == 2:
+        arr = arr[:, :, None]
+    img = pyvips.Image.new_from_array(np.ascontiguousarray(arr)).copy(
+        interpretation="srgb" if arr.shape[2] >= 3 else "b-w"
+    )
+    icc = hf.info.get("icc_profile")
+    if icc:
+        img = img.copy()
+        img.set_type(pyvips.GValue.blob_type, "icc-profile-data", bytes(icc))
+    bits = int(hf.info.get("bit_depth") or (16 if mode.endswith(";16") else 8))
+    return img, bits
 
 
 def _decode_raw(data: bytes, raw_settings: dict) -> tuple[pyvips.Image, int]:

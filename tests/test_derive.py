@@ -326,6 +326,24 @@ def test_heif_avif_decoded(env):
     )
 
 
+def test_heic_hevc_decoded_via_libheif_when_vips_cannot(env):
+    """iPhone-style HEVC HEIC: this libvips has no HEVC decoder, so pillow-heif's libheif decodes it."""
+    import pillow_heif
+
+    cfg, src = env
+    rgb = np.full((64, 96, 3), (30, 120, 220), np.uint8)
+    buf = io.BytesIO()
+    pillow_heif.register_heif_opener()
+    Image.fromarray(rgb).save(buf, format="HEIF", quality=95)
+    (src / "h.heic").write_bytes(buf.getvalue())
+    rec = _derive_one(cfg, src, "h.heic")
+    assert rec["status"] == "ok", rec["error"]
+    assert rec["src_kind"] == "heif" and (rec["width"], rec["height"]) == (96, 64)
+    assert rec["src_bits"] == 8
+    _, arr, _ = _out(cfg, rec)
+    assert np.abs(arr.reshape(-1, 3).mean(0) - (30, 120, 220)).max() < 6
+
+
 def test_long_edge_capped_and_never_upscaled(env):
     cfg, src = env
     big = np.random.default_rng(2).integers(0, 255, (3000, 5000, 3), dtype=np.uint8)
@@ -805,7 +823,12 @@ def test_workers_match_serial_records_and_hashes(env, tmp_path):
     got = derive.load_index(cfg, PROFILE)
     assert (par.ok, par.error, par.skipped, par.flagged) == (serial.ok, serial.error, serial.skipped, serial.flagged)
     assert (par.ok, par.error) == (6, 1)
-    assert got == want  # same records (and derived_blake3) per asset
+    # libvips keeps one process-wide error buffer, so a failed decode's message can carry text
+    # from other threads' decodes; compare error records without their message text.
+    def strip(idx):
+        return {a: {**r, "error": bool(r["error"])} for a, r in idx.items()}
+
+    assert strip(got) == strip(want)  # same records (and derived_blake3) per asset
     lines = path.read_text().splitlines()
     assert len(lines) == len(items) and all(json.loads(line)["asset_id"] for line in lines)
     assert len(logged) == len(items)
