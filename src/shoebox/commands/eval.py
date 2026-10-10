@@ -1,4 +1,7 @@
-"""`shoebox eval`: generate Vally specs from a set (`gen`) and report on Vally results (`report`)."""
+"""`shoebox eval`: generate Vally specs from a set (`gen`) and report on Vally results (`report`).
+
+Known-item search: `search-queries`, `search-run`, `gen-search` and `search-report` (docs/evals.md).
+"""
 
 import json
 import os
@@ -73,6 +76,126 @@ def register(sub) -> None:
     r.add_argument("--date", default=None, help="run date YYYY-MM-DD (default today)")
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
     r.set_defaults(func=_report)
+    _register_search(esub)
+
+
+def _register_search(esub) -> None:
+    from shoebox.evals import search
+
+    q = esub.add_parser("search-queries",
+                        help="write evals/sets/<set>/search-known-item.jsonl from the owner's label notes")
+    q.add_argument("--set", required=True, dest="set_name")
+    q.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    q.set_defaults(func=_search_queries)
+
+    s = esub.add_parser("search-run",
+                        help="rank the set for every query along each route; write results/search/<set>/")
+    s.add_argument("--set", required=True, dest="set_name")
+    s.add_argument("--routes", default=None,
+                   help="comma-separated routes (default: eg2-image@768,256 and every route of --candidates)")
+    s.add_argument("--candidates", default=",".join(search.VLM_CANDIDATES),
+                   help="VLM label candidates for the default routes")
+    s.add_argument("--no-sensitivity", action="store_true", help="omit the eg2-blend@w0.3/0.7 routes")
+    s.add_argument("--embed-candidate", default=search.EMBED_CANDIDATE)
+    s.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    s.set_defaults(func=_search_run)
+
+    g = esub.add_parser("gen-search",
+                        help="write evals/vally/generated/<set>-search/eval.yaml and routes.json")
+    g.add_argument("--set", required=True, dest="set_name")
+    g.add_argument("--routes", default=None, help="comma-separated routes (default: every indexed route)")
+    g.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    g.add_argument("--out-dir", type=Path, default=None, help="default evals/vally/generated/<set>-search")
+    g.add_argument("--index", type=Path, default=None,
+                   help="rankings index (default <shoebox_root>/results/search/<set>/index.json)")
+    g.set_defaults(func=_gen_search)
+
+    r = esub.add_parser("search-report",
+                        help="write evals/runs/<date>_<set>-search.json and .md from a Vally results.jsonl")
+    r.add_argument("--results", required=True, type=Path)
+    r.add_argument("--routes-file", type=Path, default=None,
+                   help="routes.json (default: the one recorded in the trials)")
+    r.add_argument("--date", default=None, help="run date YYYY-MM-DD (default today)")
+    r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
+    r.set_defaults(func=_search_report)
+
+
+def _cfg():
+    return config.load(Path(os.environ.get("SHOEBOX_CONFIG", config.CONFIG_PATH)))
+
+
+def _split(value: str | None) -> list[str]:
+    return [v.strip() for v in (value or "").split(",") if v.strip()]
+
+
+def _search_queries(args) -> int:
+    from shoebox.evals import search
+
+    try:
+        path, qb = search.write_queries(args.sets_dir / args.set_name)
+    except FileNotFoundError as e:
+        print(f"shoebox eval search-queries: {e}", file=sys.stderr)
+        return 2
+    rel = sorted(len(q["relevant"]) for q in qb.queries)
+    print(f"wrote {path}: {len(qb.queries)} queries (relevant sizes { {n: rel.count(n) for n in sorted(set(rel))} }), "
+          f"{len(qb.items_without_note)} items without a note")
+    for qid, groups in qb.merged_groups.items():
+        print(f"  {qid}: identical note on {len(groups)} groups/items; relevant set is their union")
+    return 0
+
+
+def _search_run(args) -> int:
+    from shoebox.evals import search
+
+    names = _split(args.routes) or search.default_routes(_split(args.candidates), not args.no_sensitivity)
+    try:
+        routes = [search.parse_route(n) for n in names]
+        src = search.load_sources(_cfg(), args.set_name, routes, args.sets_dir, args.embed_candidate)
+    except (ValueError, FileNotFoundError, RuntimeError) as e:
+        print(f"shoebox eval search-run: {e}", file=sys.stderr)
+        return 2
+    res = search.run_routes(_cfg(), src, routes)
+    for name, e in res.written.items():
+        print(f"{name:32} {e['params_hash']}  {e['n_queries']} queries  {e['path']}")
+    for name, why in res.skipped.items():
+        print(f"skipped {name}: {why}", file=sys.stderr)
+    if res.index_path:
+        print(f"updated {res.index_path}")
+    return 1 if res.skipped or not res.written else 0
+
+
+def _gen_search(args) -> int:
+    from shoebox.evals import search
+
+    cfg = _cfg()
+    names = _split(args.routes)
+    if not names:
+        index = args.index or search.search_dir(cfg, args.set_name) / "index.json"
+        names = sorted(json.loads(index.read_text())["routes"]) if index.exists() else []
+    try:
+        res = search.generate_spec(cfg, args.set_name, names, args.sets_dir, args.out_dir, args.index)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval gen-search: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {res.spec_path} ({res.stimuli} stimuli)")
+    print(f"wrote {res.routes_path} ({len(res.routes)} routes); run with --model {','.join(res.routes)}")
+    return 0 if res.stimuli and res.routes else 1
+
+
+def _search_report(args) -> int:
+    from shoebox.evals import search
+
+    if not args.results.exists():
+        print(f"no such results file: {args.results}", file=sys.stderr)
+        return 2
+    try:
+        jpath, mpath, _ = search.write_report(args.results, args.out_dir, args.date, args.routes_file)
+    except ValueError as e:
+        print(f"shoebox eval search-report: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {jpath}")
+    print(f"wrote {mpath}")
+    return 0
 
 
 def _gen(args) -> int:

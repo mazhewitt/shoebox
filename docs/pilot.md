@@ -8,7 +8,7 @@ An unscored, end-to-end pilot over about 45 hand-recipe files from `ImportantFil
 
 - **Sources are read-only.** Read originals only through `~/mnt/importantfiles-ro` (the `shoebox` user's `rdonly` mount). Never write, create temp files or open SQLite under a source root. Never use the `/Volumes/*` mounts: they're the admin user's and writable.
 - **Writes go to** `shoebox_root` (`~/mnt/shoebox`, from `config/shoebox.toml`) or to the repo. Image bytes never go in the repo.
-- **No photo leaves the machine.** The only model endpoint is the local Ollama on port 11434, plus local Python libraries. *(Integration note: code uses `http://127.0.0.1:11434` with proxy environment variables ignored, from `shoebox.runners.ollama.HOST`.)* Agents working on this code don't open or view owner photos or derived images. They check them numerically (size, mode, histograms, hashes). Synthetic test fixtures are fine.
+- **No photo leaves the machine.** The only model endpoint is the local Ollama on port 11434, plus local Python libraries. *(Integration note: code uses `http://127.0.0.1:11434` with proxy environment variables ignored, from `shoebox.runners.ollama.HOST`.)* **Viewing by Claude:** on 2026-10-10 the owner agreed that Claude may view their photos, after reading Anthropic's privacy policy. Claude prefers the derived infer-v1 JPEGs to originals. It never views items on `evals/never-send.txt`, and never views sources whose person hasn't consented (Jude, Kyra, Toren: default no). Otherwise, check images numerically where that's enough. Synthetic test fixtures are fine.
 - **One guard implementation:** `shoebox.config.original_path(cfg, item)` (read an original: refuses `/Volumes`, `..`, and symlinks out of the source root) and `shoebox.config.check_write_location(cfg, path)` (refuses writes under `/Volumes` or a source root). Every component uses these.
 - **Code layout:** Python is `src/shoebox/`. Subcommands are `src/shoebox/commands/<name>.py` with `register(subparsers)`. Tests are `tests/`. Run everything with `uv run`.
 
@@ -98,6 +98,7 @@ JSON Schema, draft 2020-12. Model output is an object with:
 | `shoebox embed run --candidate eg2-bf16 --items <jsonl>` and `shoebox embed search --candidate eg2-bf16 "query"` | EmbeddingGemma 2, if it can be obtained |
 | `shoebox eval gen --set pilot-v0 --candidates a,b,c` | writes `evals/vally/generated/pilot-v0/eval.yaml` and `candidates.json` |
 | `shoebox eval report --results <vally results.jsonl>` | writes `evals/runs/<date>_pilot-v0.json` and `.md` |
+| `shoebox eval search-queries / search-run / gen-search / search-report --set pilot-v0` | known-item search eval: owner notes → queries, rankings under `<shoebox_root>/results/search/`, Vally stimuli, `evals/runs/<date>_pilot-v0-search.{json,md}` (see `docs/evals.md`) |
 | `shoebox pilot sheet` | writes `<shoebox_root>/results/pilot-v0/sheet.html`, a local contact sheet and blind labelling form that exports `labels.jsonl` |
 
 ### 7. Owner labels (optional for the pilot): `evals/sets/pilot-v0/labels.jsonl`

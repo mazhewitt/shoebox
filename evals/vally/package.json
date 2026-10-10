@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Shoebox eval execution layer: Vally executor and grader plugins (replay the keyed label store).",
+  "description": "Shoebox eval execution layer: Vally executor and grader plugins (replay the keyed label store and stored search rankings).",
   "engines": {
     "node": ">=24"
   },
@@ -16,6 +16,9 @@
     "lint": "VALLY_TELEMETRY_OPTOUT=1 vally lint -e generated/${SET:-pilot-v0}/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --strict",
     "eval": "VALLY_TELEMETRY_OPTOUT=1 vally eval -e generated/${SET:-pilot-v0}/eval.yaml --executor-plugin $PWD/plugins/shoebox-vlm.js --grader-plugin $PWD/plugins/shoebox-graders.js --output-dir ${VALLY_OUT:-$HOME/mnt/shoebox/results/vally/${SET:-pilot-v0}} --workers 1",
     "grade": "VALLY_TELEMETRY_OPTOUT=1 vally grade -e generated/${SET:-pilot-v0}/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --output jsonl",
+    "lint:search": "VALLY_TELEMETRY_OPTOUT=1 vally lint -e generated/${SET:-pilot-v0}-search/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --strict",
+    "eval:search": "VALLY_TELEMETRY_OPTOUT=1 vally eval -e generated/${SET:-pilot-v0}-search/eval.yaml --executor-plugin $PWD/plugins/shoebox-search.js --grader-plugin $PWD/plugins/shoebox-graders.js --output-dir ${VALLY_OUT:-$HOME/mnt/shoebox/results/vally/${SET:-pilot-v0}-search} --workers 1",
+    "grade:search": "VALLY_TELEMETRY_OPTOUT=1 vally grade -e generated/${SET:-pilot-v0}-search/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --output jsonl",
     "serve": "VALLY_TELEMETRY_OPTOUT=1 vally serve"
   },
   "vally": {
