@@ -390,3 +390,26 @@ def test_cli_inventory_and_readme(env, tmp_path, monkeypatch, capsys):
     readme = tmp_path / "README.md"
     assert main(["inventory", "readme", "--frame", str(out / "frame-2026-10-10.parquet"), "--out", str(readme)]) == 0
     assert "Takeout" in readme.read_text()
+
+
+def test_exiftool_reads_local_copies_and_cleans_them(env, tmp_path, monkeypatch):
+    """ExifTool runs on local copies made during the single read, which are deleted afterwards."""
+    cfg, src, out = env
+    trip = src / "Pictures" / "2004 Trip"
+    scratch = tmp_path / "exif-scratch"
+    seen = []
+    real = inventory.exiftool_batch
+
+    def spy(paths, exe="exiftool"):
+        seen.extend(paths)
+        return real(paths, exe)
+
+    monkeypatch.setattr(inventory, "exiftool_batch", spy)
+    _run(cfg, out, tmp_dir=scratch)
+    assert seen and all(Path(p).parent == scratch for p in seen)
+    assert list(scratch.iterdir()) == []
+    row = _rows(out)[f"{trip.relative_to(src)}/exif.jpg"]
+    exif = json.loads(row["exif"])
+    assert exif["ExifIFD:DateTimeOriginal"] == "2004:05:06 07:08:09"
+    assert not any(k.startswith("System:") for k in exif)
+    assert row["asset_id"] == ids.asset_id(trip / "exif.jpg")

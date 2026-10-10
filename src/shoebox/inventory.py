@@ -25,9 +25,11 @@ import json
 import os
 import random
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
@@ -36,6 +38,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
+import blake3
 import pyvips
 
 from shoebox import derive, ids
@@ -76,8 +79,12 @@ SAMPLE_N = 200
 SIDECAR_MAX_BYTES = 4 << 20
 THUMB = 256
 # Dropped from the stored ExifTool record: where the file is (already columns) and tool noise.
-EXIF_DROP = {"SourceFile", "ExifTool:ExifToolVersion", "System:Directory", "System:FileName",
-             "System:FilePermissions", "System:FileAccessDate", "System:FileInodeChangeDate"}
+# ExifTool reads a local temporary copy (see `probe`), so every System: tag describes that copy,
+# not the original; the inventory records the original's own name, size and mtime itself.
+EXIF_DROP = {"SourceFile", "ExifTool:ExifToolVersion"}
+EXIF_DROP_GROUPS = ("System:",)
+TMP_CAP_BYTES = 8 << 30  # stop starting probes while this much copy data awaits ExifTool
+_CHUNK = 8 << 20
 
 Log = Callable[[str], None]
 Lister = Callable[[Path], list[os.DirEntry]]
@@ -351,8 +358,33 @@ def blank_record(f: FileStat) -> dict:
             "exif": None}
 
 
-def probe(cfg: Config, f: FileStat, settings: dict, max_read: int) -> dict:
-    """Read, hash and decode one file (media and Takeout sidecars only; everything else is stat only)."""
+def _copy_and_hash(path: Path, dst: Path, keep_max: int) -> tuple[str, bytes | None]:
+    """Stream `path` once: BLAKE3 it and write a local copy at `dst` (for ExifTool).
+
+    Returns the hash and, when the file is at most `keep_max` bytes, its bytes for decoding.
+    """
+    h = blake3.blake3()
+    keep: list[bytes] | None = []
+    size = 0
+    with open(path, "rb") as src, open(dst, "wb") as out:
+        while chunk := src.read(_CHUNK):
+            h.update(chunk)
+            out.write(chunk)
+            size += len(chunk)
+            if keep is not None:
+                keep.append(chunk)
+                if size > keep_max:
+                    keep = None
+    return h.hexdigest(), (b"".join(keep) if keep is not None else None)
+
+
+def probe(cfg: Config, f: FileStat, settings: dict, max_read: int, tmp_dir: Path | None = None) -> dict:
+    """Read, hash and decode one file (media and Takeout sidecars only; everything else is stat only).
+
+    Media is read from the source exactly once. With `tmp_dir`, that one read also writes a local
+    copy (`rec["_tmp"]`) that ExifTool reads instead of the SMB original: ExifTool's many small
+    reads over SMB queue behind the probes' bulk reads and ran at about one file a second.
+    """
     rec = blank_record(f)
     if f.kind not in ("image", "video") and not (f.kind == "sidecar" and f.ext == "json"):
         return rec
@@ -366,16 +398,22 @@ def probe(cfg: Config, f: FileStat, settings: dict, max_read: int) -> dict:
             ts = taken.get("timestamp") if isinstance(taken, dict) else None
             rec["taken_ts"] = int(ts) if ts not in (None, "") else None
             return rec
-        if f.kind == "video" or f.bytes > max_read:
-            data = None
+        if tmp_dir is not None:
+            tmp = Path(tempfile.mkstemp(dir=tmp_dir, suffix="." + (f.ext or "bin"))[1])
+            rec["_tmp"] = str(tmp)
+            keep = -1 if f.kind == "video" else max_read
+            rec["asset_id"], data = _copy_and_hash(path, tmp, keep)
+            local = tmp
+        elif f.kind == "video" or f.bytes > max_read:
+            data, local = None, path
             rec["asset_id"] = ids.asset_id(path)
         else:
-            data = path.read_bytes()  # read once: hash and decode from memory
+            data, local = path.read_bytes(), path  # read once: hash and decode from memory
             rec["asset_id"] = ids.bytes_id(data)
         rec["status"] = "ok"
         if f.kind == "video":
             return rec
-        d = decode_thumb(data, f.ext, settings, path)
+        d = decode_thumb(data, f.ext, settings, local)
         stats = chroma_stats(d["thumb"])
         rec.update(width=d["width"], height=d["height"], bits=d["bits"], grey=d["grey"], src_kind=d["src_kind"],
                    chroma_mean=stats["cmean"], chroma_median=stats["c50"], chroma_p95=stats["c95"],
@@ -392,7 +430,7 @@ def probe(cfg: Config, f: FileStat, settings: dict, max_read: int) -> dict:
 def clean_exif(d: dict) -> dict:
     """Drop binary blobs, thumbnails and location fields already held in columns."""
     return {k: v for k, v in d.items()
-            if k not in EXIF_DROP and not (isinstance(v, str) and v.startswith("(Binary data"))
+            if k not in EXIF_DROP and not k.startswith(EXIF_DROP_GROUPS) and not (isinstance(v, str) and v.startswith("(Binary data"))
             and not k.endswith(("ThumbnailImage", "PreviewImage", "JpgFromRaw", "OtherImage"))}
 
 
@@ -409,8 +447,12 @@ def exiftool_batch(paths: list[Path], exe: str = "exiftool") -> dict[str, dict]:
 
 
 def attach_exif(cfg: Config, recs: list[dict], exe: str) -> list[dict]:
+    """ExifTool each record's local copy (`_tmp`, deleted afterwards), else its original."""
     paths = {}
     for r in recs:
+        if r.get("_tmp"):
+            paths[r["_tmp"]] = r
+            continue
         try:
             paths[str(original_path(cfg, r))] = r
         except ValueError as e:
@@ -423,6 +465,9 @@ def attach_exif(cfg: Config, recs: list[dict], exe: str) -> list[dict]:
             r["error"] = r["error"] or f"exiftool: {_short(e)}"
     for p, r in paths.items():
         r["exif"] = got.get(p)
+    for r in recs:
+        if tmp := r.pop("_tmp", None):
+            Path(tmp).unlink(missing_ok=True)
     return recs
 
 
@@ -590,6 +635,9 @@ class Options:
     resume: bool = False
     lister: Lister = scandir_list
     exiftool: str = "exiftool"
+    # Local scratch for ExifTool's copies (default: a fresh dir under the system temp dir).
+    tmp_dir: Path | None = None
+    tmp_cap_bytes: int = TMP_CAP_BYTES
     progress_every: int = 500
     sample_n: int = SAMPLE_N
     max_read_bytes: int = 1 << 30
@@ -675,6 +723,11 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
     total_bytes = sum(f.bytes for f in todo if f.kind in ("image", "video"))
     stats = {"files": 0, "bytes": 0, "t0": time.monotonic(), "last": time.monotonic()}
 
+    own_tmp = opts.tmp_dir is None
+    tmp_dir = Path(tempfile.mkdtemp(prefix="shoebox-inventory-")) if own_tmp else Path(opts.tmp_dir)
+    check_write_location(sel, tmp_dir)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
     with _open_checkpoint(ckpt) as out:
         def write(rec: dict) -> None:
             out.write((json.dumps(rec, ensure_ascii=False) + "\n").encode())
@@ -695,22 +748,24 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
         with ThreadPoolExecutor(max(1, opts.workers)) as pool, ThreadPoolExecutor(2) as xpool:
             it = iter(todo)
             inflight: set[Future] = set()
-            exif_jobs: set[Future] = set()
+            exif_jobs: dict[Future, int] = {}  # job -> bytes of local copies it holds
             pending: list[dict] = []
             exhausted = False
             while True:
-                while not exhausted and len(inflight) < opts.workers * 3:
+                held = sum(exif_jobs.values()) + sum(r["bytes"] for r in pending)
+                while not exhausted and len(inflight) < opts.workers * 3 and held < opts.tmp_cap_bytes:
                     f = next(it, None)
                     if f is None:
                         exhausted = True
                         break
-                    inflight.add(pool.submit(probe, sel, f, settings, opts.max_read_bytes))
+                    inflight.add(pool.submit(probe, sel, f, settings, opts.max_read_bytes, tmp_dir))
                 if pending and (len(pending) >= EXIF_BATCH or not inflight):
-                    exif_jobs.add(xpool.submit(attach_exif, sel, pending, opts.exiftool))
+                    job = xpool.submit(attach_exif, sel, pending, opts.exiftool)
+                    exif_jobs[job] = sum(r["bytes"] for r in pending)
                     pending = []
                 if not inflight and not exif_jobs:
                     break
-                finished, _ = wait(inflight | exif_jobs, return_when=FIRST_COMPLETED)
+                finished, _ = wait(inflight | set(exif_jobs), return_when=FIRST_COMPLETED)
                 for fut in finished:
                     if fut in inflight:
                         inflight.discard(fut)
@@ -718,12 +773,16 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
                         if rec["kind"] in ("image", "video") and rec["asset_id"]:
                             pending.append(rec)
                         else:
+                            if tmp := rec.pop("_tmp", None):
+                                Path(tmp).unlink(missing_ok=True)
                             write(rec)
                     else:
-                        exif_jobs.discard(fut)
+                        exif_jobs.pop(fut)
                         for rec in fut.result():
                             write(rec)
 
+    if own_tmp:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     if opts.after_run:
         opts.after_run()
     after = remeasure(sel, before)
