@@ -1,7 +1,7 @@
 {
   "set": "pilot-v0",
   "date": "2026-10-10",
-  "results": "/Users/mazhewitt/mnt/shoebox/results/vally/pilot-v0/2026-10-10T14-02-47-050Z/results.jsonl",
+  "results": "/Users/mazhewitt/mnt/shoebox/results/vally/pilot-v0/2026-10-10T14-02-47-050Z/regraded-owner-labels.jsonl",
   "scored": false,
   "gates": null,
   "modes": [
@@ -10,7 +10,7 @@
   "set_items": {
     "n": 45,
     "skipped": {},
-    "candidates_file": "/Users/mazhewitt/projects/shoebox/evals/vally/generated/pilot-v0/candidates.json"
+    "candidates_file": "evals/vally/generated/pilot-v0/candidates.json"
   },
   "gate_eligible": true,
   "gate_blockers": [],
@@ -49,11 +49,11 @@
             "screen": 1
           },
           "abstain_rate": 0.044444444444444446,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.6222222222222222,
+          "coverage": 0.9555555555555556,
+          "precision": 0.6511627906976745
         },
         "digitiser": {
           "distribution": {
@@ -65,11 +65,11 @@
             "unknown": 1
           },
           "abstain_rate": 0.022222222222222223,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.5111111111111111,
+          "coverage": 0.9777777777777777,
+          "precision": 0.5227272727272727
         },
         "colour_class": {
           "distribution": {
@@ -77,11 +77,11 @@
             "mono": 14
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 1.0,
+          "coverage": 1.0,
+          "precision": 1.0
         }
       },
       "tags": {
@@ -134,11 +134,11 @@
             "print": 1
           },
           "abstain_rate": 0.13333333333333333,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.6222222222222222,
+          "coverage": 0.8666666666666667,
+          "precision": 0.717948717948718
         },
         "digitiser": {
           "distribution": {
@@ -148,11 +148,11 @@
             "flatbed_scanner": 2
           },
           "abstain_rate": 0.15555555555555556,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.5333333333333333,
+          "coverage": 0.8444444444444444,
+          "precision": 0.631578947368421
         },
         "colour_class": {
           "distribution": {
@@ -161,11 +161,11 @@
             "unknown": 4
           },
           "abstain_rate": 0.08888888888888889,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.9111111111111111,
+          "coverage": 0.9111111111111111,
+          "precision": 1.0
         }
       },
       "tags": {
@@ -219,11 +219,11 @@
             "document": 1
           },
           "abstain_rate": 0.044444444444444446,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8222222222222222,
+          "coverage": 0.9555555555555556,
+          "precision": 0.8604651162790697
         },
         "digitiser": {
           "distribution": {
@@ -237,11 +237,11 @@
             "screenshot": 1
           },
           "abstain_rate": 0.044444444444444446,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.7333333333333333,
+          "coverage": 0.9555555555555556,
+          "precision": 0.7674418604651163
         },
         "colour_class": {
           "distribution": {
@@ -249,11 +249,11 @@
             "mono": 14
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 1.0,
+          "coverage": 1.0,
+          "precision": 1.0
         }
       },
       "tags": {
@@ -308,11 +308,11 @@
             "film_slide": 1
           },
           "abstain_rate": 0.044444444444444446,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.7555555555555555,
+          "coverage": 0.9555555555555556,
+          "precision": 0.7906976744186046
         },
         "digitiser": {
           "distribution": {
@@ -326,11 +326,11 @@
             "screenshot": 1
           },
           "abstain_rate": 0.044444444444444446,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.7333333333333333,
+          "coverage": 0.9555555555555556,
+          "precision": 0.7674418604651163
         },
         "colour_class": {
           "distribution": {
@@ -339,11 +339,11 @@
             "toned": 1
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.9777777777777777,
+          "coverage": 1.0,
+          "precision": 0.9777777777777777
         }
       },
       "tags": {
@@ -396,11 +396,11 @@
             "screen": 1
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8666666666666667,
+          "coverage": 0.9777777777777777,
+          "precision": 0.8863636363636364
         },
         "digitiser": {
           "distribution": {
@@ -412,11 +412,11 @@
             "flatbed_scanner": 1
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8222222222222222,
+          "coverage": 0.9777777777777777,
+          "precision": 0.8409090909090909
         },
         "colour_class": {
           "distribution": {
@@ -424,11 +424,11 @@
             "mono": 14
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.9777777777777777,
+          "coverage": 0.9777777777777777,
+          "precision": 1.0
         }
       },
       "tags": {
@@ -480,11 +480,11 @@
             "document": 1
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8888888888888888,
+          "coverage": 1.0,
+          "precision": 0.8888888888888888
         },
         "digitiser": {
           "distribution": {
@@ -495,11 +495,11 @@
             "flatbed_scanner": 2
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8,
+          "coverage": 1.0,
+          "precision": 0.8
         },
         "colour_class": {
           "distribution": {
@@ -507,11 +507,11 @@
             "mono": 14
           },
           "abstain_rate": 0.0,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 1.0,
+          "coverage": 1.0,
+          "precision": 1.0
         }
       },
       "tags": {
@@ -561,11 +561,11 @@
             "unknown": 19
           },
           "abstain_rate": 0.4222222222222222,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.5333333333333333,
+          "coverage": 0.5777777777777777,
+          "precision": 0.9230769230769231
         },
         "digitiser": {
           "distribution": {
@@ -576,11 +576,11 @@
             "flatbed_scanner": 2
           },
           "abstain_rate": 0.15555555555555556,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.7777777777777778,
+          "coverage": 0.8444444444444444,
+          "precision": 0.9210526315789473
         },
         "colour_class": {
           "distribution": {
@@ -589,11 +589,11 @@
             "unknown": 6
           },
           "abstain_rate": 0.13333333333333333,
-          "labelled_n": 0,
+          "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": null,
-          "coverage": null,
-          "precision": null
+          "accuracy": 0.8666666666666667,
+          "coverage": 0.8666666666666667,
+          "precision": 1.0
         }
       },
       "tags": {
