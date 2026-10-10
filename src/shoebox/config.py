@@ -32,6 +32,45 @@ class Config:
         return self.shoebox_root / "results"
 
 
+def under_volumes(path: Path) -> bool:
+    return Path(path).parts[:2] == ("/", "Volumes")
+
+
+def check_write_location(cfg: Config, path: Path) -> None:
+    """Refuse a write under /Volumes or under any source root, symlinks followed (docs/pilot.md)."""
+    target = Path(path).expanduser()
+    resolved = target.resolve()
+    if under_volumes(target) or under_volumes(resolved):
+        raise ValueError(f"refusing to write under /Volumes: {resolved}")
+    for src in cfg.sources.values():
+        if resolved.is_relative_to(src.root.expanduser().resolve()):
+            raise ValueError(f"refusing to write under source root {src.root} ({src.name}): {resolved}")
+
+
+def check_source_root(source: Source) -> Path:
+    """The source's resolved root, refused (ValueError) if it is under /Volumes (the admin's writable mounts)."""
+    root = source.root.expanduser()
+    if under_volumes(root) or under_volumes(root.resolve()):
+        raise ValueError(f"refusing to read originals under /Volumes (source {source.name}: {root}); "
+                         "use the read-only mount, e.g. ~/mnt/importantfiles-ro")
+    return root.resolve()
+
+
+def original_path(cfg: Config, item: dict) -> Path:
+    """An item's original, refused (ValueError) if under /Volumes or if it resolves outside its source root."""
+    source = cfg.sources.get(item.get("source", ""))
+    if source is None:
+        raise ValueError(f"unknown source {item.get('source')!r}")
+    rel = Path(item["relpath"])
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"refusing a relpath that leaves the source root: {item['relpath']}")
+    root = check_source_root(source)
+    path = (root / rel).resolve()  # follows symlinks, so a link cannot lead elsewhere
+    if under_volumes(path) or not path.is_relative_to(root):
+        raise ValueError(f"refusing an original that resolves outside its source root: {path}")
+    return path
+
+
 def load(path: Path = CONFIG_PATH) -> Config:
     data = tomllib.loads(Path(path).read_text())
     sources = {

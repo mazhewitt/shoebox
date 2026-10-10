@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shoebox/label-v1",
+  "title": "Shoebox label v1",
+  "description": "One image's labels. medium is what the picture originally was; digitiser is how it became this file. 'unknown' abstains. caption may be null (with empty tags) only for the rule baseline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["caption", "tags", "medium", "digitiser", "colour_class", "confidence"],
+  "properties": {
+    "caption": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 600,
+      "description": "1-3 factual sentences for search: what is visible, the setting, the kind of photo. No guesses at identities."
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 25,
+      "items": {"type": "string", "minLength": 1, "maxLength": 40, "pattern": "^[^A-Z]+$"},
+      "description": "Free tags, lowercase."
+    },
+    "medium": {
+      "enum": ["digital", "film_negative", "film_slide", "print", "document", "screen", "unknown"]
+    },
+    "digitiser": {
+      "enum": ["camera", "phone", "film_scanner", "flatbed_scanner", "camera_rephoto", "screenshot", "software", "unknown"]
+    },
+    "colour_class": {
+      "enum": ["colour", "mono", "toned", "unknown"]
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["medium", "digitiser", "colour_class"],
+      "properties": {
+        "medium": {"type": "number", "minimum": 0, "maximum": 1},
+        "digitiser": {"type": "number", "minimum": 0, "maximum": 1},
+        "colour_class": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

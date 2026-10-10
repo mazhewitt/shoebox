@@ -2,12 +2,12 @@
 # The owner fills this in. The Gemini runner refuses to start unless every item is true
 # and confirmed_on is within the last 90 days. Shoebox can't check these settings itself.
 
-billing_project_id = ""            # the Cloud project the GEMINI_API_KEY belongs to
-paid_tier_with_prepay_balance = false  # 1. billing-linked project, positive prepay balance (paid terms: no training)
-ai_studio_logging_off = false      # 2. AI Studio > Logs: logging OFF for generateContent and Interactions
-log_retention_days = 0             # 2. retention set to 7 days as a backstop
-no_datasets_or_feedback = false    # 3. never create/share datasets or give log feedback
-confirmed_on = ""                  # YYYY-MM-DD, when you last checked the settings above
+billing_project_id = "gen-lang-client-0946297769"            # the Cloud project the GEMINI_API_KEY belongs to
+paid_tier_with_prepay_balance = true  # 1. billing-linked project, positive prepay balance (paid terms: no training)
+ai_studio_logging_off = true      # 2. AI Studio > Logs: logging OFF for generateContent and Interactions
+log_retention_days = 7             # 2. retention set to 7 days as a backstop
+no_datasets_or_feedback = true    # 3. never create/share datasets or give log feedback
+confirmed_on = "2026-10-10"                  # YYYY-MM-DD, when you last checked the settings above
 
 # Enforced in code, not by you: generateContent only (no stored Interactions), no grounding tools,
 # derived images only (no originals, no EXIF/GPS), uploads and batch jobs deleted after use.

@@ -2,13 +2,14 @@
 
 An unscored, end-to-end pilot over about 45 hand-recipe files from `ImportantFiles`. Its aim is to get the eval pipeline working on real images and to learn Vally. The scored sets come later (tasks 5.x). It implements early, reduced versions of tasks 1.4, 2.3, 3.2, 4.1–4.4 and 6.1–6.4 of `openspec/changes/add-eval-harness`.
 
-**Not in the pilot:** Gemini. There's no API key yet, and the privacy checklist (task 1.5) isn't filled in. Only localhost models (Ollama) and local libraries are called.
+**Gemini:** included as a gated arm (see "Gemini arm" below). It runs only after `shoebox privacy check` passes. The owner confirmed the checklist on 2026-10-10.
 
 ## Rules every component follows
 
 - **Sources are read-only.** Read originals only through `~/mnt/importantfiles-ro` (the `shoebox` user's `rdonly` mount). Never write, create temp files or open SQLite under a source root. Never use the `/Volumes/*` mounts: they're the admin user's and writable.
 - **Writes go to** `shoebox_root` (`~/mnt/shoebox`, from `config/shoebox.toml`) or to the repo. Image bytes never go in the repo.
-- **No photo leaves the machine.** The only model endpoint is `http://localhost:11434` (Ollama), plus local Python libraries. Agents working on this code don't open or view owner photos or derived images. They check them numerically (size, mode, histograms, hashes). Synthetic test fixtures are fine.
+- **No photo leaves the machine.** The only model endpoint is the local Ollama on port 11434, plus local Python libraries. *(Integration note: code uses `http://127.0.0.1:11434` with proxy environment variables ignored, from `shoebox.runners.ollama.HOST`.)* Agents working on this code don't open or view owner photos or derived images. They check them numerically (size, mode, histograms, hashes). Synthetic test fixtures are fine.
+- **One guard implementation:** `shoebox.config.original_path(cfg, item)` (read an original: refuses `/Volumes`, `..`, and symlinks out of the source root) and `shoebox.config.check_write_location(cfg, path)` (refuses writes under `/Volumes` or a source root). Every component uses these.
 - **Code layout:** Python is `src/shoebox/`. Subcommands are `src/shoebox/commands/<name>.py` with `register(subparsers)`. Tests are `tests/`. Run everything with `uv run`.
 
 ## Shared formats (the contract between components)
@@ -67,6 +68,8 @@ JSON Schema, draft 2020-12. Model output is an object with:
   - runtime, model, quant, think, temperature, seed, num_ctx and image budget (`"auto"` for Ollama);
   - the runtime version (the Ollama server version, or the package versions).
 - Get it from `shoebox.store.params_hash(params)`.
+- *(Integration note.)* The profile entry is `{name, settings, settings_hash, tools}`. `settings` are the byte-affecting settings (`shoebox.derive.byte_settings`: no `status`, no `[<profile>.check]` table). `settings_hash` is derive's. `tools` are derive's tool versions, because a libvips/LibRaw upgrade re-derives images under the same profile name.
+- *(Integration note.)* `shoebox label` only labels an item whose latest derive-index record is `ok` and carries that same `settings_hash` and `tools`. Otherwise it's skipped with a reason, never labelled from a stale image.
 
 ### 5. Output store (design D2)
 - **Path:** `<shoebox_root>/results/labels/<model_dir>/<params_hash>/part-NNNN.jsonl`, with `params.json` alongside. `model_dir` is `model_id` with `/` → `__` and `:` → `_`.
@@ -80,7 +83,8 @@ JSON Schema, draft 2020-12. Model output is an object with:
 ```
 
 - An existing `(asset_id, model_id, params_hash)` key is a cache hit and isn't re-run. `error` (transport failure) records may be retried; `ok` and `invalid` are final.
-- **Python API** (`shoebox.store`): `params_hash`, `store_dir`, `lookup(...)`, `append(...)` and `iter_records(...)`.
+- **Python API** (`shoebox.store`): `params_hash`, `store_dir`, `lookup(...)`, `append(...)` and `iter_records(...)`, plus `index(...)`, `iter_dir(d)`, `index_records(records)` and `store_dirs(cfg, kind)`. Readers outside Python (the Vally executor) use the same rule: the first final record per asset, else its latest error, with torn lines skipped.
+- *(Integration note.)* Embedding runs (`runtime = "embed"`) use the same record format under `results/embeddings/<model_dir>/<params_hash>/`, not `results/labels/`. They aren't label-v1 records, so the sheet and Vally never see them.
 
 ### 6. CLI surface
 | Command | What it does |

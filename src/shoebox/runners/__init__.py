@@ -1,0 +1,291 @@
+"""Runner framework: candidates, params hashing, and the cache-aware labelling loop (design D2/D7).
+
+A runtime is a module `shoebox.runners.<runtime>` with `runtime_version(cand)`, `run_one(cand, item,
+image_path, cfg)`, and optionally `preflight(cand, items, cfg)` (raise to refuse; returns the items
+allowed) and `fingerprint(cand)` (extra hashed params, e.g. the model digest). See docs/pilot.md.
+
+The `cand` passed to a runner is the TOML table plus `name`, `model_id`, `params_hash` and, when the
+candidate names them, `prompt_text` and `schema_text` (the exact texts that were hashed).
+"""
+
+import importlib
+import socket
+import subprocess
+import time
+import tomllib
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from functools import cache
+from pathlib import Path
+from types import ModuleType
+
+from shoebox import store
+from shoebox.config import REPO_ROOT, Config
+
+CONFIG_DIR = REPO_ROOT / "config"
+# Candidate keys that are file references (hashed by their text instead), notes, or run-budget
+# settings that never change a model's output (spend caps, cost estimates, prices).
+_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile"}
+_NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
+# Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
+# Vally executor read; embedding vectors are not label-v1 records and go under `embeddings`.
+STORE_KIND = {"embed": "embeddings"}
+
+
+class StopRun(Exception):
+    """Raised by a runner when the whole run must stop now (e.g. a spend cap). No record is written for the
+    item; `run_items` re-raises it, so `shoebox label run` exits with the message instead of filling the
+    store with `error` records."""
+
+
+class Skipped(Exception):
+    """An item that cannot be labelled now (no derived image, or refused by preflight). Not a model failure."""
+
+
+def get(runtime: str) -> ModuleType:
+    return importlib.import_module(f"shoebox.runners.{runtime}")
+
+
+def load_candidates(config_dir: Path = CONFIG_DIR) -> dict[str, dict]:
+    """`candidates.toml` merged with `candidates.d/*.toml` (sorted). A repeated name is an error."""
+    files = [config_dir / "candidates.toml", *sorted((config_dir / "candidates.d").glob("*.toml"))]
+    out: dict[str, dict] = {}
+    for f in files:
+        if not f.exists():
+            continue
+        for name, table in tomllib.loads(f.read_text()).get("candidates", {}).items():
+            if name in out:
+                raise ValueError(f"candidate {name!r} defined twice (again in {f})")
+            out[name] = {**table, "name": name}
+    return out
+
+
+def profile_settings(profile: str, config_dir: Path = CONFIG_DIR) -> dict | None:
+    """The profile's byte-affecting settings (`shoebox.derive.byte_settings`), or None if it is absent."""
+    from shoebox import derive
+
+    f = config_dir / "profiles.toml"
+    if not f.exists():
+        return None
+    try:
+        return derive.byte_settings(derive.load_profile(profile, f))
+    except KeyError:
+        return None
+
+
+def profile_params(profile: str, config_dir: Path = CONFIG_DIR) -> dict:
+    """What the derived image's bytes depend on: profile name, settings (and their derive settings_hash), and
+    the derive tool versions, since a libvips/LibRaw upgrade re-derives the image under the same profile."""
+    from shoebox import derive
+
+    settings = profile_settings(profile, config_dir)
+    return {"name": profile, "settings": settings,
+            "settings_hash": None if settings is None else derive.settings_hash(settings),
+            "tools": derive.tool_versions()}
+
+
+def model_id(cand: dict) -> str:
+    if cand.get("model_id"):
+        return cand["model_id"]
+    if cand["runtime"] == "rules":
+        return cand.get("model", cand["name"])
+    return f"{cand['runtime']}/{cand['model']}"
+
+
+@dataclass(frozen=True)
+class Resolved:
+    name: str
+    cand: dict
+    model_id: str
+    params: dict
+    params_hash: str
+    runner: ModuleType
+
+    @property
+    def runtime(self) -> str:
+        return self.params["runtime_version"]
+
+    @property
+    def kind(self) -> str:
+        return STORE_KIND.get(self.cand["runtime"], "labels")
+
+    def store_dir(self, cfg: Config) -> Path:
+        return store.store_dir(cfg, self.model_id, self.params_hash, self.kind)
+
+
+def resolve(name: str, config_dir: Path = CONFIG_DIR) -> Resolved:
+    """Load a candidate and compute its params and params_hash (may ask the runtime for its version)."""
+    cands = load_candidates(config_dir)
+    if name not in cands:
+        raise KeyError(f"unknown candidate {name!r}; known: {', '.join(sorted(cands))}")
+    cand = dict(cands[name])
+    runner = get(cand["runtime"])
+    params = {k: v for k, v in cand.items() if k not in _NOT_HASHED and not k.startswith(_NOT_HASHED_PREFIXES)}
+    if cand.get("prompt"):
+        cand["prompt_text"] = params["prompt_text"] = (config_dir / "prompts" / cand["prompt"]).read_text()
+    if cand.get("schema"):
+        cand["schema_text"] = params["schema_text"] = (config_dir / "schemas" / cand["schema"]).read_text()
+    if cand.get("profile"):
+        params["profile"] = profile_params(cand["profile"], config_dir)
+    params["runtime_version"] = runner.runtime_version(cand)
+    if hasattr(runner, "fingerprint"):
+        params.update(runner.fingerprint(cand))
+    mid = model_id(cand)
+    ph = store.params_hash(params)
+    cand.update(model_id=mid, params_hash=ph)
+    return Resolved(name=name, cand=cand, model_id=mid, params=params, params_hash=ph, runner=runner)
+
+
+def derived_image(cfg: Config, profile: str, asset_id: str) -> Path:
+    """The derived JPEG for an asset (`shoebox.derive.derived_path`; imported lazily, it loads libvips)."""
+    from shoebox.derive import derived_path
+
+    return derived_path(cfg, profile, asset_id)
+
+
+@cache
+def machine() -> str:
+    try:
+        chip = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], check=False,
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        chip = ""
+    return f"{socket.gethostname()}, {chip or 'unknown chip'}"
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def run_and_store(res: Resolved, item: dict, image: Path, cfg: Config) -> dict:
+    """Call the runner for one item and append its record. Runner exceptions become `error` records."""
+    t0 = time.monotonic()
+    try:
+        out = res.runner.run_one(res.cand, item, image, cfg)
+    except StopRun:
+        raise
+    except Exception as e:  # noqa: BLE001 - a runner bug or I/O failure: retryable, never a model verdict
+        out = {"status": "error", "error": f"{type(e).__name__}: {e}",
+               "latency_ms": round((time.monotonic() - t0) * 1000)}
+    status = out.get("status")
+    if status not in ("ok", "invalid", "error"):
+        out = {**out, "status": "error", "error": f"runner returned status {status!r}"}
+    rec = {
+        "asset_id": item["asset_id"], "model_id": res.model_id, "params_hash": res.params_hash,
+        "status": out["status"], "output": out.get("output"), "raw": out.get("raw"), "error": out.get("error"),
+        "usage": out.get("usage") or {"input_tokens": None, "output_tokens": None, "thinking_tokens": None},
+        "latency_ms": out.get("latency_ms"), "usd": out.get("usd", 0.0),
+        "machine": machine(), "runtime": res.runtime, "ts": _now(),
+    }
+    store.append(cfg, rec, res.kind)
+    return rec
+
+
+@dataclass
+class Tally:
+    ok: int = 0
+    invalid: int = 0
+    error: int = 0
+    cached: int = 0
+    skipped: int = 0
+    total: int = 0
+    skipped_items: list[tuple[str, str]] = field(default_factory=list)
+    started: float = field(default_factory=time.monotonic)
+
+    @property
+    def ran(self) -> int:
+        return self.ok + self.invalid + self.error
+
+    def per_hour(self) -> float:
+        elapsed = time.monotonic() - self.started
+        return self.ran / elapsed * 3600 if elapsed > 0 and self.ran else 0.0
+
+    def skip(self, asset_id: str, reason: str) -> None:
+        self.skipped += 1
+        self.skipped_items.append((asset_id, reason))
+
+
+def _params_doc(res: Resolved) -> dict:
+    public = {k: v for k, v in res.cand.items() if k not in ("prompt_text", "schema_text")}
+    return {"candidate": res.name, "model_id": res.model_id, "params_hash": res.params_hash,
+            "candidate_config": public, "params": res.params}
+
+
+def _derived_problem(res: Resolved, drec: dict | None, image: Path) -> str | None:
+    """Why the derived image can't be labelled under this params_hash, or None. The derive index decides: the
+    latest record must be ok, and made with the profile settings and tools that this params_hash covers."""
+    if not drec or drec.get("status") != "ok" or not image.exists():
+        return "no ok derived image (run `shoebox derive`)"
+    want = res.params.get("profile") or {}
+    if want.get("settings_hash") is not None and (
+            drec.get("settings_hash") != want["settings_hash"] or drec.get("tools") != want.get("tools")):
+        return "derived image was made with other profile settings or tools (re-run `shoebox derive`)"
+    return None
+
+
+def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> list[tuple[dict, Path]]:
+    from shoebox import derive
+
+    done = store.index(cfg, res.model_id, res.params_hash, res.kind)
+    profile = res.cand.get("profile", "infer-v1")
+    derived = derive.load_index(cfg, profile)
+    seen: set[str] = set()
+    pending = []
+    for it in items:
+        aid = it["asset_id"]
+        if aid in seen:
+            continue
+        seen.add(aid)
+        if store.is_final(done.get(aid)):
+            tally.cached += 1
+            continue
+        image = derived_image(cfg, profile, aid)
+        why = _derived_problem(res, derived.get(aid), image)
+        if why:
+            tally.skip(aid, why)
+            continue
+        pending.append((it, image))
+    tally.total = len(seen)
+    if pending and hasattr(res.runner, "preflight"):
+        allowed = {a["asset_id"] for a in res.runner.preflight(res.cand, [it for it, _ in pending], cfg)}
+        for it, _ in pending:
+            if it["asset_id"] not in allowed:
+                tally.skip(it["asset_id"], "refused by preflight")
+        pending = [(it, im) for it, im in pending if it["asset_id"] in allowed]
+    return pending
+
+
+def run_items(res: Resolved, items: list[dict], cfg: Config,
+              progress: Callable[[Tally, dict, dict], None] | None = None) -> Tally:
+    """Label every item not already final in the store. Re-running resumes from the first missing key."""
+    tally = Tally()
+    pending = _pending(res, items, cfg, tally)
+    if pending:
+        store.write_params(cfg, res.model_id, res.params_hash, _params_doc(res), res.kind)
+    tally.started = time.monotonic()
+    for it, image in pending:
+        rec = run_and_store(res, it, image, cfg)
+        setattr(tally, rec["status"], getattr(tally, rec["status"]) + 1)
+        if progress:
+            progress(tally, it, rec)
+    return tally
+
+
+def label_one(res: Resolved, asset_id: str, items: list[dict], cfg: Config) -> dict:
+    """The stored final record for one asset, running it first if needed.
+
+    Raises LookupError if the asset is not in `items`, Skipped if it cannot be run now.
+    """
+    rec = store.lookup(cfg, res.model_id, res.params_hash, asset_id, res.kind)
+    if store.is_final(rec):
+        return rec
+    item = next((it for it in items if it["asset_id"] == asset_id), None)
+    if item is None:
+        raise LookupError(f"asset {asset_id} is not in the items list")
+    tally = Tally()
+    pending = _pending(res, [item], cfg, tally)
+    if not pending:
+        raise Skipped(f"asset {asset_id}: {tally.skipped_items[0][1]}")
+    store.write_params(cfg, res.model_id, res.params_hash, _params_doc(res), res.kind)
+    return run_and_store(res, *pending[0], cfg)

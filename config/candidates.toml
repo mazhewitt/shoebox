@@ -1,0 +1,66 @@
+# Label candidates. Each [candidates.<name>] is resolved by shoebox.runners.resolve();
+# everything that affects output goes into params_hash (docs/pilot.md section 4).
+# Extra candidates live in config/candidates.d/*.toml and are merged in (a name may not repeat).
+# quant is what `ollama show <model>` reported on 2026-10-10 (Ollama 0.40.2).
+
+[candidates.rules-v1]
+runtime = "rules"
+model = "rules-v1"
+schema = "label-v1.json"  # hashed, and the rule output is validated against it
+profile = "infer-v1"
+
+[candidates.e4b-bf16]
+runtime = "ollama"
+model = "gemma4:e4b-mlx-bf16"
+quant = "bf16"            # safetensors via the MLX runner; `ollama show` leaves quantization_level empty
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024        # caps runaway output; a label is ~100-150 tokens
+image_budget = "auto"     # Ollama has no budget control (design D6)
+
+[candidates.e4b-q4]
+runtime = "ollama"
+model = "gemma4:e4b"
+quant = "Q4_K_M"
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024
+image_budget = "auto"
+
+[candidates.g12b-q4]
+runtime = "ollama"
+model = "gemma4:12b"
+quant = "Q4_K_M"
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024
+image_budget = "auto"
+
+[candidates.g31b]
+runtime = "ollama"
+model = "gemma4:31b"
+quant = "Q4_K_M"
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024
+image_budget = "auto"

@@ -1,0 +1,3 @@
+node_modules/
+# Vally run output holds model outputs (captions of private photos): keep it under shoebox_root, never in git.
+vally-results/

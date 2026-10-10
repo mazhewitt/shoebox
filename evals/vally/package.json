@@ -1,0 +1,25 @@
+{
+  "name": "shoebox-vally",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shoebox eval execution layer: Vally executor and grader plugins (replay the keyed label store).",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@microsoft/vally": "0.18.0",
+    "@microsoft/vally-cli": "0.18.0"
+  },
+  "scripts": {
+    "vally": "VALLY_TELEMETRY_OPTOUT=1 vally",
+    "lint": "VALLY_TELEMETRY_OPTOUT=1 vally lint -e generated/${SET:-pilot-v0}/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --strict",
+    "eval": "VALLY_TELEMETRY_OPTOUT=1 vally eval -e generated/${SET:-pilot-v0}/eval.yaml --executor-plugin $PWD/plugins/shoebox-vlm.js --grader-plugin $PWD/plugins/shoebox-graders.js --output-dir ${VALLY_OUT:-$HOME/mnt/shoebox/results/vally/${SET:-pilot-v0}} --workers 1",
+    "grade": "VALLY_TELEMETRY_OPTOUT=1 vally grade -e generated/${SET:-pilot-v0}/eval.yaml --grader-plugin $PWD/plugins/shoebox-graders.js --output jsonl",
+    "serve": "VALLY_TELEMETRY_OPTOUT=1 vally serve"
+  },
+  "vally": {
+    "pinned": "0.18.0",
+    "decision": "0.18.0 is npm 'latest' on 2026-10-10 (no newer release); plugin APIs verified by tests/test_eval_vally_e2e.py"
+  }
+}

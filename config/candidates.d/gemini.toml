@@ -1,0 +1,49 @@
+# Gemini 3.8 Flash arm (docs/pilot.md "Gemini arm"; design D9). Gated: the runner refuses until
+# evals/privacy-checklist.toml is confirmed, and skips never-send and non-consented items.
+# Request fields: schema via generationConfig.responseJsonSchema (JSON Schema subset; the runner
+# drops keywords Gemini doesn't take and validates against the full label-v1 schema afterwards),
+# per-part mediaResolution, thinkingConfig.thinkingLevel. No tools, no grounding.
+#
+# Prices: research/mvp-models.md (introductory, until 2026-12-31): $0.75/1M input,
+# $3.75/1M output including thinking; $1.50 / $7.50 from 2027-01-01. The runner refuses once
+# price_valid_until has passed, so the prices must be updated rather than silently undercounting.
+# Token estimates are deliberately high for the pre-flight; image tokens come from
+# media_resolution (low 280, medium 560, high 1120).
+
+[candidates.gemini-low]
+runtime = "gemini"
+model = "gemini-3.8-flash"
+media_resolution = "low"
+thinking_level = "low"
+schema_field = "responseJsonSchema"
+max_output_tokens = 4096          # bounds output + thinking per call (≈ $0.015 worst case)
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+max_usd_per_run = 2.0
+est_prompt_tokens = 1800          # label-v1.md (~1.5k tokens) plus the response schema
+est_output_tokens = 300
+est_thinking_tokens = 1000        # undocumented at "low": measure on the pilot
+price_input_usd_per_mtok = 0.75
+price_output_usd_per_mtok = 3.75
+price_date = "2026-10-10"
+price_valid_until = "2026-12-31"
+
+[candidates.gemini-medium]
+runtime = "gemini"
+model = "gemini-3.8-flash"
+media_resolution = "medium"
+thinking_level = "low"
+schema_field = "responseJsonSchema"
+max_output_tokens = 4096
+prompt = "label-v1.md"
+schema = "label-v1.json"
+profile = "infer-v1"
+max_usd_per_run = 2.0
+est_prompt_tokens = 1800
+est_output_tokens = 300
+est_thinking_tokens = 1000
+price_input_usd_per_mtok = 0.75
+price_output_usd_per_mtok = 3.75
+price_date = "2026-10-10"
+price_valid_until = "2026-12-31"

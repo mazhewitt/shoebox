@@ -1,0 +1,60 @@
+# Image profiles for derived inference images (design D6, docs/profiles.md).
+# A profile fixes every setting that changes the output bytes. Changing any setting
+# needs a new profile name: model outputs record the profile name and these settings.
+# Each index record carries settings_hash (every key except `status` and the `check`
+# table, which don't change bytes); `shoebox derive` refuses to run a profile whose
+# settings no longer match the hash its existing images were made with.
+
+[infer-v1]
+status = "provisional"        # provisional until task 3.1 freezes it
+format = "jpeg"
+long_edge = 2048              # px; never upscaled
+upscale = false
+resample_kernel = "lanczos3"
+bit_depth = 8
+colourspace = "srgb"          # embedded ICC -> sRGB; no ICC -> assumed sRGB (gamma-encoded)
+icc_intent = "relative"
+embed_icc = false             # output carries no ICC profile: plain sRGB
+alpha_background = "white"    # transparency is flattened onto white
+grey_to_rgb = true            # greyscale becomes 3-band sRGB
+stretch = "none"              # D6 percentile stretch applies "only where flagged"; v1 flags nothing
+orientation = "apply"         # EXIF orientation applied, then removed
+strip_metadata = true         # no EXIF, GPS, XMP, IPTC, ICC or comments in the output
+decode_fail_on = "truncated"  # a truncated original is a decode error, not a grey-padded image
+jpeg_quality = 92
+jpeg_subsample = "off"        # 4:4:4 chroma
+jpeg_optimize_coding = true
+jpeg_interlace = false
+
+# Camera raw (NEF, DNG, ...) is rendered with LibRaw via rawpy.postprocess(), never from
+# the camera's embedded or sibling JPEG. Orientation comes from the raw's own flip tag.
+[infer-v1.raw]
+demosaic_algorithm = "AHD"
+use_camera_wb = true
+use_auto_wb = false
+output_color = "sRGB"
+output_bps = 16               # 16-bit out of LibRaw, then libvips maps it to 8-bit sRGB
+gamma = [2.222, 4.5]          # LibRaw's default curve (BT.709-style), not the exact sRGB curve
+no_auto_bright = false        # LibRaw default auto-brightening ...
+auto_bright_thr = 0.01        # ... clipping at most 1% of pixels
+bright = 1.0
+highlight_mode = "clip"
+half_size = false
+four_color_rgb = false
+median_filter_passes = 0
+fbdd_noise_reduction = "off"
+
+# Layered PSD/PSB: the flattened composite (the file's merged image data) only.
+# Layers are never re-rendered; a PSD saved without a composite is a decode error.
+[infer-v1.psd]
+source = "merged_image_data"
+
+# Checks recorded per image; they don't change the bytes (not in settings_hash).
+[infer-v1.check]
+# Tonal-range tolerance (spec: "not clipped beyond the profile's tolerance"). Clip % is
+# the share of samples at 8-bit black (< 0.5/255 of full scale) or white (> 254.5/255),
+# measured on the decoded source (alpha flattened) and on the 8-bit sRGB conversion
+# before resizing. An image whose black or white clip % rises by more than this many
+# percentage points is still written (status ok) but recorded with
+# tone.within_tolerance = false and reported by `shoebox derive`.
+max_clip_increase_pct = 1.0

@@ -1,0 +1,36 @@
+# EmbeddingGemma 2 (google/embeddinggemma-2, Apache 2.0, ungated; 740M, one 768-d space for text and
+# images, MRL 512/256/128). runtime = "embed" (shoebox/runners/embed.py). Every key below is hashed.
+# Precision: bfloat16 or float32 only. float16 silently returns NaN/degraded vectors and is refused.
+# Prompts are the model card's / sentence-transformers' "SearchQuery" and "Document" prompts; images
+# get no prefix. Verified 2026-10-10: Ollama bf16 vs sentence-transformers fp32 (rev 914f7f89) cosine
+# >= 0.9997 on synthetic images and text.
+
+[candidates.eg2-bf16]
+runtime = "embed"
+backend = "ollama"
+model = "embeddinggemma-2:740m-bf16"          # NOT :latest, which is nvfp4
+model_id = "ollama/embeddinggemma-2:740m-bf16"
+model_digest = "54d809644cd8a4e4547a6cdcf165e91b13d89e86d5c30fc4fe2f147f0b2f82f1"  # all 1375 tensors BF16
+dtype = "bfloat16"
+quant = "bf16"            # safetensors via the MLX runner (Ollama 0.40.2)
+dim = 768
+image_budget = 280        # Ollama's EG2 runner uses the reference fixed 280-soft-token budget
+query_prompt = "task: search result | query: {text}"
+document_prompt = "title: none | text: {text}"
+profile = "infer-v1"
+
+# Reference-precision variant through sentence-transformers on MPS. Needs the optional `embed` extra
+# (sentence-transformers, transformers, torch, torchvision); not installed in the project env yet.
+[candidates.eg2-fp32]
+runtime = "embed"
+backend = "sentence-transformers"
+model = "google/embeddinggemma-2"
+revision = "914f7f89142e33e77833254d9c9b90c3cef7303b"
+model_id = "hf/google/embeddinggemma-2@914f7f89142e"
+dtype = "float32"         # weights are stored BF16 and upcast
+quant = "none"
+dim = 768
+image_budget = 280        # max_soft_tokens, 70..1120
+query_prompt = "task: search result | query: {text}"
+document_prompt = "title: none | text: {text}"
+profile = "infer-v1"
