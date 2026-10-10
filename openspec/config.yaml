@@ -3,34 +3,70 @@ schema: spec-driven
 # Project context: constraints that guide every artifact. Background and
 # rationale live in handoff.md (original brief) and PLAN.md (agreed plan).
 context: |
-  Shoebox: self-hosted, searchable index of ~210 GB of personal photos
-  (2002–present) from Google Photos (Takeout) and Google Drive scans (rclone).
+  Shoebox: self-hosted, searchable catalogue of the owner's personal photos
+  (2002–present). Sources:
+  - Google Photos: two libraries (owner on Android, Jude on iPhone), via
+    Takeout.
+  - The NAS share ImportantFiles (~605 GB, synced with Google Drive): film
+    scans, Nikon/Leica raws, JPEGs, PSDs, an old Drive "Google Photos" tree,
+    and Lightroom catalogues.
+  MVP: sort (catalogue views only), catalogue and describe every photo for
+  search. Faces come next.
 
   Hard constraints
-  - Open-source only. Nothing commercial, proprietary, phoning home, or that
-    locks the archive into a format or service.
-  - Originals are immutable. Nothing writes to originals/; metadata fixes
-    (incl. Takeout sidecar data) live in the DB with per-field provenance.
-  - Evals before scale. No labelling stage runs over the full archive until it
-    passes a gate scored on a frozen ground-truth test split, with thresholds
-    fixed in evals/gates.toml before the run. Report results per stratum
-    (era, capture source, colour/mono), not just overall.
+  - Open-source code and models. No proprietary component may lock the archive
+    into a format or service.
+  - Hosted models are allowed only as owner-approved exceptions. Today that
+    means Gemini on the owner's individual paid Gemini API account:
+    - Uses: eval pre-labelling, an eval candidate, and the bulk pass only if
+      it wins the eval.
+    - Terms: the paid-tier no-training terms apply, and the 55-day abuse log
+      is accepted.
+    - Inputs: derived images only, with metadata stripped.
+    - Never faces/identity, the never-send list, or a library whose owner
+      hasn't consented.
+    - The privacy checklist must be confirmed before each run.
+    - Every run has a spend cap; hosted inference budget is USD 150.
+    Everything else stays local.
+  - Originals are immutable, and synced sources are never written. Nothing
+    writes to originals/ or to the Drive-synced ImportantFiles share; it is
+    read through a read-only NAS user and a read-only mount. Metadata fixes
+    (incl. Takeout sidecars) live in the DB with per-field provenance.
+  - Evals before scale. No labelling stage runs over the full archive until
+    it passes a gate scored on a frozen ground-truth test split, with
+    thresholds fixed in evals/gates.toml before the run.
+    - Report per stratum (era, capture medium x digitiser, colour/mono), not
+      just overall.
+    - Gates are precision-first; uncertain outputs become unknown, with the
+      score kept.
   - Search is an HTTP API; web UI now and phone app later are thin clients.
 
   Languages
   - Rust for anything fast or long-running: shoebox-api (Axum), shoebox-scan,
-    shoebox-worker, shared shoebox-core.
+    shared shoebox-core.
   - Python (uv) for pipeline CLIs, model runners and evals. Batch CLIs and
     supervised runners only (JSONL over stdin/stdout); no Python daemons or
     services.
-  - TypeScript for the web UI.
+  - TypeScript for the web UI and for thin Vally eval plugins (executor and
+    graders, pinned Vally version, telemetry off). Metrics and gates stay in
+    Python.
 
   Machines and data rules
-  - Synology NAS (older x86, Docker): storage, SQLite, API, serving. Assume no
-    model inference on it until Phase 0 recon says otherwise.
-  - M1 Mac Studio: always-on incremental worker. M5 Max: one-off bulk run.
-  - SQLite is opened only by processes on the NAS; shoebox-api is the single
-    writer. Other machines use HTTP or drop Parquet bundles in results/.
+  - Synology NAS: storage only. Shares:
+    - ImportantFiles: source, read-only to Shoebox;
+    - shoebox: staging/, originals/takeout/, derived/, results/, frame/.
+    Backed up to GCS, except derived/ and staging/.
+  - Model work runs on the M5 Max laptop (128 GB) for now. The M5 Ultra Mac
+    Studio (from late Oct 2026) becomes the host:
+    - API and SQLite on its SSD;
+    - runs natively under launchd, with Docker only on the NAS if needed.
+    The M1 Studio is busy with radiobox and is not used.
+  - No always-on worker. Incremental work is a `shoebox ingest` batch run on
+    the same code path as bulk; it runs only the stages and model_ids an asset
+    is missing.
+  - SQLite is opened only on the host's local disk, never over SMB/NFS.
+    shoebox-api is the single writer. Model outputs land as result bundles in
+    results/, keyed by (asset_id, model_id, params_hash).
   - Assets are keyed by BLAKE3 of the original bytes. Every model output
     carries model_id + params_hash; a model change means a new model_id,
     a re-eval, and an explicit backfill, never silent mixing.
@@ -38,7 +74,11 @@ context: |
   - Auth: trust only the Cloudflare Access JWT, verified against the team JWKS.
 
   Human labels (face names, eval ground truth) are the most irreplaceable data;
-  any design that stores them must cover their backup.
+  any design that stores them must cover their backup. Every label records its
+  provenance (who, how, any pre-label model).
+
+  Background: handoff.md, handoff-supplement.md, PLAN.md (partly superseded),
+  research/, docs/machines.md.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
