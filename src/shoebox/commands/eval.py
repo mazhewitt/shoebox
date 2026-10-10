@@ -110,6 +110,27 @@ def _register_search(esub) -> None:
                    help="rankings index (default <shoebox_root>/results/search/<set>/index.json)")
     g.set_defaults(func=_gen_search)
 
+    pl = esub.add_parser("search-pool",
+                         help="new set: a base set's items and queries plus random distractors from the frame")
+    pl.add_argument("--set", required=True, dest="set_name", help="base set (its queries are copied)")
+    pl.add_argument("--frame", required=True, type=Path, help="<shoebox_root>/frame/frame-<date>.parquet")
+    pl.add_argument("--n", type=int, default=5000, help="distractors to draw")
+    pl.add_argument("--seed", type=int, default=20261010)
+    pl.add_argument("--out-set", required=True, help="new set name, e.g. pilot-v0-pool5k")
+    pl.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    pl.add_argument("--never-send", type=Path, default=None, help="default evals/never-send.txt")
+    pl.add_argument("--force", action="store_true", help="overwrite an existing pool set's files")
+    pl.set_defaults(func=_search_pool)
+
+    nd = esub.add_parser("search-neardups",
+                         help="write evals/sets/<set>/near-dups.jsonl: distractors closest to a target (EG2 image)")
+    nd.add_argument("--set", required=True, dest="set_name")
+    nd.add_argument("--threshold", type=float, default=0.90, help="list every distractor at or above this cosine")
+    nd.add_argument("--top", type=int, default=200, help="also list the N closest regardless of the threshold")
+    nd.add_argument("--embed-candidate", default=search.EMBED_CANDIDATE)
+    nd.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    nd.set_defaults(func=_search_neardups)
+
     r = esub.add_parser("search-report",
                         help="write evals/runs/<date>_<set>-search.json and .md from a Vally results.jsonl")
     r.add_argument("--results", required=True, type=Path)
@@ -162,6 +183,43 @@ def _search_run(args) -> int:
     if res.index_path:
         print(f"updated {res.index_path}")
     return 1 if res.skipped or not res.written else 0
+
+
+def _search_pool(args) -> int:
+    from shoebox.evals import pool
+
+    try:
+        res = pool.build_pool(_cfg(), args.sets_dir / args.set_name, args.frame, args.n, args.seed,
+                              args.sets_dir / args.out_set, never_send_path=args.never_send, force=args.force)
+    except (ValueError, FileNotFoundError, FileExistsError) as e:
+        print(f"shoebox eval search-pool: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {res.out_dir}: {res.n_drawn} distractors (requested {res.n_requested}) from "
+          f"{res.eligible_assets} eligible photos")
+    for reason, n in res.exclusions.items():
+        print(f"  excluded {n:7} paths: {reason}")
+    return 0 if res.n_drawn == res.n_requested else 1
+
+
+def _search_neardups(args) -> int:
+    from shoebox.evals import pool, search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        if not (set_dir / "items.jsonl").exists():
+            raise FileNotFoundError(f"no items at {set_dir / 'items.jsonl'}")
+        cfg = _cfg()
+        config.check_write_location(cfg, set_dir)
+        _, vectors = search.load_image_store(cfg, args.embed_candidate)
+        res = pool.near_dups(set_dir, vectors, args.threshold, args.top)
+    except (ValueError, FileNotFoundError, RuntimeError) as e:
+        print(f"shoebox eval search-neardups: {e}", file=sys.stderr)
+        return 2
+    print(f"{res.above_threshold} of {res.distractors} distractors at cosine >= {args.threshold} to a target "
+          f"({res.with_vectors} have an image vector; max {res.max_cosine})")
+    print(f"wrote {res.path} ({res.written} rows); review them, then list decided exclusions in "
+          f"{set_dir / search.EXCLUDE_FILE}")
+    return 0
 
 
 def _gen_search(args) -> int:

@@ -91,7 +91,7 @@ JSON Schema, draft 2020-12. Model output is an object with:
 |---|---|
 | `shoebox pilot pick` | writes `evals/sets/pilot-v0/items.jsonl` and `README.md` |
 | `shoebox pilot snapshot --out F` / `shoebox pilot verify-untouched --snapshot F` | sources-untouched check over the pilot originals and their folders |
-| `shoebox derive --profile infer-v1 --items evals/sets/pilot-v0/items.jsonl` | writes the derived images and the index |
+| `shoebox derive --profile infer-v1 --items evals/sets/pilot-v0/items.jsonl [--workers N]` | writes the derived images and the index (`--workers`: N items at once on threads; default 1) |
 | `shoebox label run --candidate <name> --items <jsonl>` | fills the store (a cache hit skips) |
 | `shoebox label one --candidate <name> --asset-id <id>` | prints one record as JSON (cache-aware). Used by the Vally executor in live mode |
 | `shoebox label resolve --candidate <name>` | prints `{"candidate", "model_id", "params_hash", "store_dir"}` |
@@ -99,6 +99,9 @@ JSON Schema, draft 2020-12. Model output is an object with:
 | `shoebox eval gen --set pilot-v0 --candidates a,b,c` | writes `evals/vally/generated/pilot-v0/eval.yaml` and `candidates.json` |
 | `shoebox eval report --results <vally results.jsonl>` | writes `evals/runs/<date>_pilot-v0.json` and `.md` |
 | `shoebox eval search-queries / search-run / gen-search / search-report --set pilot-v0` | known-item search eval: owner notes → queries, rankings under `<shoebox_root>/results/search/`, Vally stimuli, `evals/runs/<date>_pilot-v0-search.{json,md}` (see `docs/evals.md`) |
+| `shoebox eval search-pool --set pilot-v0 --frame <parquet> --n 5000 --seed 20261010 --out-set pilot-v0-pool5k` | a new set: the base set's items (`role: target`) and queries plus random owner distractors from the frame; `pool.json`, `README.md` (see `docs/evals.md`, "Distractor pool") |
+| `shoebox eval search-neardups --set <set> [--threshold 0.90] [--top 200]` | writes `evals/sets/<set>/near-dups.jsonl`: distractors closest to a target by EG2 image cosine, for review before `exclude.jsonl` |
+| `shoebox inventory [--sources S] [--only RELPATH] [--workers N] [--date D] [--out-dir DIR] [--resume]` and `shoebox inventory readme --frame F` | the sampling frame: `<shoebox_root>/frame/frame-<date>.parquet` and `listing-<date>.json` (read-only walk, listing cross-check, sources-untouched check); `readme` writes `frame/README.md` (see `docs/evals.md`) |
 | `shoebox pilot sheet` | writes `<shoebox_root>/results/pilot-v0/sheet.html`, a local contact sheet and blind labelling form that exports `labels.jsonl` |
 
 ### 7. Owner labels (optional for the pilot): `evals/sets/pilot-v0/labels.jsonl`

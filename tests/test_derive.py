@@ -496,8 +496,8 @@ def _tiff_with_big_tag(rgb8: np.ndarray, blob_len: int) -> bytes:
     def ent(tag, typ, count, value):
         return struct.pack("<HHI", tag, typ, count) + value
 
-    short = lambda v: struct.pack("<HH", v, 0)  # noqa: E731
-    long_ = lambda v: struct.pack("<I", v)  # noqa: E731
+    short = lambda v: struct.pack("<HH", v, 0)
+    long_ = lambda v: struct.pack("<I", v)
     entries = [
         ent(256, 3, 1, short(w)),
         ent(257, 3, 1, short(h)),
@@ -775,3 +775,47 @@ def test_render_is_pure_bytes_in_bytes_out():
     Image.fromarray(pix).save(buf, "PNG")
     r = derive.render(buf.getvalue(), "png", derive.load_profile(PROFILE))
     assert r.jpeg[:2] == b"\xff\xd8" and (r.width, r.height) == (10, 10)
+
+
+# --- parallel derive -----------------------------------------------------------
+
+
+def _parallel_fixtures(src: Path) -> list[str]:
+    rng = np.random.default_rng(11)
+    names = []
+    for i in range(6):
+        pix = rng.integers(0, 255, (40 + i, 60, 3), dtype=np.uint8)
+        name = f"p{i}.png" if i % 2 else f"p{i}.tif"
+        img = _vips(pix, "srgb")
+        img.pngsave(str(src / name)) if name.endswith(".png") else img.tiffsave(str(src / name))
+        names.append(name)
+    (src / "broken.png").write_bytes(b"not an image")
+    return [*names, "broken.png"]
+
+
+def test_workers_match_serial_records_and_hashes(env, tmp_path):
+    cfg, src = env
+    items = [_item(src, n) for n in _parallel_fixtures(src)]
+    serial = derive.derive_items(cfg, PROFILE, items, workers=1)
+    want = derive.load_index(cfg, PROFILE)
+    path = derive.index_path(cfg, PROFILE)
+    path.unlink()
+    logged = []
+    par = derive.derive_items(cfg, PROFILE, items, workers=4, log=logged.append)
+    got = derive.load_index(cfg, PROFILE)
+    assert (par.ok, par.error, par.skipped, par.flagged) == (serial.ok, serial.error, serial.skipped, serial.flagged)
+    assert (par.ok, par.error) == (6, 1)
+    assert got == want  # same records (and derived_blake3) per asset
+    lines = path.read_text().splitlines()
+    assert len(lines) == len(items) and all(json.loads(line)["asset_id"] for line in lines)
+    assert len(logged) == len(items)
+    again = derive.derive_items(cfg, PROFILE, items, workers=4)
+    assert (again.skipped, again.ok) == (6, 0) and again.error == 1
+
+
+def test_cli_workers_flag(env, tmp_path, capsys):
+    _, src = env
+    items = [_item(src, n) for n in _parallel_fixtures(src)]
+    f = _write_items(tmp_path, items)
+    assert main(["derive", "--profile", PROFILE, "--items", str(f), "--workers", "3"]) == 0
+    assert "ok 6" in capsys.readouterr().out

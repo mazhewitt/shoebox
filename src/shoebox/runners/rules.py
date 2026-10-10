@@ -260,7 +260,11 @@ def _is_phone(make: str, model: str) -> bool:
 
 def colour_stats(image_path: Path) -> dict:
     """Chroma statistics in CIELAB over mid-tone pixels of a 256 px thumbnail of the derived image."""
-    img = pyvips.Image.thumbnail(str(image_path), 256)
+    return chroma_stats(pyvips.Image.thumbnail(str(image_path), 256))
+
+
+def chroma_stats(img: pyvips.Image) -> dict:
+    """`colour_stats` maths over an already-thumbnailed image (also used by `shoebox inventory`)."""
     if img.bands > 3:
         img = img.extract_band(0, n=3)
     lab = img.colourspace("lab").cast("float")
@@ -274,7 +278,7 @@ def colour_stats(image_path: Path) -> dict:
     chromatic = c > 3
     # hue concentration: length of the chroma-weighted mean hue vector (1 = one hue, 0 = spread)
     hue_r = float(np.hypot(a[chromatic].sum(), b[chromatic].sum()) / c[chromatic].sum()) if chromatic.any() else 0.0
-    return {"c50": float(np.percentile(c, 50)), "c95": float(np.percentile(c, 95)),
+    return {"cmean": float(c.mean()), "c50": float(np.percentile(c, 50)), "c95": float(np.percentile(c, 95)),
             "chromatic": float(chromatic.mean()), "hue_r": hue_r}
 
 

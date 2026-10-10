@@ -238,9 +238,10 @@ Every route ranks the **whole corpus** (the set's distinct asset_ids) for every 
 
 ### Stored rankings
 
-`search-run` writes `<shoebox_root>/results/search/<set>/<route_dir>/<params_hash>.jsonl`, one line per query: `{query_id, route, ranking: [asset_id × corpus], scores: [float|null × corpus]}`. Next to it, `<params_hash>.params.json` holds the route definition and coverage. `route_dir` is the route name with `:` → `_` (the share is SMB).
+`search-run` writes `<shoebox_root>/results/search/<set>/<route_dir>/<params_hash>.jsonl`, one line per query: `{query_id, route, ranking: [asset_id × corpus], scores: [float|null × corpus]}`. Next to it, `<params_hash>.params.json` holds the route definition and coverage, and `<params_hash>.diag.jsonl` holds per-query diagnostics: `{query_id, route, rank_best, rank_worst, rank_expected, above: [{asset_id, score}]}`, where `above` lists the items ranked above the first relevant item in the stored order (at most 10). That's what beats the target. `route_dir` is the route name with `:` → `_` (the share is SMB).
 
-- **`params_hash`** hashes the definition: route, set, the sha256 of the queries file and of the corpus, the EG2 `{candidate, model_id, params_hash, query_prompt}`, dim, the caption-embedding store, the label (caption) source `{candidate, model_id, params_hash}`, `w`, RRF `k`, the FTS settings and stopword-list hash, and the tie-break rule.
+- **Corpus:** the set's distinct asset_ids minus those in the optional `exclude.jsonl` (see "Distractor pool"). The label and vector stores are read only for corpus items, so other sets' items in the same stores don't score or change the FTS statistics.
+- **`params_hash`** hashes the definition: route, set, the sha256 of the queries file and of the corpus, the EG2 `{candidate, model_id, params_hash, query_prompt}`, dim, the caption-embedding store, the label (caption) source `{candidate, model_id, params_hash}`, `w`, RRF `k`, the FTS settings and stopword-list hash, and the tie-break rule. When the set has an `exclude.jsonl`, the definition also holds `exclude: {file, n, sha256}`. A set without one keeps its earlier hashes.
 - Re-running writes byte-identical files (verified on pilot-v0, including the Ollama query embeddings).
 - `results/search/<set>/index.json` records the latest rankings per route. `gen-search` reads it and refuses a route with no rankings or rankings made from another version of the queries file.
 - A route whose inputs are missing (e.g. no caption run yet for that labeller) is skipped with a message and the command exits 1; the others are still written.
@@ -261,7 +262,8 @@ Every route ranks the **whole corpus** (the set's distinct asset_ids) for every 
 
 `search-report --results <results.jsonl or regraded.jsonl> [--routes-file F] [--date D]` writes `evals/runs/<date>_<set>-search.json` and `.md`. It recomputes every per-query metric in Python (`search.query_metrics`, the same tie- and target-aware definitions as the grader) from the trajectory's ranking and scores and the queries file, and checks rank, rr, hit@5 and nDCG@10 against the grader's metadata.
 
-- **Per route:** n queries, MRR with a 95% percentile-bootstrap CI (1000 resamples of queries, seed 20261010), the **MRR tie range** (`mrr_worst`–`mrr_best`: every tie broken against / for the relevant item) and **`tie_decided_queries`**, hit@k, nDCG@k and recall@k for k = 1, 5, 10, 20 (nDCG@20 is the D11 gate metric), **pool coverage** `judged@k`, mean and median expected rank of the first relevant item, `params_hash`, coverage, and per query (keyed by `query_id`) the expected/best/worst/stored rank, `tie_decided`, rr and hit/recall/nDCG at every k.
+- **Header:** the corpus size, with targets (items relevant to some query), distractors (the rest) and the excluded count, from `routes.json` (`gen-search` records it).
+- **Per route:** n queries, MRR with a 95% percentile-bootstrap CI (1000 resamples of queries, seed 20261010), the **MRR tie range** (`mrr_worst`–`mrr_best`: every tie broken against / for the relevant item) and **`tie_decided_queries`**, hit@k, nDCG@k and recall@k for k = 1, 5, 10, 20 (nDCG@20 is the D11 gate metric), **pool coverage** `judged@k`, mean and median expected rank of the first relevant item, `params_hash`, coverage, and per query (keyed by `query_id`) the expected/best/worst/stored rank, `tie_decided`, rr and hit/recall/nDCG at every k, plus `above_target` (up to 10 asset_ids ranked above the first relevant item, JSON only).
 - **Paired comparison:** each route vs `eg2-image@768` on reciprocal rank: wins, losses, ties, mean RR delta and a two-sided exact sign test over the non-tied queries. The **best caption-based route** (highest MRR among caption, blend at w = 0.5, fts and hybrid; ties go to the first name) is called out. It's chosen on the same queries, so its p-value is optimistic.
 - **Per labeller:** MRR (and hit@5) of its caption, fts, blend and hybrid routes and their mean: whose captions make photos easiest to find. Plus the blend-weight sensitivity table, labelled as not tuned on held-out data.
 - **`complete`** is false, with `blockers`, when a route lacks a usable trial for some query, a trial errored (missing key), the grader disagrees with the Python metrics, a trial replayed another `params_hash`, or the queries file changed since `gen-search`.
@@ -271,4 +273,63 @@ Every route ranks the **whole corpus** (the set's distinct asset_ids) for every 
 
 - **Relevance is one known item, not a judged pool.** Each query was judged only against the photo(s) it was written for. Every other item is *assumed* non-relevant without a judgment, so a photo that also fits a generic note counts as a miss. `judged@k` is therefore about 1/k for k > 1. Read the numbers as known-item metrics (MRR, hit@k); nDCG and recall at large k only measure where the one known target landed, not how many good results a route found.
 - **Ties** are scored symmetrically (above); the report's MRR tie range shows how much they could swing a route.
-- **The corpus is tiny:** with 45 items most routes reach rank 1 for most queries. The test separates FTS and caption-only routes from the rest, but it can't separate the strong routes from each other. A larger corpus with distractors is needed before it can gate anything.
+- **The corpus is tiny:** with 45 items most routes reach rank 1 for most queries. The test separates FTS and caption-only routes from the rest, but it can't separate the strong routes from each other. A larger corpus with distractors is needed before it can gate anything (see "Distractor pool").
+
+### Distractor pool
+
+The pool makes the known-item test harder. The base set's queries are searched over its targets plus thousands of random photos from the sampling frame (`shoebox inventory`).
+
+```sh
+uv run shoebox eval search-pool --set pilot-v0 --frame ~/mnt/shoebox/frame/frame-<date>.parquet \
+    --n 5000 --seed 20261010 --out-set pilot-v0-pool5k        # evals/sets/pilot-v0-pool5k/
+uv run shoebox eval search-neardups --set pilot-v0-pool5k [--threshold 0.90] [--top 200]
+```
+
+- **Files.** `search-pool` writes `evals/sets/<out-set>/`. If the pool's files are already there, it refuses unless you pass `--force`.
+  - `items.jsonl`: every base item verbatim plus `"role": "target"`, then the distractors with the pilot item keys (`bucket: "distractor"`, `group_id`/`group_rule` from the frame) plus `"role": "distractor"`, sorted by asset_id.
+  - `search-known-item.jsonl`: copied byte for byte from the base set. The relevant sets stay the targets, so the pool set needs no `labels.jsonl` and no `search-queries`.
+  - `pool.json`: the base set, the frame path and sha256, the seed, n requested/drawn, the eligibility rules and exclusion counts.
+  - `README.md`: distractor counts by folder (first two folder components), ext, src_kind, colour_guess and date decade, plus the exclusion counts. It names no files.
+- **Eligibility.** Each frame path is checked against these rules in order, and the first failure is counted:
+  - `kind == "image"`, `status == "ok"`, and the asset_id is not null.
+  - The ext and `src_kind` are ones `derive.render` can decode (jpeg, png, heif, webp, tiff, raw, psd; not gif or bmp).
+  - The source is in `config/shoebox.toml`, and its person is `owner`. Other people's photos are never drawn.
+  - The asset_id is not in the base set.
+  - The file is not on `evals/never-send.txt` (asset_id or path glob, `shoebox.privacy` parsing).
+  - The file is not in a frame capture group (`group_id`) that holds a target (targets are matched to frame rows by asset_id) or a never-send path.
+  - The file is no larger than `shoebox.pilot.select.MAX_BYTES`.
+- **Copies.** An asset excluded for its source, base set, never-send or group on any path is excluded on every path (`copy_excluded`). One row is kept per asset_id: its smallest `(source, relpath)`.
+- **Draw.** `numpy.random.default_rng(seed).choice` over the sorted eligible asset_ids, without replacement. The same frame and seed give byte-identical files. If fewer are eligible than requested, all are drawn and the command exits 1.
+- **Pipeline.** Derive, label and embed the new items file as for the pilot (the existing pilot-v0 records are cache hits). Run `search-run`, `gen-search`, Vally and `search-report` with `SET=<out-set>`.
+- **Near-duplicate review.** `search-neardups` uses the EG2 image vectors (the same store as `search-run`). For each distractor it finds the max cosine (768 d) to any target. It writes `<set>/near-dups.jsonl`, cosine descending: `{asset_id, relpath, target_asset_id, target_relpath, cosine, excluded}` for every distractor at or above `--threshold`, plus the `--top` closest regardless. It never changes the corpus. A person (or Claude, under the viewing rules in docs/pilot.md) reviews the list, preferably on the derived images. Decided duplicates of a target (another export, scan or crop of the same photo) go in `<set>/exclude.jsonl`, one `{"asset_id", "reason", "decided_by", "ts"}` per line.
+- **Exclusions.** `search-run` and `gen-search` drop `exclude.jsonl`'s asset_ids from the corpus, and they refuse an excluded id that is in any query's relevant set. The count and the file's sha256 go into the route definition, so the `params_hash` changes. The report header shows the corpus size, targets, distractors and the excluded count.
+- **The known-item caveat grows with the pool.** Only the targets were judged. A distractor that genuinely fits a note (another photo of the same ruin, a second rose) is unjudged and counts as a miss, so it pulls MRR down for every route that finds it. Near-duplicates of a target are the worst case, which is why they are reviewed and excluded. Other fitting photos stay in the corpus. Before reading a drop in MRR as a weaker route, check each query's `above_target` in the report (or the route's `.diag.jsonl`).
+
+## Sampling frame
+
+`shoebox inventory` (design D4, tasks 2.1–2.2) walks the configured sources read-only and writes the frame that eval sets are drawn from. It refuses to start if a `synced = true` source's root is writable, and refuses outputs under a source root or `/Volumes`.
+
+```sh
+uv run shoebox inventory --workers 8                    # all sources, today's date
+uv run shoebox inventory --only "Pictures/pinhole" --out-dir ~/mnt/shoebox/frame/dev
+uv run shoebox inventory --resume --date 2026-10-10     # continue an interrupted run
+uv run shoebox inventory readme --frame ~/mnt/shoebox/frame/frame-2026-10-10.parquet
+```
+
+Outputs, under `<shoebox_root>/frame/` by default:
+
+- **`frame-<date>.parquet`:** one row per file path (skipped entries excluded). Columns: `source`, `person`, `synced`, `relpath`, `folder`, `name`, `ext`, `kind` (image, video, sidecar, other), `bytes`, `mtime`, `asset_id` (BLAKE3, the same as `shoebox.ids.asset_id`; null for sidecars and other files), `status` (ok, error, stat_only), `error`, `width`, `height`, `bits`, `src_kind` (derive's vocabulary plus gif, bmp, video), `date`, `date_kind`, `make`, `model`, `software`, `exif` (the ExifTool `-j -n -G1 -struct -fast2` record as JSON, binary fields dropped), `chroma_mean`, `chroma_median`, `chroma_p95`, `chromatic`, `hue_r` (the rule baseline's chroma maths over a 256 px decode), `colour_guess` (the baseline's colour class), `group_id`, `group_rule`, `dup_n` (paths sharing the asset_id).
+- **`listing-<date>.json`:** per folder, how many listings were taken, the union count and whether any listing differed; skip counts per rule with a few example paths; walk errors; the sources-untouched result; the run summary.
+- **`work-<date>/records.jsonl`:** the checkpoint, one line per finished file. `--resume` skips files whose (source, relpath, bytes, mtime) are already recorded; a torn last line is redone.
+
+What is read: image and video files are read once into memory, hashed and decoded from those bytes (raws from their embedded preview, PSDs from their merged composite, HEIC through pillow-heif when libvips lacks HEVC). Takeout JSON sidecars next to a media file are parsed for `photoTakenTime`. Every other file (documents, PDFs, XMP, vaults) is recorded from `stat` only and never opened.
+
+**Listing cross-check.** The macOS SMB client returns truncated listings that change from run to run for folders with more than about 1000 entries. Each folder is listed repeatedly and the union taken, until a listing adds nothing new: at least two listings, and two quiet listings in a row (so at least three) once any listing had 500 or more entries, capped at eight.
+
+**Skipped:** `#recycle`, `$RECYCLE.BIN`, `.tmp.drivedownload`, `*.lrdata` (Lightroom previews), `@eaDir`, `.Spotlight-V100`, `.Trashes`, `.fseventsd`, symlinks, and the litter files `.DS_Store`, `._*`, `Thumbs.db`, `desktop.ini`. A skipped folder counts once.
+
+**Best date** (`date_kind`), first match wins: `scan` (a scanner per the rule baseline, or a scanner tag without camera exposure tags, with an EXIF date: that is the scan time), `exif` (DateTimeOriginal, else CreationDate/CreateDate), `sidecar` (Takeout `photoTakenTime`, UTC), `filename` (e.g. `20190704_123456`, `IMG-20190704-WA0001`, `2019-07-04`), `mtime` (UTC). EXIF and file-name dates are wall-clock times without a zone.
+
+**Capture groups:** same folder, same case-insensitive base name: a raw (any raw extension) with a JPEG is `raw_jpeg_basename`, a TIFF/PSD with a JPEG is `scan_export_basename` (`pilot.select.assign_groups`).
+
+**Sources-untouched check:** before the walk starts, a seeded sample of up to 200 media files is hashed, and the listing of every walked folder is kept. After the run both are measured again with `pilot/untouched.py` (entries whose presence differs are stat'ed, so a flaky listing is not mistaken for a change). A failure is written to the listing log and the command exits 2.

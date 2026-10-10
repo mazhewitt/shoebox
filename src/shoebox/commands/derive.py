@@ -25,6 +25,12 @@ def register(sub) -> None:
         action="store_true",
         help="re-derive even when a current ok image exists",
     )
+    p.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="derive this many items at once (threads; each holds one original in memory)",
+    )
     p.set_defaults(func=run)
 
 
@@ -33,7 +39,12 @@ def run(args) -> int:
     items = [
         json.loads(line) for line in args.items.read_text().splitlines() if line.strip()
     ]
-    counts = derive.derive_items(cfg, args.profile, items, force=args.force, log=print)
+    if args.workers < 1:
+        print("shoebox derive: --workers must be at least 1")
+        return 2
+    counts = derive.derive_items(
+        cfg, args.profile, items, force=args.force, log=print, workers=args.workers
+    )
     print(
         f"{args.profile}: ok {counts.ok}, skipped {counts.skipped}, error {counts.error} "
         f"(of {counts.total}); clipped {counts.flagged} of the ok beyond tolerance "

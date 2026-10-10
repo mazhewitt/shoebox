@@ -9,10 +9,12 @@ import hashlib
 import io
 import json
 import os
+import threading
 import time
 import tomllib
 import warnings
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -443,7 +445,7 @@ def _check_locations(cfg: Config, profile: str) -> None:
 
 def _atomic_write(path: Path, data: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / f".{path.name}.{os.getpid()}.tmp"
+    tmp = path.parent / f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
     try:
         with open(tmp, "wb") as f:
             f.write(data)
@@ -559,8 +561,16 @@ def derive_items(
     items: Iterable[dict],
     force: bool = False,
     log: Callable[[str], None] | None = None,
+    workers: int = 1,
 ) -> Counts:
-    """Derive every item, appending one index record per attempt; skips current ok records unless `force`."""
+    """Derive every item, appending one index record per attempt; skips current ok records unless `force`.
+
+    `workers` > 1 derives that many items at once on a thread pool (libvips and LibRaw release the GIL).
+    Index appends, counts and log lines are serialised by a lock, so each record stays one whole line.
+    Each worker holds one original in memory at a time.
+    """
+    if workers < 1:
+        raise ValueError(f"workers must be at least 1, not {workers}")
     _check_locations(cfg, profile)
     settings = load_profile(profile)
     shash = settings_hash(settings)
@@ -569,31 +579,43 @@ def derive_items(
     index = load_index(cfg, profile)
     _check_settings_unchanged(index, profile, shash)
     counts = Counts()
-    for item in items:
+    lock = threading.Lock()
+
+    def one(item: dict) -> None:
         aid = item["asset_id"]
         if not force and _is_current(cfg, profile, index.get(aid), shash, tools):
-            counts.skipped += 1
-            if log:
-                log(f"skip  {aid[:12]}  {item.get('relpath', '')}")
-            continue
+            with lock:
+                counts.skipped += 1
+                if log:
+                    log(f"skip  {aid[:12]}  {item.get('relpath', '')}")
+            return
         t0 = time.monotonic()
         rec = derive_one(cfg, profile, settings, item, tools)
-        _append_index(cfg, profile, rec)
-        index[aid] = rec
-        secs = time.monotonic() - t0
-        if rec["status"] == "ok":
-            counts.ok += 1
-            msg = f"ok    {aid[:12]}  {item.get('relpath', '')}  {rec['width']}x{rec['height']}  {secs:.1f}s"
-            if rec["tone"]["within_tolerance"] is False:
-                counts.flagged += 1
-                t = rec["tone"]
-                msg += (
-                    f"  CLIP black {t['src_black_pct']}->{t['out_black_pct']}%"
-                    f" white {t['src_white_pct']}->{t['out_white_pct']}%"
-                )
-        else:
-            counts.error += 1
-            msg = f"ERROR {aid[:12]}  {item.get('relpath', '')}  {rec['error']}"
-        if log:
-            log(msg)
+        with lock:
+            _append_index(cfg, profile, rec)
+            index[aid] = rec
+            secs = time.monotonic() - t0
+            if rec["status"] == "ok":
+                counts.ok += 1
+                msg = f"ok    {aid[:12]}  {item.get('relpath', '')}  {rec['width']}x{rec['height']}  {secs:.1f}s"
+                if rec["tone"]["within_tolerance"] is False:
+                    counts.flagged += 1
+                    t = rec["tone"]
+                    msg += (
+                        f"  CLIP black {t['src_black_pct']}->{t['out_black_pct']}%"
+                        f" white {t['src_white_pct']}->{t['out_white_pct']}%"
+                    )
+            else:
+                counts.error += 1
+                msg = f"ERROR {aid[:12]}  {item.get('relpath', '')}  {rec['error']}"
+            if log:
+                log(msg)
+
+    if workers == 1:
+        for item in items:
+            one(item)
+        return counts
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for fut in [pool.submit(one, item) for item in items]:
+            fut.result()
     return counts

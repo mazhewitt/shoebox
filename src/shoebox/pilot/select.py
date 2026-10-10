@@ -251,8 +251,11 @@ def select(
     return picks, skipped
 
 
-def assign_groups(items: list[dict]) -> None:
-    """Set `group_id`/`group_rule` in place for same-folder siblings among `items`."""
+def assign_groups(items: list[dict], raw_exts: frozenset[str] = RAW_EXTS) -> None:
+    """Set `group_id`/`group_rule` in place for same-folder siblings among `items`.
+
+    `raw_exts` are the extensions counted as RAW (the pilot's NEF/DNG by default).
+    """
     by_key: dict[tuple[str, str], list[dict]] = {}
     for it in items:
         it["group_id"] = None
@@ -261,8 +264,8 @@ def assign_groups(items: list[dict]) -> None:
         by_key.setdefault((str(p.parent), p.stem.lower()), []).append(it)
     for members in by_key.values():
         exts = {m["ext"] for m in members}
-        if exts & RAW_EXTS and exts & JPG_EXTS:
-            rule, kinds = "raw_jpeg_basename", RAW_EXTS | JPG_EXTS
+        if exts & raw_exts and exts & JPG_EXTS:
+            rule, kinds = "raw_jpeg_basename", raw_exts | JPG_EXTS
         elif exts & SCAN_EXTS and exts & JPG_EXTS:
             rule, kinds = "scan_export_basename", SCAN_EXTS | JPG_EXTS
         else:

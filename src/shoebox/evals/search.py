@@ -33,6 +33,8 @@ from shoebox import store
 from shoebox.config import REPO_ROOT, Config, check_write_location
 
 QUERIES_FILE = "search-known-item.jsonl"
+EXCLUDE_FILE = "exclude.jsonl"  # optional: asset_ids removed from the corpus (never a target)
+DIAG_TOP = 10  # diagnostics: how many of the items ranked above the first target to keep
 QUERY_SOURCE = "owner_notes"
 EMBED_CANDIDATE = "eg2-bf16"
 VLM_CANDIDATES = ("e4b-bf16", "e4b-q4", "g12b-q4", "g31b", "gemini-low", "gemini-medium")
@@ -333,6 +335,7 @@ class Sources:
     label_source: dict[str, dict] = field(default_factory=dict)  # cand -> {candidate, model_id, params_hash}
     caption_vecs: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)  # cand -> vectors
     caption_store: dict[str, dict] = field(default_factory=dict)  # cand -> {model_id, params_hash}
+    exclude: dict | None = None  # {file, n, sha256} when the set has an exclude.jsonl
     _qvec: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
     _fts: dict[str, FtsIndex] = field(default_factory=dict, repr=False)
 
@@ -349,6 +352,10 @@ class Sources:
     @property
     def corpus_sha256(self) -> str:
         return sha256_lines(self.corpus)
+
+    @property
+    def corpus_info(self) -> dict:
+        return corpus_info(self.corpus, self.queries, self.exclude)
 
     def missing(self, route: Route) -> str | None:
         """Why this route can't run from these sources, or None."""
@@ -384,6 +391,19 @@ def run_route(route: Route, src: Sources) -> list[dict]:
     return rows
 
 
+def query_diagnostics(query_id: str, route: str, ranking: list[str], scores: list[float | None],
+                      relevant: Iterable[str]) -> dict:
+    """The first target's rank (tie-aware bounds and expectation) and the items ranked above it in the stored
+    order (at most DIAG_TOP, with their scores): what beats the target. asset_ids only, no text."""
+    rel = set(relevant)
+    m = query_metrics(ranking, rel, ks=(), scores=scores)
+    first = next((i for i, a in enumerate(ranking) if a in rel), len(ranking))
+    return {"query_id": query_id, "route": route, "rank_best": m["rank_best"], "rank_worst": m["rank_worst"],
+            "rank_expected": m["rank_expected"],
+            "above": [{"asset_id": a, "score": s} for a, s in zip(ranking[:min(first, DIAG_TOP)], scores,
+                                                                  strict=False)]}
+
+
 def route_definition(route: Route, src: Sources) -> dict:
     """Everything a route's rankings depend on; its params_hash is the hash of this."""
     d: dict = {"route": route.name, "kind": route.kind, "set": src.set_name,
@@ -410,6 +430,8 @@ def route_definition(route: Route, src: Sources) -> dict:
     if route.kind == "hybrid":
         d["rrf_k"] = RRF_K
         d["fused"] = [f"eg2-blend:{route.cand}", f"fts:{route.cand}"]
+    if src.exclude is not None:  # only then: sets without exclusions keep their hashes
+        d["exclude"] = dict(src.exclude)
     return d
 
 
@@ -441,8 +463,12 @@ def write_route(cfg: Config, route: Route, src: Sources, rows: list[dict]) -> di
     _atomic_write(d / f"{ph}.params.json", json.dumps(
         {"route": route.name, "params_hash": ph, "definition": definition, "coverage": cov,
          "n_queries": len(rows)}, indent=2, sort_keys=True) + "\n")
-    return {"params_hash": ph, "path": str(path), "queries_sha256": src.queries_sha256,
-            "corpus_sha256": src.corpus_sha256, "n_queries": len(rows), "coverage": cov,
+    relevant = {q["query_id"]: q["relevant"] for q in src.queries}
+    diag = d / f"{ph}.diag.jsonl"
+    _atomic_write(diag, "".join(json.dumps(query_diagnostics(r["query_id"], route.name, r["ranking"], r["scores"],
+                                                             relevant[r["query_id"]])) + "\n" for r in rows))
+    return {"params_hash": ph, "path": str(path), "diagnostics": str(diag), "queries_sha256": src.queries_sha256,
+            "corpus_sha256": src.corpus_sha256, "corpus": src.corpus_info, "n_queries": len(rows), "coverage": cov,
             "kind": route.kind, "candidate": route.cand, "dim": definition.get("dim"), "w": route.w}
 
 
@@ -480,6 +506,48 @@ def _label_docs(cfg: Config, source: dict) -> dict[str, dict]:
     return out
 
 
+def load_corpus(set_dir: Path, queries: list[dict]) -> tuple[list[str], dict | None]:
+    """The set's distinct asset_ids minus those in the optional `exclude.jsonl` (one
+    `{asset_id, reason, decided_by, ts}` per line), and `{file, n, sha256}` of that file (None without one).
+    Refuses to exclude a query's relevant item: exclusions remove distractors, never targets."""
+    set_dir = Path(set_dir)
+    corpus = sorted({it["asset_id"] for it in read_jsonl(set_dir / "items.jsonl")})
+    path = set_dir / EXCLUDE_FILE
+    if not path.exists():
+        return corpus, None
+    rows = read_jsonl(path)
+    bad = [i for i, r in enumerate(rows, 1) if not isinstance(r.get("asset_id"), str) or not r["asset_id"]]
+    if bad:
+        raise ValueError(f"{path}: lines {bad} have no asset_id")
+    excluded = {r["asset_id"] for r in rows}
+    relevant = set().union(*(q["relevant"] for q in queries)) if queries else set()
+    hit = sorted(excluded & relevant)
+    if hit:
+        raise ValueError(f"{path} excludes {len(hit)} relevant item(s) of the queries ({', '.join(hit[:3])}): "
+                         "exclusions may only remove distractors")
+    kept = [a for a in corpus if a not in excluded]
+    return kept, {"file": EXCLUDE_FILE, "n": len(corpus) - len(kept), "sha256": file_sha256(path)}
+
+
+def corpus_info(corpus: list[str], queries: list[dict], exclude: dict | None) -> dict:
+    """Corpus size, targets (items relevant to some query), distractors (the rest) and excluded count."""
+    relevant = set().union(*(q["relevant"] for q in queries)) if queries else set()
+    targets = sum(a in relevant for a in corpus)
+    return {"n": len(corpus), "targets": targets, "distractors": len(corpus) - targets,
+            "excluded": exclude["n"] if exclude else 0}
+
+
+def load_image_store(cfg: Config, embed_candidate: str = EMBED_CANDIDATE):
+    """(resolved image-only EG2 candidate, {asset_id: 768-d unit vector}) from the embedding store."""
+    from shoebox.commands.embed import resolve as resolve_embed
+
+    res, _ = resolve_embed(embed_candidate, None)
+    image = _vectors(store.index(cfg, res.model_id, res.params_hash, res.kind), "image")
+    if not image:
+        raise RuntimeError(f"no image embeddings in {res.store_dir(cfg)}: run `shoebox embed run`")
+    return res, image
+
+
 def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path = REPO_ROOT / "evals" / "sets",
                  embed_candidate: str = EMBED_CANDIDATE, log=lambda m: print(m, file=sys.stderr)) -> Sources:
     """Resolve the EG2 and label candidates the routes need (local Ollama only) and load their stores."""
@@ -492,25 +560,26 @@ def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path
     if not qpath.exists():
         raise FileNotFoundError(f"{qpath} missing: run `shoebox eval search-queries --set {set_name}`")
     queries = read_jsonl(qpath)
-    corpus = sorted({it["asset_id"] for it in read_jsonl(set_dir / "items.jsonl")})
-    res, _ = resolve_embed(embed_candidate, None)
-    image = _vectors(store.index(cfg, res.model_id, res.params_hash, res.kind), "image")
-    if not image:
-        raise RuntimeError(f"no image embeddings in {res.store_dir(cfg)}: run `shoebox embed run`")
+    corpus, exclude = load_corpus(set_dir, queries)
+    keep = set(corpus)
+    res, image = load_image_store(cfg, embed_candidate)
+    # Only the corpus: the stores also hold other sets' items, which must not score (or sway FTS statistics).
+    image = {a: v for a, v in image.items() if a in keep}
 
     def embed_query(text: str) -> np.ndarray:
         return embed.embed_query(res.cand, text, embed.NATIVE_DIM)
 
     src = Sources(set_name, corpus, queries, file_sha256(qpath), embed_query,
                   {"candidate": embed_candidate, "model_id": res.model_id, "params_hash": res.params_hash,
-                   "query_prompt": res.cand.get("query_prompt")}, image)
+                   "query_prompt": res.cand.get("query_prompt")}, image, exclude=exclude)
     for cand in sorted({r.cand for r in routes if r.cand}):
         lres = resolve_label(cand)
         source = {"candidate": cand, "model_id": lres.model_id, "params_hash": lres.params_hash}
         src.label_source[cand] = source
-        src.labels[cand] = _label_docs(cfg, source)
+        src.labels[cand] = {a: d for a, d in _label_docs(cfg, source).items() if a in keep}
         cres, _ = resolve_embed(embed_candidate, cand)
         vecs = _vectors(store.index(cfg, cres.model_id, cres.params_hash, cres.kind), "caption")
+        vecs = {a: v for a, v in vecs.items() if a in keep}
         if vecs:
             src.caption_vecs[cand] = vecs
             src.caption_store[cand] = {"model_id": cres.model_id, "params_hash": cres.params_hash}
@@ -602,6 +671,10 @@ def generate_spec(cfg: Config, set_name: str, route_names: list[str],
     qpath = Path(sets_dir) / set_name / QUERIES_FILE
     queries = read_jsonl(qpath)
     qsha = file_sha256(qpath)
+    corpus_doc = None
+    if (Path(sets_dir) / set_name / "items.jsonl").exists():
+        corpus, exclude = load_corpus(Path(sets_dir) / set_name, queries)
+        corpus_doc = corpus_info(corpus, queries, exclude)
     index_path = Path(index_path) if index_path else search_dir(cfg, set_name) / "index.json"
     indexed = json.loads(index_path.read_text())["routes"] if index_path.exists() else {}
     routes, problems = {}, []
@@ -623,7 +696,7 @@ def generate_spec(cfg: Config, set_name: str, route_names: list[str],
     doc = {"_comment": "generated — do not edit. Regenerate with `shoebox eval gen-search`.",
            "kind": "search", "set": set_name, "eval": eval_name, "queries_file": str(qpath.resolve()),
            "queries_sha256": qsha, "query_ids": [q["query_id"] for q in queries], "k": list(K_VALUES),
-           "pass_k": PASS_K, "routes": routes}
+           "pass_k": PASS_K, "corpus": corpus_doc, "routes": routes}
     routes_path.write_text(json.dumps(doc, indent=2) + "\n")
     spec_path = out_dir / "eval.yaml"
     spec_path.write_text(build_spec(eval_name, set_name, queries, routes_path.resolve()))
@@ -873,6 +946,7 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
         ts = by_route[name]
         meta = (rdoc.get("routes") or {}).get(name) or {}
         per_query: dict[str, dict] = {}
+        above: dict[str, list[str]] = {}
         mismatches = 0
         status: dict[str, int] = {}
         for t in ts:
@@ -886,6 +960,10 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
                                          or any(abs(float(gm.get(k, -1)) - m[k]) > 1e-9
                                                 for k in ("rr", f"hit@{PASS_K}", "ndcg@10"))):
                 mismatches += 1
+            if t.query_id not in per_query:
+                rel = set(q["relevant"])
+                first = next((i for i, a in enumerate(t.ranking) if a in rel), len(t.ranking))
+                above[t.query_id] = t.ranking[:min(first, DIAG_TOP)]
             per_query.setdefault(t.query_id, m)
         not_run = [q for q in qids if q not in per_query]
         if not_run:
@@ -905,7 +983,7 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
         routes_out[name] = {**kind, "params_hash": meta.get("params_hash"), "status_counts": status,
                             "coverage": cov, **route_summary(per_query, cov.get("corpus_n")),
                             "not_run": not_run,
-                            "per_query": {q: {k: m[k] for k in PER_QUERY_KEYS}
+                            "per_query": {q: {**{k: m[k] for k in PER_QUERY_KEYS}, "above_target": above[q]}
                                           for q, m in sorted(per_query.items())}}
         rr_by_route[name] = {q: m["rr"] for q, m in per_query.items()}
 
@@ -943,6 +1021,7 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
     return {
         "set": set_name, "eval": rdoc.get("eval"), "date": run_date, "results": str(results_path),
         "routes_file": str(routes_file), "queries_sha256": rdoc.get("queries_sha256"), "n_queries": len(qids),
+        "corpus": rdoc.get("corpus"),
         "query_source": QUERY_SOURCE, "complete": not blockers, "blockers": blockers,
         "baseline": BASELINE_ROUTE, "best_caption_route": best,
         "best_vs_baseline": comparisons.get(best) if best else None,
@@ -994,6 +1073,10 @@ def to_markdown(rep: dict) -> str:
     out = [f"# Search eval {rep['date']} — {rep['set']} (known-item)", "",
            f"- Results: `{rep['results']}`", f"- Routes file: `{rep['routes_file']}`",
            f"- Queries: {rep['n_queries']} ({rep['query_source']}); complete: {_f(rep['complete'])}"]
+    c = rep.get("corpus")
+    if c:
+        out.append(f"- Corpus: {c['n']} items ({c['targets']} targets, {c['distractors']} distractors); "
+                   f"excluded: {c['excluded']}")
     out += [f"- Incomplete: {b}" for b in rep["blockers"]]
     out += ["", "## Routes", "",
             ("Metrics are expectations over random tie orders. MRR tie range = MRR if every tie broke against / "

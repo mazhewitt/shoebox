@@ -2,12 +2,14 @@
 
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
 from test_eval_helpers import write_jsonl
 
 from shoebox import config
+from shoebox import embed as embed_module
 from shoebox.cli import main
 from shoebox.evals import search
 
@@ -488,3 +490,148 @@ def test_report_scores_ties_and_flags_a_tie_unaware_grader(tmp_path):
                       trials[1]])
     rep = search.build_report(search.load_trials(res), res, "2026-10-10")
     assert rep["complete"] is False and any("disagrees" in b for b in rep["blockers"])
+
+
+# --- distractor pools: corpus, exclusions, diagnostics -------------------------------------------------
+
+def _pool_set(sets, exclude=None):
+    """A pool-style set: targets a1/a2 (one group), b1, c1 plus distractors x1..x3; no labels.jsonl."""
+    items = [{**item(a, g), "role": "target"} for a, g in (("a1", "g1"), ("a2", "g1"), ("b1", None), ("c1", None))]
+    items += [{**item(x), "bucket": "distractor", "role": "distractor"} for x in ("x1", "x2", "x3")]
+    write_jsonl(sets / "p" / "items.jsonl", items)
+    write_jsonl(sets / "p" / search.QUERIES_FILE, QUERIES)
+    if exclude is not None:
+        write_jsonl(sets / "p" / search.EXCLUDE_FILE, exclude)
+    return sets / "p"
+
+
+def _excl(aid):
+    return {"asset_id": aid, "reason": "near_duplicate_of_target", "decided_by": "owner", "ts": "2026-10-10"}
+
+
+def test_load_corpus_with_and_without_exclusions(tmp_path):
+    set_dir = _pool_set(tmp_path / "sets")
+    corpus, excl = search.load_corpus(set_dir, QUERIES)
+    assert corpus == ["a1", "a2", "b1", "c1", "x1", "x2", "x3"] and excl is None
+    assert search.corpus_info(corpus, QUERIES, excl) == {"n": 7, "targets": 4, "distractors": 3, "excluded": 0}
+    set_dir = _pool_set(tmp_path / "sets2", exclude=[_excl("x2")])
+    corpus, excl = search.load_corpus(set_dir, QUERIES)
+    assert corpus == ["a1", "a2", "b1", "c1", "x1", "x3"]
+    assert excl == {"file": search.EXCLUDE_FILE, "n": 1,
+                    "sha256": search.file_sha256(set_dir / search.EXCLUDE_FILE)}
+    assert search.corpus_info(corpus, QUERIES, excl) == {"n": 6, "targets": 4, "distractors": 2, "excluded": 1}
+    bad = _pool_set(tmp_path / "sets3", exclude=[_excl("x1"), _excl("a2")])  # a2 is relevant to q-bridge
+    with pytest.raises(ValueError, match="relevant"):
+        search.load_corpus(bad, QUERIES)
+    junk = _pool_set(tmp_path / "sets4", exclude=[{"reason": "no id"}])
+    with pytest.raises(ValueError, match="asset_id"):
+        search.load_corpus(junk, QUERIES)
+
+
+def test_exclusions_change_the_params_hash_only_when_present(tmp_path):
+    src = fake_sources()
+    r = search.parse_route("eg2-image@768")
+    plain = search.route_definition(r, src)
+    assert "exclude" not in plain  # sets without exclude.jsonl keep their old hashes
+    src.exclude = {"file": search.EXCLUDE_FILE, "n": 1, "sha256": "abc"}
+    d = search.route_definition(r, src)
+    assert d["exclude"] == src.exclude
+    assert search.store.params_hash(d) != search.store.params_hash(plain)
+    src.exclude = {"file": search.EXCLUDE_FILE, "n": 1, "sha256": "abd"}
+    assert search.store.params_hash(search.route_definition(r, src)) != search.store.params_hash(d)
+
+
+def _fake_image_store(monkeypatch, vectors):
+    class Res:
+        model_id, params_hash, cand = "m/eg2", "img", {"query_prompt": "q: {text}"}
+
+    monkeypatch.setattr(search, "load_image_store", lambda cfg, cand: (Res, vectors))
+    qvec = {"bridge over canal": unit((0, 1.0)), "red rose": unit((1, 1.0)), "small dog": unit((2, 1.0))}
+    monkeypatch.setattr(embed_module, "embed_query", lambda cand, text, dim: qvec[text])
+
+
+def test_search_run_on_a_pool_set_without_labels(tmp_path, monkeypatch, capsys):
+    cfg, toml = fake_cfg(tmp_path)
+    monkeypatch.setenv("SHOEBOX_CONFIG", str(toml))
+    sets = tmp_path / "sets"
+    set_dir = _pool_set(sets, exclude=[_excl("x3")])
+    assert not (set_dir / "labels.jsonl").exists()
+    vectors = {"a1": unit((0, 1.0), (3, 0.2)), "a2": unit((0, 0.9), (1, 0.3)), "b1": unit((1, 0.5), (3, 1.0)),
+               "c1": unit((2, 1.0)), "x1": unit((1, 1.0)), "x2": unit((5, 1.0)),
+               "x3": unit((0, 1.0)), "zz": unit((0, 1.0))}  # x3 excluded, zz not in the set
+    _fake_image_store(monkeypatch, vectors)
+    rc = main(["eval", "search-run", "--set", "p", "--routes", "eg2-image@768", "--sets-dir", str(sets)])
+    assert rc == 0, capsys.readouterr().err
+    index = json.loads((search.search_dir(cfg, "p") / "index.json").read_text())
+    e = index["routes"]["eg2-image@768"]
+    assert e["corpus"] == {"n": 6, "targets": 4, "distractors": 2, "excluded": 1}
+    rows = search.read_jsonl(Path(e["path"]))
+    assert all(sorted(r["ranking"]) == ["a1", "a2", "b1", "c1", "x1", "x2"] for r in rows)
+    params = json.loads(Path(e["path"]).with_name(f"{e['params_hash']}.params.json").read_text())
+    assert params["definition"]["exclude"]["n"] == 1
+    # diagnostics: the target's rank and what is ranked above it (top 10)
+    diag = {d["query_id"]: d for d in search.read_jsonl(Path(e["diagnostics"]))}
+    assert diag["q-rose"]["rank_best"] == 2 and [a["asset_id"] for a in diag["q-rose"]["above"]] == ["x1"]
+    assert diag["q-bridge"]["above"] == [] and diag["q-bridge"]["rank_expected"] == 1
+    assert set(diag["q-rose"]) == {"query_id", "route", "rank_best", "rank_worst", "rank_expected", "above"}
+    assert "red rose" not in Path(e["diagnostics"]).read_text()
+
+
+def test_diagnostics_cap_at_ten_and_handle_unranked():
+    ranking = [f"x{i:02d}" for i in range(15)] + ["t"]
+    d = search.query_diagnostics("q", "r", ranking, [1.0 - i / 100 for i in range(16)], ["t"])
+    assert d["rank_best"] == 16 and [a["asset_id"] for a in d["above"]] == ranking[:10]
+    assert d["above"][0]["score"] == 1.0
+    none = search.query_diagnostics("q", "r", ["x"], [None], ["t"])
+    assert none["rank_best"] is None and none["above"] == [{"asset_id": "x", "score": None}]
+
+
+def test_report_header_shows_corpus_and_above_target(tmp_path):
+    qpath = tmp_path / "queries.jsonl"
+    write_jsonl(qpath, [{"query_id": "q1", "text": "t", "relevant": ["a"]}])
+    rfile = tmp_path / "routes.json"
+    rfile.write_text(json.dumps({"set": "s", "queries_file": str(qpath), "queries_sha256": search.file_sha256(qpath),
+                                 "query_ids": ["q1"], "routes": {"eg2-image@768": {"params_hash": "p"}},
+                                 "corpus": {"n": 50, "targets": 4, "distractors": 46, "excluded": 2}}))
+    res = tmp_path / "r.jsonl"
+    write_jsonl(res, [_trial("eg2-image@768", "q1", ["x", "y", "a"], rfile)])
+    _, mpath, rep = search.write_report(res, tmp_path / "runs", "2026-10-10")
+    assert rep["corpus"] == {"n": 50, "targets": 4, "distractors": 46, "excluded": 2}
+    assert "- Corpus: 50 items (4 targets, 46 distractors); excluded: 2" in mpath.read_text()
+    assert rep["routes"]["eg2-image@768"]["per_query"]["q1"]["above_target"] == ["x", "y"]
+
+
+def test_generate_spec_records_corpus(tmp_path):
+    cfg, _ = fake_cfg(tmp_path)
+    sets = tmp_path / "sets"
+    set_dir = _pool_set(sets, exclude=[_excl("x1")])
+    src = fake_sources(set_name="p")
+    src.queries_sha256 = search.file_sha256(set_dir / search.QUERIES_FILE)
+    search.run_routes(cfg, src, [search.parse_route("eg2-image@768")])
+    res = search.generate_spec(cfg, "p", ["eg2-image@768"], sets_dir=sets, out_dir=tmp_path / "gen")
+    doc = json.loads(res.routes_path.read_text())
+    assert doc["corpus"] == {"n": 6, "targets": 4, "distractors": 2, "excluded": 1}
+
+
+def test_load_sources_keeps_only_corpus_items_from_the_stores(tmp_path, monkeypatch):
+    """Label/vector stores hold other sets' items (and excluded ones): they must not score or sway FTS."""
+    import shoebox.commands.embed as embed_cmd
+    from shoebox import runners
+
+    cfg, _ = fake_cfg(tmp_path)
+    set_dir = _pool_set(tmp_path / "sets", exclude=[_excl("x3")])
+    _fake_image_store(monkeypatch, {a: unit((0, 1.0)) for a in ("a1", "x3", "zz")})
+
+    class R:
+        model_id, params_hash, kind = "m/x", "ph", "labels"
+
+        def store_dir(self, cfg):
+            return tmp_path / "none"
+
+    monkeypatch.setattr(runners, "resolve", lambda cand: R())
+    monkeypatch.setattr(embed_cmd, "resolve", lambda cand, cap: (R(), None))
+    docs = {a: {"caption": "bridge", "tags": []} for a in ("a1", "x1", "x3", "zz")}
+    monkeypatch.setattr(search, "_label_docs", lambda cfg, source: docs)
+    src = search.load_sources(cfg, "p", [search.parse_route("fts:cA")], sets_dir=set_dir.parent, log=lambda m: None)
+    assert set(src.image) == {"a1"} and set(src.labels["cA"]) == {"a1", "x1"}
+    assert src.exclude["n"] == 1 and "x3" not in src.corpus
