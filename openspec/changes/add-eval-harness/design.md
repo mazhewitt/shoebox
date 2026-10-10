@@ -60,7 +60,10 @@ JSONL rather than Parquet, for now: the TypeScript replay executor reads it with
 *Alternative:* a SQLite store on the laptop. Rejected: it's a second database outside the NAS backup path, and config.yaml says model outputs land as result bundles in `results/`.
 
 ### D4. Sampling frame: `shoebox inventory`, a read-only Python pass
-- **What it does:** walks `ImportantFiles` and the landed Takeout export over read-only mounts.
+- **What it does:** walks every source in `config/sources.toml` over read-only mounts.
+  - **Sources:** `ImportantFiles`; `Home Folders` (per-person subfolders); `Backup` (`mazda/DESKTOP-EIBCH27`, `Backup/Jude`); `Volume2/damaged-backup`; and the landed Takeout exports.
+  - **Each source records:** its person and whether it's cloud-synced.
+  - **Owner decision (2026-10-10):** everything is in scope eventually, and duplicates are cleaned up later from a dedup report.
 - **What it skips:** `#recycle`, `$RECYCLE.BIN`, `.tmp.drivedownload`, Lightroom `.lrdata` previews and OS litter. Skipped paths are counted.
 - **Sibling groups:** within a folder, files sharing a base name across RAW/JPG/TIFF/PSD form a capture group, and the rule that formed it is recorded.
 - **What it records per file:** BLAKE3 (via the Rust-backed `blake3` package), ExifTool JSON in batches, dimensions and bit depth, the best date and its kind (EXIF, sidecar, filename, file mtime), and chroma statistics from a 256 px decode (libvips).
@@ -68,7 +71,7 @@ JSONL rather than Parquet, for now: the TypeScript replay executor reads it with
 
 **Why not wait for the Rust `shoebox-scan`:** it belongs to the catalogue change, whose schema waits on these evals. The asset IDs are compatible by construction, because both hash the same bytes with the same algorithm. The scanner supersedes the inventory later.
 
-**Cost:** about 605 GB plus the Takeout over 1 GbE is roughly 1.5–2 hours of hashing I/O. Decoding for the chroma stats dominates, at hours not days. Raw files use their embedded preview for chroma stats only.
+**Cost:** about 880 GB plus the Takeout over 1 GbE is roughly 2.5–3 hours of hashing I/O. Decoding for the chroma stats dominates, at hours not days. Raw files use their embedded preview for chroma stats only.
 
 ### D5. Sampling: stratified oversample, then diversity within each cell
 1. Strata are era (5-year buckets, plus a separate "scan-dated" bucket), medium/digitiser guess from the rule baseline, and colour class guess from chroma.
@@ -139,7 +142,10 @@ Labels are exported to JSONL and committed to `evals/sets/`. Label Studio's own 
 - **Before a run:** a runner pre-flight reads `evals/privacy-checklist.toml`. The owner records there that AI Studio logging is off, retention is 7 days, there are no datasets and the billing project ID is set, together with a confirmation date.
 - **After a run:** batch jobs and Files API uploads are deleted once the results are stored.
 - **Spend:** each run has a cap, and cumulative spend is tracked in `evals/spend.jsonl` against $150.
-- **Skipped assets:** anything on the never-send list (`evals/never-send.txt`, by asset ID or path glob) and Jude's library until consent is recorded.
+- **Skipped assets:**
+  - anything on the never-send list (`evals/never-send.txt`, by asset ID or path glob);
+  - any asset with a copy in a source whose person hasn't consented (Jude, Kyra, Toren default to no).
+- **Effect on the eval:** ground-truth items from non-consented sources are labelled blind, with no pre-label, and are left out of the Gemini arm. So every head-to-head that includes Gemini is reported on the **common subset** all candidates saw, plus each local candidate on the full set. The recommendation must say whether non-consented strata (e.g. kids' phone photos, messaging images) were covered by the hosted candidate.
 
 Estimated hosted spend at the introductory price:
 
@@ -182,6 +188,8 @@ Everything runs on the laptop.
 - **Check in code:** every command also refuses a source root it can write to (spec: "Synced sources are never written").
 - **Finder:** browsing source mounts in Finder is avoided, because Finder writes `.DS_Store`.
 
+The `shoebox` user also gets **read-only** access to `Home Folders`, `Backup` and `Volume2`. They aren't synced, but they're originals all the same.
+
 **A new, non-synced `shoebox` share** holds `staging/`, `originals/takeout/` (read-only after extraction), `derived/`, `results/` and `frame/`. The `shoebox` user has read-write access to it.
 
 *Alternative:* using the owner's existing read-write mounts with care. Rejected, because one bug could push files to Drive. Python runs with uv; Vally runs from a pinned local `node_modules` with `VALLY_TELEMETRY_OPTOUT=1`.
@@ -195,6 +203,7 @@ Everything runs on the laptop.
 - **[Gemini price doubles on 2027-01-01]** → Reports print the price date. If Gemini wins, decide on the bulk run before year end, or re-cost it.
 - **[Local throughput unknown; 12B could take days]** → The 300-image benchmark comes first. The 12B 8-bit arm is held in reserve.
 - **[The frame misses the second library until Jude's Takeout lands]** → The frame records the libraries present. Sets can be topped up with a new version when the second library lands, and the strata README says what was missing.
+- **[Gemini is scored on fewer strata than the local models, because of consent]** → Report on the common subset and flag the uncovered strata. A Gemini bulk recommendation can only cover consented sources unless consent is extended.
 - **[Heavy overlap between `ImportantFiles/Pictures/Google Photos` and Takeout]** → Exact-hash duplicates are grouped in the frame, and their members share a split. Re-encoded copies are left for the dedup change. The frame README reports overlap by hash.
 - **[Raw rendering differs from the owner's processed look]** → Labels are about content, not rendering. Raw-vs-JPEG agreement is checked on 30 RAW+JPEG pairs in task 3.2.
 - **[Label Studio is throwaway]** → Export format is owned by Shoebox, so nothing is locked in.

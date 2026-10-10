@@ -15,7 +15,7 @@ Background: `research/mvp-models.md`, `research/vally.md`, `research/hosted-gemm
 
 ## What Changes
 
-- **Sampling frame.** A read-only inventory keyed by BLAKE3. It covers the NAS `ImportantFiles` share and the first Takeout export. `ImportantFiles` is the Drive-synced share: about 605 GB of film-scan TIFFs, Nikon NEF and Leica DNG raws, JPEGs and PSDs, including an old `Google Photos` year tree for 2004–2019. The frame records:
+- **Sampling frame.** A read-only inventory keyed by BLAKE3. It covers **all** the NAS photo shares and the first Takeout export. The shares are `ImportantFiles`, `Home Folders`, `Backup` and `Volume2`, about 880 GB of images and video. Duplicates across them are expected; they are grouped by hash, never deleted, and cleaned up later from a dedup report. `ImportantFiles` is the Drive-synced share: about 605 GB of film-scan TIFFs, Nikon NEF and Leica DNG raws, JPEGs and PSDs, including an old `Google Photos` year tree for 2004–2019. The frame records:
   - the cheap strata: era, file origin, file type/bit depth, EXIF camera/scanner, computed colour statistics;
   - sibling groups: RAW+JPEG, scan TIFF + exported JPG, PSD edits.
 
@@ -33,6 +33,7 @@ Background: `research/mvp-models.md`, `research/vally.md`, `research/hosted-gemm
   - a rule-based baseline for capture source and colour/mono.
 
   The bulk job will reuse the same runners later.
+- **Per-person consent.** Every source names its person (owner, Jude, Kyra, Toren). Only the owner's sources may be sent to Gemini until another person's consent is recorded.
 - **Hosted-call safeguards.** Gemini runs only through the billing-linked project, with the privacy checklist enforced: no logging, no stored interactions, no grounding, uploads and batch jobs deleted after use. There is a per-run USD cap, and everything runs within the $150 hosted budget.
 - **Vally execution layer:**
   - Generated `eval.yaml` per set (one stimulus per asset, strata as tags).

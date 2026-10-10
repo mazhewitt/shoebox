@@ -10,6 +10,12 @@ context: |
   - The NAS share ImportantFiles (~605 GB, synced with Google Drive): film
     scans, Nikon/Leica raws, JPEGs, PSDs, an old Drive "Google Photos" tree,
     and Lightroom catalogues.
+  - The other NAS photo shares (Home Folders, Backup, Volume2): family
+    members' folders and old PC/phone backups. All of these are in scope;
+    cross-source duplicates are grouped by hash, never deleted, and cleaned
+    up later from a dedup report.
+  Every source names its person. Hosted processing needs that person's
+  consent, which defaults to no for everyone but the owner.
   MVP: sort (catalogue views only), catalogue and describe every photo for
   search. Faces come next.
 

@@ -9,9 +9,13 @@ Provides the frozen, representative, human-confirmed ground truth that every lab
 ### Requirement: Sampling frame
 The system SHALL build a read-only inventory of every file in the in-scope sources. Each record SHALL carry the asset ID (BLAKE3 of the original bytes), the source and path, file type, pixel dimensions, bit depth, the EXIF make/model/software, the best available date with its kind, and computed colour statistics. Building it SHALL NOT write to originals.
 
-#### Scenario: Inventory over both sources
-- **WHEN** the inventory runs over the Drive-scan share and a landed Takeout export
-- **THEN** every image file appears exactly once per path, and each record has its asset ID, source and strata fields, or an explicit `unknown`
+#### Scenario: Inventory over all sources
+- **WHEN** the inventory runs over every configured source (the NAS photo shares and landed Takeout exports)
+- **THEN** every image file appears exactly once per path, and each record has its asset ID, source, the source's person, and strata fields, or an explicit `unknown`
+
+#### Scenario: Same bytes in several sources
+- **WHEN** one file's bytes exist in several sources or folders
+- **THEN** the frame keeps one record per path, all sharing one asset ID, and the frame README reports the cross-source duplicate count and bytes
 
 #### Scenario: Originals untouched
 - **WHEN** the inventory completes

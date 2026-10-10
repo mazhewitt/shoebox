@@ -110,8 +110,12 @@ A rule-based labeller SHALL produce capture medium, digitiser and colour class f
 - **THEN** the baseline outputs `unknown` for the digitiser, and does not guess `scan`
 
 ### Requirement: Never-send list and consent
-Hosted calls SHALL skip any asset on the never-send list. They SHALL also skip any asset from a source library whose owner has not consented to hosted processing. Skipped assets SHALL be reported, not silently dropped.
+Every source SHALL name the person it belongs to. Hosted calls SHALL skip any asset on the never-send list, and any asset from a source whose person has not consented to hosted processing. Consent defaults to "no" for everyone except the owner. Skipped assets SHALL be reported, not silently dropped.
 
-#### Scenario: Library without consent
-- **WHEN** a hosted run includes assets from Jude's library and Jude's consent is not recorded
+#### Scenario: Source without consent
+- **WHEN** a hosted run includes assets from Jude's, Kyra's or Toren's folders and that person's consent is not recorded
 - **THEN** those assets are not sent, and the run report lists them as skipped for consent
+
+#### Scenario: Copy in a consented source
+- **WHEN** an asset with the same BLAKE3 also exists in a non-consented source
+- **THEN** it is still not sent: an asset is eligible only if none of its copies is restricted

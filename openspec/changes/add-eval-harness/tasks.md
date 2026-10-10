@@ -3,20 +3,22 @@
 ## 1. Owner prerequisites and scaffolding
 
 - [x] 1.1 Owner (DSM): create a non-synced `shoebox` shared folder and a `shoebox` NAS user with read-only access to `ImportantFiles` and read-write access to `shoebox`. Make sure the `shoebox` share isn't in any Cloud Sync task, and is in Hyper Backup except `derived/`. Verify in DSM, and record the setup in `docs/machines.md`.
-- [ ] 1.2 Mount on the laptop as the `shoebox` user: `ImportantFiles` with `mount_smbfs -o rdonly` at a dedicated mount point, and the `shoebox` share read-write. Record the source roots and their synced flag in `config/sources.toml`. Verify that a write to the `ImportantFiles` mount fails, a write to `shoebox` succeeds, and the mount commands are in `docs/machines.md`.
+- [ ] 1.1b Owner (DSM): give the `shoebox` user **read-only** access to `Home Folders`, `Backup` and `Volume2`, and check that the Preview shows Read only for each. Verify in DSM, and update `docs/machines.md`.
+- [ ] 1.2 Mount on the laptop as the `shoebox` user: `ImportantFiles`, `Home Folders`, `Backup` and `Volume2` with `mount_smbfs -o rdonly` at dedicated mount points, and the `shoebox` share read-write. Record in `config/sources.toml`, per source: root, person, synced flag and consent. Verify that a write to every source mount fails, a write to `shoebox` succeeds, and the mount commands are in `docs/machines.md`.
 - [ ] 1.3 Owner: request a Google Takeout of the owner's Photos library, land it in `shoebox/staging/takeout/<date>/`, extract it to `shoebox/originals/takeout/<date>/` and make that read-only for the `shoebox` user. Verify by file count/bytes reconciling against the export's archive listing.
 - [ ] 1.4 Scaffold the `shoebox` Python package with uv (`shoebox` CLI entry point, pytest, ruff) and the repo layout `evals/{sets,vocab,runs,vally}`, `frame/`, `config/`. Verify `uv run shoebox --help` and `uv run pytest` pass on an empty test.
-- [ ] 1.5 Owner: fill `evals/privacy-checklist.toml`: billing project ID, AI Studio logging off, retention 7 days, no datasets or feedback, confirmation date. Fill `evals/never-send.txt`, and record Jude's consent status. Verify the file parses with `shoebox privacy check` (added in 4.5).
+- [ ] 1.5 Owner: fill `evals/privacy-checklist.toml`: billing project ID, AI Studio logging off, retention 7 days, no datasets or feedback, confirmation date. Fill `evals/never-send.txt`, and record consent status for Jude, Kyra and Toren (default: no). Verify the file parses with `shoebox privacy check` (added in 4.5).
 
 ## 2. Sampling frame (`eval-ground-truth`: Sampling frame)
 
 - [ ] 2.1 Implement `shoebox inventory`: walk the configured sources, BLAKE3 each file, run batched ExifTool JSON, read dimensions and bit depth, pick the best date with its kind (EXIF, sidecar, filename, mtime, scan date), and compute 256 px chroma stats with libvips. Write `frame/frame-<date>.parquet`. Skip the recycle, sync-temp and Lightroom-preview folders, with counts. Form capture groups by same-folder base name across RAW/JPG/TIFF/PSD and record the rule. Refuse writable synced roots. Verify with unit tests on fixture files: JPEG with EXIF, HEIC, 16-bit grey TIFF, RGB TIFF, NEF, DNG+JPG pair, layered PSD, PNG screenshot, a file with a Takeout sidecar, and a writable "synced" root that must be refused.
 - [ ] 2.2 Add a sources-untouched check: snapshot mtime/size/hash of a 200-file sample and the directory listing of each touched folder, before and after `inventory`. Verify nothing changed and no file was created, and that the check is part of the inventory test suite.
 - [ ] 2.3 Implement the rule baseline for medium × digitiser and colour class (`label-runners`: Rule-based baseline), with explicit `unknown`. Verify with unit tests, including "no EXIF, no origin signal → digitiser unknown".
-- [ ] 2.4 Run the inventory over `ImportantFiles` and the Takeout export. Write `frame/README.md` with:
+- [ ] 2.4 Run the inventory over all configured sources, including the Takeout export. Write `frame/README.md` with:
   - counts per source, top-level folder, era, baseline medium/digitiser and colour class;
   - capture-group counts by rule;
   - exact-hash overlap between the `Google Photos` tree and Takeout;
+  - cross-source duplicate counts and bytes per pair of sources;
   - decode failures.
 
   Verify every file appears once per path, and that failures and skips are listed rather than missing.

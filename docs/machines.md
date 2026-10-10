@@ -6,6 +6,7 @@
 |---|---|---|---|
 | `ImportantFiles` | Source: scans, raws, JPEGs, old Drive "Google Photos" tree, Lightroom catalogues | **Yes** (Cloud Sync) | **Read only** |
 | `shoebox` | Shoebox working data: `staging/`, `originals/`, `derived/`, `results/`, `frame/` | No | Read/Write |
+| `Home Folders`, `Backup`, `Volume2` | Sources: family folders, old PC/phone backups | No | **Read only** (to grant, task 1.1b) |
 | all other shares | — | — | No access |
 
 **Rule:** no Shoebox process writes to `ImportantFiles`. Anything written there could reach Google Drive. This is enforced three ways:
