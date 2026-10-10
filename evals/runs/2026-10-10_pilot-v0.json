@@ -1,0 +1,1304 @@
+{
+  "set": "pilot-v0",
+  "date": "2026-10-10",
+  "results": "/Users/mazhewitt/mnt/shoebox/results/vally/pilot-v0/2026-10-10T14-02-47-050Z/results.jsonl",
+  "scored": false,
+  "gates": null,
+  "modes": [
+    "replay"
+  ],
+  "set_items": {
+    "n": 45,
+    "skipped": {},
+    "candidates_file": "/Users/mazhewitt/projects/shoebox/evals/vally/generated/pilot-v0/candidates.json"
+  },
+  "gate_eligible": true,
+  "gate_blockers": [],
+  "notes": [
+    "Pilot is unscored: no gates.toml. Accuracy is over owner-labelled items only (n given).",
+    "Unlabelled trials pass in Vally (no skip verdict in 0.18.0) and are excluded here.",
+    "Fields the owner labelled 'unknown' are not scored (owner_unknown_n).",
+    "Precision = correct answers / answers; an abstain ('unknown') lowers coverage, not precision.",
+    "images_per_hour = 3.6e6 / mean provider latency_ms (sequential, one image at a time)."
+  ],
+  "candidates": {
+    "e4b-bf16": {
+      "model_id": "ollama/gemma4:e4b-mlx-bf16",
+      "params_hash": "ba2e8d5285b6a818",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 37,
+            "film_negative": 2,
+            "print": 2,
+            "unknown": 2,
+            "document": 1,
+            "screen": 1
+          },
+          "abstain_rate": 0.044444444444444446,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 37,
+            "flatbed_scanner": 3,
+            "film_scanner": 2,
+            "phone": 1,
+            "screenshot": 1,
+            "unknown": 1
+          },
+          "abstain_rate": 0.022222222222222223,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 31,
+            "mono": 14
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 3428.0,
+        "p90": 3714.8,
+        "mean": 3427.266666666667
+      },
+      "images_per_hour": 1050.3997354548815,
+      "tokens": {
+        "input": 110724,
+        "output": 5588,
+        "thinking": 0
+      },
+      "usd": 0.0,
+      "usd_per_1000": 0.0,
+      "not_run": []
+    },
+    "e4b-q4": {
+      "model_id": "ollama/gemma4:e4b",
+      "params_hash": "6b3c45f6e34ecf3c",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 33,
+            "unknown": 6,
+            "film_negative": 4,
+            "document": 1,
+            "print": 1
+          },
+          "abstain_rate": 0.13333333333333333,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 32,
+            "unknown": 7,
+            "film_scanner": 4,
+            "flatbed_scanner": 2
+          },
+          "abstain_rate": 0.15555555555555556,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 28,
+            "mono": 13,
+            "unknown": 4
+          },
+          "abstain_rate": 0.08888888888888889,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 2966.0,
+        "p90": 3423.8,
+        "mean": 3044.8444444444444
+      },
+      "images_per_hour": 1182.3264096688026,
+      "tokens": {
+        "input": 109212,
+        "output": 6106,
+        "thinking": 0
+      },
+      "usd": 0.0,
+      "usd_per_1000": 0.0,
+      "not_run": []
+    },
+    "g12b-q4": {
+      "model_id": "ollama/gemma4:12b",
+      "params_hash": "4a05141c7ac62278",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 25,
+            "film_negative": 12,
+            "print": 3,
+            "screen": 2,
+            "unknown": 2,
+            "document": 1
+          },
+          "abstain_rate": 0.044444444444444446,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 19,
+            "film_scanner": 12,
+            "phone": 5,
+            "flatbed_scanner": 3,
+            "software": 2,
+            "unknown": 2,
+            "camera_rephoto": 1,
+            "screenshot": 1
+          },
+          "abstain_rate": 0.044444444444444446,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 31,
+            "mono": 14
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 5866.0,
+        "p90": 6137.6,
+        "mean": 5867.688888888889
+      },
+      "images_per_hour": 613.5294607757739,
+      "tokens": {
+        "input": 106431,
+        "output": 7666,
+        "thinking": 0
+      },
+      "usd": 0.0,
+      "usd_per_1000": 0.0,
+      "not_run": []
+    },
+    "g31b": {
+      "model_id": "ollama/gemma4:31b",
+      "params_hash": "783af945a0bae97e",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 25,
+            "film_negative": 9,
+            "print": 5,
+            "screen": 2,
+            "unknown": 2,
+            "document": 1,
+            "film_slide": 1
+          },
+          "abstain_rate": 0.044444444444444446,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 20,
+            "film_scanner": 10,
+            "flatbed_scanner": 5,
+            "phone": 4,
+            "software": 2,
+            "unknown": 2,
+            "camera_rephoto": 1,
+            "screenshot": 1
+          },
+          "abstain_rate": 0.044444444444444446,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 30,
+            "mono": 14,
+            "toned": 1
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 15001.0,
+        "p90": 18655.2,
+        "mean": 15687.08888888889
+      },
+      "images_per_hour": 229.48808574354848,
+      "tokens": {
+        "input": 106431,
+        "output": 6146,
+        "thinking": 0
+      },
+      "usd": 0.0,
+      "usd_per_1000": 0.0,
+      "not_run": []
+    },
+    "gemini-low": {
+      "model_id": "gemini/gemini-3.8-flash",
+      "params_hash": "a833e46c578af35d",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 44,
+        "invalid": 1,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 0.9777777777777777,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 28,
+            "film_negative": 13,
+            "document": 1,
+            "print": 1,
+            "screen": 1
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 21,
+            "film_scanner": 13,
+            "phone": 5,
+            "software": 3,
+            "camera_rephoto": 1,
+            "flatbed_scanner": 1
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 30,
+            "mono": 14
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 4445.0,
+        "p90": 5884.400000000001,
+        "mean": 4697.8
+      },
+      "images_per_hour": 766.3161479841627,
+      "tokens": {
+        "input": 74827,
+        "output": 7994,
+        "thinking": 0
+      },
+      "usd": 0.08609775,
+      "usd_per_1000": 1.9132833333333334,
+      "not_run": []
+    },
+    "gemini-medium": {
+      "model_id": "gemini/gemini-3.8-flash",
+      "params_hash": "d8d9173ccb8b6b07",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 31,
+            "film_negative": 11,
+            "print": 2,
+            "document": 1
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 23,
+            "film_scanner": 11,
+            "phone": 6,
+            "software": 3,
+            "flatbed_scanner": 2
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 31,
+            "mono": 14
+          },
+          "abstain_rate": 0.0,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 4643.0,
+        "p90": 5708.8,
+        "mean": 4887.9111111111115
+      },
+      "images_per_hour": 736.5109385513466,
+      "tokens": {
+        "input": 87217,
+        "output": 8387,
+        "thinking": 0
+      },
+      "usd": 0.096864,
+      "usd_per_1000": 2.1525333333333334,
+      "not_run": []
+    },
+    "rules-v1": {
+      "model_id": "rules-v1",
+      "params_hash": "025c960720d135f7",
+      "modes": [
+        "replay"
+      ],
+      "n": 45,
+      "assets": 45,
+      "status_counts": {
+        "ok": 45,
+        "invalid": 0,
+        "error": 0,
+        "missing": 0,
+        "exec_error": 0
+      },
+      "validity_rate": 1.0,
+      "fields": {
+        "medium": {
+          "distribution": {
+            "digital": 26,
+            "unknown": 19
+          },
+          "abstain_rate": 0.4222222222222222,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "digitiser": {
+          "distribution": {
+            "camera": 20,
+            "film_scanner": 10,
+            "unknown": 7,
+            "phone": 6,
+            "flatbed_scanner": 2
+          },
+          "abstain_rate": 0.15555555555555556,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        },
+        "colour_class": {
+          "distribution": {
+            "colour": 27,
+            "mono": 12,
+            "unknown": 6
+          },
+          "abstain_rate": 0.13333333333333333,
+          "labelled_n": 0,
+          "owner_unknown_n": 0,
+          "accuracy": null,
+          "coverage": null,
+          "precision": null
+        }
+      },
+      "tags": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "labelled_n": 0,
+        "precision": null,
+        "recall": null
+      },
+      "latency_ms": {
+        "n": 45,
+        "p50": 49.0,
+        "p90": 64.0,
+        "mean": 55.71111111111111
+      },
+      "images_per_hour": 64619.06661348225,
+      "tokens": {
+        "input": 0,
+        "output": 0,
+        "thinking": 0
+      },
+      "usd": 0.0,
+      "usd_per_1000": 0.0,
+      "not_run": []
+    }
+  },
+  "agreement": {
+    "medium": {
+      "e4b-bf16": {
+        "e4b-q4": {
+          "agree": 37,
+          "n": 45,
+          "rate": 0.8222222222222222
+        },
+        "g12b-q4": {
+          "agree": 30,
+          "n": 45,
+          "rate": 0.6666666666666666
+        },
+        "g31b": {
+          "agree": 28,
+          "n": 45,
+          "rate": 0.6222222222222222
+        },
+        "gemini-low": {
+          "agree": 31,
+          "n": 44,
+          "rate": 0.7045454545454546
+        },
+        "gemini-medium": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "rules-v1": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        }
+      },
+      "e4b-q4": {
+        "e4b-bf16": {
+          "agree": 37,
+          "n": 45,
+          "rate": 0.8222222222222222
+        },
+        "g12b-q4": {
+          "agree": 29,
+          "n": 45,
+          "rate": 0.6444444444444445
+        },
+        "g31b": {
+          "agree": 28,
+          "n": 45,
+          "rate": 0.6222222222222222
+        },
+        "gemini-low": {
+          "agree": 30,
+          "n": 44,
+          "rate": 0.6818181818181818
+        },
+        "gemini-medium": {
+          "agree": 31,
+          "n": 45,
+          "rate": 0.6888888888888889
+        },
+        "rules-v1": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        }
+      },
+      "g12b-q4": {
+        "e4b-bf16": {
+          "agree": 30,
+          "n": 45,
+          "rate": 0.6666666666666666
+        },
+        "e4b-q4": {
+          "agree": 29,
+          "n": 45,
+          "rate": 0.6444444444444445
+        },
+        "g31b": {
+          "agree": 38,
+          "n": 45,
+          "rate": 0.8444444444444444
+        },
+        "gemini-low": {
+          "agree": 38,
+          "n": 44,
+          "rate": 0.8636363636363636
+        },
+        "gemini-medium": {
+          "agree": 37,
+          "n": 45,
+          "rate": 0.8222222222222222
+        },
+        "rules-v1": {
+          "agree": 26,
+          "n": 45,
+          "rate": 0.5777777777777777
+        }
+      },
+      "g31b": {
+        "e4b-bf16": {
+          "agree": 28,
+          "n": 45,
+          "rate": 0.6222222222222222
+        },
+        "e4b-q4": {
+          "agree": 28,
+          "n": 45,
+          "rate": 0.6222222222222222
+        },
+        "g12b-q4": {
+          "agree": 38,
+          "n": 45,
+          "rate": 0.8444444444444444
+        },
+        "gemini-low": {
+          "agree": 37,
+          "n": 44,
+          "rate": 0.8409090909090909
+        },
+        "gemini-medium": {
+          "agree": 36,
+          "n": 45,
+          "rate": 0.8
+        },
+        "rules-v1": {
+          "agree": 26,
+          "n": 45,
+          "rate": 0.5777777777777777
+        }
+      },
+      "gemini-low": {
+        "e4b-bf16": {
+          "agree": 31,
+          "n": 44,
+          "rate": 0.7045454545454546
+        },
+        "e4b-q4": {
+          "agree": 30,
+          "n": 44,
+          "rate": 0.6818181818181818
+        },
+        "g12b-q4": {
+          "agree": 38,
+          "n": 44,
+          "rate": 0.8636363636363636
+        },
+        "g31b": {
+          "agree": 37,
+          "n": 44,
+          "rate": 0.8409090909090909
+        },
+        "gemini-medium": {
+          "agree": 41,
+          "n": 44,
+          "rate": 0.9318181818181818
+        },
+        "rules-v1": {
+          "agree": 24,
+          "n": 44,
+          "rate": 0.5454545454545454
+        }
+      },
+      "gemini-medium": {
+        "e4b-bf16": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "e4b-q4": {
+          "agree": 31,
+          "n": 45,
+          "rate": 0.6888888888888889
+        },
+        "g12b-q4": {
+          "agree": 37,
+          "n": 45,
+          "rate": 0.8222222222222222
+        },
+        "g31b": {
+          "agree": 36,
+          "n": 45,
+          "rate": 0.8
+        },
+        "gemini-low": {
+          "agree": 41,
+          "n": 44,
+          "rate": 0.9318181818181818
+        },
+        "rules-v1": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        }
+      },
+      "rules-v1": {
+        "e4b-bf16": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        },
+        "e4b-q4": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        },
+        "g12b-q4": {
+          "agree": 26,
+          "n": 45,
+          "rate": 0.5777777777777777
+        },
+        "g31b": {
+          "agree": 26,
+          "n": 45,
+          "rate": 0.5777777777777777
+        },
+        "gemini-low": {
+          "agree": 24,
+          "n": 44,
+          "rate": 0.5454545454545454
+        },
+        "gemini-medium": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        }
+      }
+    },
+    "digitiser": {
+      "e4b-bf16": {
+        "e4b-q4": {
+          "agree": 34,
+          "n": 45,
+          "rate": 0.7555555555555555
+        },
+        "g12b-q4": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "g31b": {
+          "agree": 23,
+          "n": 45,
+          "rate": 0.5111111111111111
+        },
+        "gemini-low": {
+          "agree": 22,
+          "n": 44,
+          "rate": 0.5
+        },
+        "gemini-medium": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        },
+        "rules-v1": {
+          "agree": 23,
+          "n": 45,
+          "rate": 0.5111111111111111
+        }
+      },
+      "e4b-q4": {
+        "e4b-bf16": {
+          "agree": 34,
+          "n": 45,
+          "rate": 0.7555555555555555
+        },
+        "g12b-q4": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "g31b": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "gemini-low": {
+          "agree": 24,
+          "n": 44,
+          "rate": 0.5454545454545454
+        },
+        "gemini-medium": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "rules-v1": {
+          "agree": 22,
+          "n": 45,
+          "rate": 0.4888888888888889
+        }
+      },
+      "g12b-q4": {
+        "e4b-bf16": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "e4b-q4": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "g31b": {
+          "agree": 36,
+          "n": 45,
+          "rate": 0.8
+        },
+        "gemini-low": {
+          "agree": 36,
+          "n": 44,
+          "rate": 0.8181818181818182
+        },
+        "gemini-medium": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "rules-v1": {
+          "agree": 31,
+          "n": 45,
+          "rate": 0.6888888888888889
+        }
+      },
+      "g31b": {
+        "e4b-bf16": {
+          "agree": 23,
+          "n": 45,
+          "rate": 0.5111111111111111
+        },
+        "e4b-q4": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "g12b-q4": {
+          "agree": 36,
+          "n": 45,
+          "rate": 0.8
+        },
+        "gemini-low": {
+          "agree": 34,
+          "n": 44,
+          "rate": 0.7727272727272727
+        },
+        "gemini-medium": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "rules-v1": {
+          "agree": 34,
+          "n": 45,
+          "rate": 0.7555555555555555
+        }
+      },
+      "gemini-low": {
+        "e4b-bf16": {
+          "agree": 22,
+          "n": 44,
+          "rate": 0.5
+        },
+        "e4b-q4": {
+          "agree": 24,
+          "n": 44,
+          "rate": 0.5454545454545454
+        },
+        "g12b-q4": {
+          "agree": 36,
+          "n": 44,
+          "rate": 0.8181818181818182
+        },
+        "g31b": {
+          "agree": 34,
+          "n": 44,
+          "rate": 0.7727272727272727
+        },
+        "gemini-medium": {
+          "agree": 39,
+          "n": 44,
+          "rate": 0.8863636363636364
+        },
+        "rules-v1": {
+          "agree": 32,
+          "n": 44,
+          "rate": 0.7272727272727273
+        }
+      },
+      "gemini-medium": {
+        "e4b-bf16": {
+          "agree": 25,
+          "n": 45,
+          "rate": 0.5555555555555556
+        },
+        "e4b-q4": {
+          "agree": 24,
+          "n": 45,
+          "rate": 0.5333333333333333
+        },
+        "g12b-q4": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "g31b": {
+          "agree": 33,
+          "n": 45,
+          "rate": 0.7333333333333333
+        },
+        "gemini-low": {
+          "agree": 39,
+          "n": 44,
+          "rate": 0.8863636363636364
+        },
+        "rules-v1": {
+          "agree": 35,
+          "n": 45,
+          "rate": 0.7777777777777778
+        }
+      },
+      "rules-v1": {
+        "e4b-bf16": {
+          "agree": 23,
+          "n": 45,
+          "rate": 0.5111111111111111
+        },
+        "e4b-q4": {
+          "agree": 22,
+          "n": 45,
+          "rate": 0.4888888888888889
+        },
+        "g12b-q4": {
+          "agree": 31,
+          "n": 45,
+          "rate": 0.6888888888888889
+        },
+        "g31b": {
+          "agree": 34,
+          "n": 45,
+          "rate": 0.7555555555555555
+        },
+        "gemini-low": {
+          "agree": 32,
+          "n": 44,
+          "rate": 0.7272727272727273
+        },
+        "gemini-medium": {
+          "agree": 35,
+          "n": 45,
+          "rate": 0.7777777777777778
+        }
+      }
+    },
+    "colour_class": {
+      "e4b-bf16": {
+        "e4b-q4": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g12b-q4": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "g31b": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "gemini-low": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "gemini-medium": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "rules-v1": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        }
+      },
+      "e4b-q4": {
+        "e4b-bf16": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g12b-q4": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g31b": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "gemini-low": {
+          "agree": 40,
+          "n": 44,
+          "rate": 0.9090909090909091
+        },
+        "gemini-medium": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "rules-v1": {
+          "agree": 35,
+          "n": 45,
+          "rate": 0.7777777777777778
+        }
+      },
+      "g12b-q4": {
+        "e4b-bf16": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "e4b-q4": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g31b": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "gemini-low": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "gemini-medium": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "rules-v1": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        }
+      },
+      "g31b": {
+        "e4b-bf16": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "e4b-q4": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g12b-q4": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "gemini-low": {
+          "agree": 43,
+          "n": 44,
+          "rate": 0.9772727272727273
+        },
+        "gemini-medium": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "rules-v1": {
+          "agree": 38,
+          "n": 45,
+          "rate": 0.8444444444444444
+        }
+      },
+      "gemini-low": {
+        "e4b-bf16": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "e4b-q4": {
+          "agree": 40,
+          "n": 44,
+          "rate": 0.9090909090909091
+        },
+        "g12b-q4": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "g31b": {
+          "agree": 43,
+          "n": 44,
+          "rate": 0.9772727272727273
+        },
+        "gemini-medium": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "rules-v1": {
+          "agree": 38,
+          "n": 44,
+          "rate": 0.8636363636363636
+        }
+      },
+      "gemini-medium": {
+        "e4b-bf16": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "e4b-q4": {
+          "agree": 41,
+          "n": 45,
+          "rate": 0.9111111111111111
+        },
+        "g12b-q4": {
+          "agree": 45,
+          "n": 45,
+          "rate": 1.0
+        },
+        "g31b": {
+          "agree": 44,
+          "n": 45,
+          "rate": 0.9777777777777777
+        },
+        "gemini-low": {
+          "agree": 44,
+          "n": 44,
+          "rate": 1.0
+        },
+        "rules-v1": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        }
+      },
+      "rules-v1": {
+        "e4b-bf16": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        },
+        "e4b-q4": {
+          "agree": 35,
+          "n": 45,
+          "rate": 0.7777777777777778
+        },
+        "g12b-q4": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        },
+        "g31b": {
+          "agree": 38,
+          "n": 45,
+          "rate": 0.8444444444444444
+        },
+        "gemini-low": {
+          "agree": 38,
+          "n": 44,
+          "rate": 0.8636363636363636
+        },
+        "gemini-medium": {
+          "agree": 39,
+          "n": 45,
+          "rate": 0.8666666666666667
+        }
+      }
+    }
+  }
+}

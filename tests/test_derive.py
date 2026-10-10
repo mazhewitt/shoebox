@@ -483,6 +483,62 @@ def test_raw_rendered_with_recorded_settings(env, monkeypatch):
     assert arr[..., 0].mean() > 250 and arr[..., 1].mean() < 5
 
 
+def _tiff_with_big_tag(rgb8: np.ndarray, blob_len: int) -> bytes:
+    """A little-endian strip TIFF plus a large tag 37724 (Photoshop ImageSourceData)."""
+    h, w, _ = rgb8.shape
+    pixels = rgb8.tobytes()
+    n_tags = 11
+    ifd_off = 8
+    bps_off = ifd_off + 2 + 12 * n_tags + 4
+    pix_off = bps_off + 6
+    blob_off = pix_off + len(pixels)
+
+    def ent(tag, typ, count, value):
+        return struct.pack("<HHI", tag, typ, count) + value
+
+    short = lambda v: struct.pack("<HH", v, 0)  # noqa: E731
+    long_ = lambda v: struct.pack("<I", v)  # noqa: E731
+    entries = [
+        ent(256, 3, 1, short(w)),
+        ent(257, 3, 1, short(h)),
+        ent(258, 3, 3, long_(bps_off)),
+        ent(259, 3, 1, short(1)),
+        ent(262, 3, 1, short(2)),
+        ent(273, 4, 1, long_(pix_off)),
+        ent(277, 3, 1, short(3)),
+        ent(278, 3, 1, short(h)),
+        ent(279, 4, 1, long_(len(pixels))),
+        ent(284, 3, 1, short(1)),
+        ent(37724, 7, blob_len, long_(blob_off)),
+    ]
+    assert len(entries) == n_tags
+    return (
+        b"II*\0"
+        + long_(ifd_off)
+        + struct.pack("<H", n_tags)
+        + b"".join(entries)
+        + long_(0)
+        + struct.pack("<HHH", 8, 8, 8)
+        + pixels
+        + b"\x5a" * blob_len
+    )
+
+
+def test_tiff_with_large_photoshop_tag_decodes(env):
+    # Regression: a real Photoshop-saved scan with a ~36 MB tag 37724 failed with
+    # libtiff's "cumulated byte limit" because libvips caps TIFF metadata at 50 MB.
+    cfg, src = env
+    ramp = np.linspace(0, 255, 64).round().astype(np.uint8)
+    pix = np.stack([np.tile(ramp, (48, 1))] * 3, axis=-1)
+    (src / "layered.tif").write_bytes(_tiff_with_big_tag(pix, 32 * 1024 * 1024))
+    rec = _derive_one(cfg, src, "layered.tif")
+    assert rec["status"] == "ok", rec["error"]
+    assert (rec["src_kind"], rec["src_width"], rec["src_height"]) == ("tiff", 64, 48)
+    img, arr, data = _out(cfg, rec)
+    _assert_clean_srgb8(img, data)
+    assert np.abs(arr.astype(int) - pix.astype(int)).mean() < 2
+
+
 # --- determinism, skipping, errors -------------------------------------------
 
 

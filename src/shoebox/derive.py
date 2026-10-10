@@ -256,8 +256,18 @@ def render(data: bytes, ext: str, settings: dict) -> Rendered:
     )
 
 
+_TIFF_MAGIC = (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")  # classic and BigTIFF
+
+
 def _decode_vips(data: bytes, settings: dict) -> tuple[pyvips.Image, str, int]:
-    img = pyvips.Image.new_from_buffer(data, "", fail_on=settings["decode_fail_on"])
+    # libvips caps libtiff's per-file metadata allocations at 50 MB unless `unlimited`.
+    # Photoshop-saved scans carry their layers in tag 37724 (ImageSourceData), often
+    # tens of MB, which trips that cap although the image itself is fine. The originals
+    # are the owner's own files, so lift the cap for TIFF only; it doesn't change pixels.
+    opts = {"unlimited": True} if data[:4] in _TIFF_MAGIC else {}
+    img = pyvips.Image.new_from_buffer(
+        data, "", fail_on=settings["decode_fail_on"], **opts
+    )
     loader = img.get("vips-loader")
     if loader not in KIND_BY_LOADER:
         raise DecodeError(f"unsupported format (libvips loader {loader})")

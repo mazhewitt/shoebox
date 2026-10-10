@@ -288,12 +288,22 @@ def _check_image_path(cand: dict, image_path: Path, cfg: config.Config) -> Path:
 
 
 def usage_of(data: dict) -> dict:
+    """Token counts; plus `input_by_modality` ({"IMAGE": n, "TEXT": m}) when the response carries
+    `promptTokensDetails`, so image tokens can be measured against the media_resolution estimate."""
     meta = data.get("usageMetadata") or {}
-    return {
+    usage = {
         "input_tokens": meta.get("promptTokenCount"),
         "output_tokens": meta.get("candidatesTokenCount"),
         "thinking_tokens": meta.get("thoughtsTokenCount"),
     }
+    details = {
+        d["modality"]: d.get("tokenCount")
+        for d in meta.get("promptTokensDetails") or []
+        if isinstance(d, dict) and d.get("modality")
+    }
+    if details:
+        usage["input_by_modality"] = details
+    return usage
 
 
 def usd_for(usage: dict, cand: dict) -> float:

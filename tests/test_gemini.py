@@ -249,6 +249,30 @@ def test_usage_to_usd_and_record_shape(env):
     assert rec["output"] == GOOD and rec["error"] is None
 
 
+def test_usage_keeps_the_per_modality_prompt_breakdown(env):
+    env.serve(
+        ok_response(
+            usage={
+                "promptTokenCount": 1900,
+                "candidatesTokenCount": 150,
+                "thoughtsTokenCount": 400,
+                "promptTokensDetails": [
+                    {"modality": "TEXT", "tokenCount": 1620},
+                    {"modality": "IMAGE", "tokenCount": 280},
+                ],
+            }
+        )
+    )
+    rec = run(env)
+    assert rec["usage"] == {
+        "input_tokens": 1900,
+        "output_tokens": 150,
+        "thinking_tokens": 400,
+        "input_by_modality": {"TEXT": 1620, "IMAGE": 280},
+    }
+    assert rec["usd"] == pytest.approx(1900 * 0.75e-6 + 550 * 3.75e-6)
+
+
 def test_429_then_200_succeeds_with_backoff(env):
     env.serve(
         httpx.Response(
