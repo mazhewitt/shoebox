@@ -1,0 +1,2 @@
+# Assets that must never go to a hosted model, one per line: an asset_id (BLAKE3 hex)
+# or a path glob relative to a source root, e.g. "Pictures/Kyra/**". Lines starting with # are ignored.

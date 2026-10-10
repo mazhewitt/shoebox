@@ -1,0 +1,10 @@
+# Shoebox paths and sources. See docs/machines.md for the mounts.
+# Sources are read-only originals; Shoebox never writes under a source root.
+
+shoebox_root = "~/mnt/shoebox"   # dedicated, non-synced, read-write share
+
+[sources.importantfiles]
+root = "~/mnt/importantfiles-ro"
+person = "owner"
+synced = true            # Drive-synced via Cloud Sync: never write
+hosted_consent = true

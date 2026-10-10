@@ -5,3 +5,10 @@
 
 # macOS
 .DS_Store
+
+# Python / Node
+__pycache__/
+.venv/
+.pytest_cache/
+.ruff_cache/
+node_modules/
