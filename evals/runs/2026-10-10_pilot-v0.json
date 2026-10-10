@@ -51,9 +51,9 @@
           "abstain_rate": 0.044444444444444446,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.6222222222222222,
+          "accuracy": 0.6444444444444445,
           "coverage": 0.9555555555555556,
-          "precision": 0.6511627906976745
+          "precision": 0.6744186046511628
         },
         "digitiser": {
           "distribution": {
@@ -136,9 +136,9 @@
           "abstain_rate": 0.13333333333333333,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.6222222222222222,
+          "accuracy": 0.6444444444444445,
           "coverage": 0.8666666666666667,
-          "precision": 0.717948717948718
+          "precision": 0.7435897435897436
         },
         "digitiser": {
           "distribution": {
@@ -221,9 +221,9 @@
           "abstain_rate": 0.044444444444444446,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.8222222222222222,
+          "accuracy": 0.8444444444444444,
           "coverage": 0.9555555555555556,
-          "precision": 0.8604651162790697
+          "precision": 0.8837209302325582
         },
         "digitiser": {
           "distribution": {
@@ -310,9 +310,9 @@
           "abstain_rate": 0.044444444444444446,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.7555555555555555,
+          "accuracy": 0.7777777777777778,
           "coverage": 0.9555555555555556,
-          "precision": 0.7906976744186046
+          "precision": 0.813953488372093
         },
         "digitiser": {
           "distribution": {
@@ -398,9 +398,9 @@
           "abstain_rate": 0.0,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.8666666666666667,
+          "accuracy": 0.8888888888888888,
           "coverage": 0.9777777777777777,
-          "precision": 0.8863636363636364
+          "precision": 0.9090909090909091
         },
         "digitiser": {
           "distribution": {
@@ -482,9 +482,9 @@
           "abstain_rate": 0.0,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.8888888888888888,
+          "accuracy": 0.9111111111111111,
           "coverage": 1.0,
-          "precision": 0.8888888888888888
+          "precision": 0.9111111111111111
         },
         "digitiser": {
           "distribution": {
@@ -563,9 +563,9 @@
           "abstain_rate": 0.4222222222222222,
           "labelled_n": 45,
           "owner_unknown_n": 0,
-          "accuracy": 0.5333333333333333,
+          "accuracy": 0.5555555555555556,
           "coverage": 0.5777777777777777,
-          "precision": 0.9230769230769231
+          "precision": 0.9615384615384616
         },
         "digitiser": {
           "distribution": {
