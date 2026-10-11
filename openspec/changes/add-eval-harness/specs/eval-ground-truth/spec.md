@@ -56,7 +56,7 @@ Before any photo in an eval corpus is sent to a hosted model, the corpus SHALL b
 The screen's results SHALL be recorded.
 
 #### Scenario: ID document in the owner's share
-- **WHEN** a corpus draw includes a passport scan under `documents/`
+- **WHEN** a corpus draw includes a passport scan under `Important documents/`
 - **THEN** it is excluded before any hosted call, replaced, and listed in the README
 
 ### Requirement: Frozen dev/test splits

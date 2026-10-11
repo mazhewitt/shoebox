@@ -120,15 +120,21 @@ The 2048 px edge covers the largest budget under test: Gemma 4 / EG2 at 1120 sof
 Per-budget downscaling is left to the model: Gemini `media_resolution` and, under mlx-vlm, `max_soft_tokens`. **As built, the local runners use Ollama** (image budget recorded as `"auto"`, chosen by Ollama from the input size). mlx-vlm was not needed for the pilots; it returns only if budget control is wanted for the bulk run.
 
 ### D6a. Orientation of scans
-Film and print scans carry no EXIF orientation, and some are stored sideways. That hurts every route.
+Film and print scans carry no meaningful EXIF orientation, and some are stored sideways.
 
-The fix:
-1. **Method.** Choose one on 50 scans, with Opus judging upright as the reference. Candidates:
-   - an E4B orientation question over the 4 rotations;
-   - the EG2 image–text score for "an upright photograph" over the 4 rotations;
-   - Gemini on the eval corpus only.
-2. **Bulk.** The chosen local method runs over scan buckets only, at derive time.
-3. **Recording.** The rotation is recorded per asset in the derive index. The rotated images form profile `infer-v2`, so outputs keyed to `infer-v1` images never mix silently.
+**Measured 2026-10-11** (`evals/runs/2026-10-11_scan-orientation.md`):
+- **Rate:** about 4% of scans are mis-oriented (2 of 50 against an Opus reference; 2 of the 44 search targets).
+- **Search effect:** rotating the two targets upright changed image-route MRR by about −0.001, so orientation is not why search dropped on the 5k pool.
+- **Local methods:** none is precise enough.
+  - E4B mostly answers "upright".
+  - 12B detects rotation but often picks the wrong direction.
+  - EG2 has no signal.
+  - At a 4% rate, each method's false rotations roughly cancel its fixes.
+
+**So:**
+1. `label-v2` asks each captioner for `rotate_cw`, at no extra inference cost. The eval scores Gemini's and the local captioners' answers against Opus on the `eval-1k` scans.
+2. Rotation at derive time (profile `infer-v2`, with the rotation recorded per asset in the derive index) waits for a source with precision ≥ 0.98 on upright scans.
+3. Until then, `infer-v1` stays the only profile, and `rotate_cw` is stored in the label records as un-gated data for the UI.
 
 Derived images go to `derived/infer-v1/ab/<asset_id>.jpg` on the dedicated `shoebox` share and are excluded from GCS.
 
@@ -145,13 +151,13 @@ Derived images go to `derived/infer-v1/ab/<asset_id>.jpg` on the dedicated `shoe
 
 **How Opus runs.** There is no Anthropic API key, so Opus runs as Claude Code subagents. They view derived infer-v1 JPEGs and write JSONL, which is stored in the results store keyed `(asset_id or query_id, model_id = "claude/opus-5.5", params_hash)` like any runner, so audits are reproducible as records. The prompt files are versioned in `config/prompts/`. If an API key is added later, an API runner replaces the subagents behind the same keys.
 
-**Prompt `label-v2`.** Search-oriented: a 2–4 sentence caption plus lowercase tags. It covers the setting, subjects and activity, the number of people and their apparent roles (no identification), any visible text, the medium cues (black-and-white, film grain, scan borders, print fading) and era cues. The structured fields stay as in `label-v1`. Tags may name places when they're visible (signs, landmarks), and are lowercased by the runner, not rejected.
+**Prompt `label-v2`.** Search-oriented: a 2–4 sentence caption plus lowercase tags. It covers the setting, subjects and activity, the number of people and their apparent roles (no identification), any visible text, the medium cues (black-and-white, film grain, scan borders, print fading) and era cues. The structured fields stay as in `label-v1`, plus `rotate_cw` (0/90/180/270, the clockwise turn that makes the image upright; D6a). Tags may name places when they're visible (signs, landmarks), and are lowercased by the runner, not rejected.
 
 ### D8. Eval corpora and splits
 - **`eval-1k`:** 1,000 photos from `pilot-v0-pool5k`, including its 45 targets. The other 955 come from the 1,966 non-target pool photos that 12B (`label-v1`) already processed before the run stopped (1,949 valid; the 17 invalid are retried after the tag fix). The runner processes in asset_id order and BLAKE3 ids are uniform, so that prefix is a random sample. That means 12B `label-v1` costs nothing, and E4B `label-v1` and the EG2 image vectors already exist.
 - **Hosted-eligibility screen**, before anything is sent. Excluded:
   - `evals/never-send.txt`;
-  - paths under `documents/` (passports, IDs, visas);
+  - paths under `Important documents/` (passports, IDs, citizenship, bills, health insurance);
   - `Pictures/toren phone` and `Pictures/Jude Profile`, which look like other people's libraries and stay out until the owner confirms;
   - anything an Opus pre-screen flags as medical, ID or financial.
 

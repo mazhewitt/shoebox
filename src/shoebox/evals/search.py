@@ -556,6 +556,7 @@ def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path
     """Resolve the EG2 and label candidates the routes need (local Ollama only) and load their stores."""
     from shoebox import embed
     from shoebox.commands.embed import resolve as resolve_embed
+    from shoebox.runners import label_source
     from shoebox.runners import resolve as resolve_label
 
     set_dir = Path(sets_dir) / set_name
@@ -577,7 +578,7 @@ def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path
                    "query_prompt": res.cand.get("query_prompt")}, image, exclude=exclude)
     for cand in sorted({r.cand for r in routes if r.cand}):
         lres = resolve_label(cand)
-        source = {"candidate": cand, "model_id": lres.model_id, "params_hash": lres.params_hash}
+        source = label_source(lres)
         src.label_source[cand] = source
         src.labels[cand] = {a: d for a, d in _label_docs(cfg, source).items() if a in keep}
         cres, _ = resolve_embed(embed_candidate, cand)

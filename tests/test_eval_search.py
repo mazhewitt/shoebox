@@ -677,7 +677,7 @@ def test_load_sources_keeps_only_corpus_items_from_the_stores(tmp_path, monkeypa
     _fake_image_store(monkeypatch, {a: unit((0, 1.0)) for a in ("a1", "x3", "zz")})
 
     class R:
-        model_id, params_hash, kind = "m/x", "ph", "labels"
+        name, model_id, params_hash, kind, retry = "c", "m/x", "ph", "labels", None
 
         def store_dir(self, cfg):
             return tmp_path / "none"

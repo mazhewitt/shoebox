@@ -105,3 +105,7 @@ One original of each kind was derived from `~/mnt/importantfiles-ro/Pictures` (r
 - **Task 3.1** (the pixel ceiling per budget) hasn't frozen the 2048 px edge.
 - **No real HEIC or WebP original** was checked. The `heifload` path is covered by a synthetic AVIF test.
 - **No real NEF/DNG/PSD fixture is in the tests.** The raw path is unit-tested with a stand-in LibRaw. The PSD path is unit-tested with a psd-tools–written file.
+
+### Scan orientation (task 1.3, 2026-10-11)
+
+`infer-v1` doesn't rotate scans, and no `infer-v2` exists yet. About 4% of scans are stored sideways or upside down. No local method detects this precisely enough to rotate at derive time (E4B, 12B and EG2 were tested), and rotating the mis-oriented search targets didn't change search. Orientation is captured as `rotate_cw` in `label-v2` instead. Details are in `evals/runs/2026-10-11_scan-orientation.md` and design D6a.

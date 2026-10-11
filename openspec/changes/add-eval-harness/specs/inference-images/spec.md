@@ -28,10 +28,14 @@ Input formats SHALL include JPEG, PNG, HEIC/HEIF, WebP, 8/16-bit TIFF (colour an
 - **THEN** no derived image is written, and the asset is listed with the decode error rather than skipped silently
 
 ### Requirement: Orientation of untagged scans
-Scans with no EXIF orientation SHALL get an orientation pass. Its rotation SHALL be recorded per asset in the derive index. Images derived with the pass SHALL belong to a new profile version, so outputs from the old and new images never mix under one key.
+Each scan's orientation SHALL be measured before any rotation is applied: every captioner's `label-v2` output gives a `rotate_cw` value, scored against the Opus reference on the eval scans. A rotation SHALL be applied at derive time only by a method whose precision on upright scans is at least 0.98. Such a pass SHALL record its rotation per asset in the derive index and SHALL belong to a new profile version, so outputs from the old and new images never mix under one key.
 
-#### Scenario: Sideways film scan
-- **WHEN** a film-scan TIFF with no orientation tag is stored rotated 90°
+#### Scenario: No method precise enough
+- **WHEN** no orientation source reaches the precision bar
+- **THEN** derived images are not rotated, and the `rotate_cw` values stay in the label records as un-gated data
+
+#### Scenario: Sideways film scan under a passing method
+- **WHEN** a method has passed and a film-scan TIFF with no orientation tag is stored rotated 90°
 - **THEN** the derived image under the new profile is upright, the derive index records the rotation and the method, and the old profile's image is left unchanged
 ### Requirement: Named, versioned image profiles
 Every derived image SHALL belong to a named profile that fixes format, maximum long edge, quality and conversion settings. A profile change SHALL create a new profile name. Model outputs SHALL record the profile they were run on.

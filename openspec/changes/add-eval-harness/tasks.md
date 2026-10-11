@@ -24,18 +24,17 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
   Done 2026-10-11: `ollama-runner-2` / `gemini-runner-2`; `shoebox label replay` rebuilt the 12B store (4a05141c… → a989aa84…, 2,011 ok, the 17 tag failures recovered) and the E4B store (ba2e8d52… → 5048543d…) with no inference.
 - [x] 1.2 Truncation: mark outputs that hit `num_predict` as `invalid` with reason `truncated`, then retry once at `num_predict = 300` with a repeat penalty, under a new params_hash. Run it over the 57 E4B and the 17 12B invalids. Verify with a test feeding a capped output, and report how many retries recovered.
   Done 2026-10-11: candidates carry `retry = {num_predict = 300, repeat_penalty = 1.1}`; readers use `runners.source_index`. E4B: 57 of 57 truncated items recovered (median 121 output tokens). 12B had no truncations; its 17 invalids were tag-case and were fixed by 1.1.
-- [ ] 1.3 Orientation (D6a): build `infer-v2` with an orientation pass for untagged scans. Compare the three methods on 50 scans with Opus as the reference, record the result in `docs/profiles.md`, and choose one. Re-derive the scan items of `eval-1k` and the 45 targets, then re-embed. Verify with tests: the rotation is recorded, `infer-v1` images are unchanged, and a rotated fixture comes out upright.
-- [x] 1.4 Search report: add a paired bootstrap (one resample index for both routes) on the RR and nDCG deltas with 95% CIs, and the minimum detectable difference. Verify with a synthetic test where a known delta is recovered.
-- [ ] 1.5 Re-run pool5k image routes on `infer-v2` for the 45 targets, and report how much of the 0.98→0.65 drop came from orientation.
+- [x] 1.3 Orientation (D6a): compare methods on 50 scans with Opus as the reference. Done 2026-10-11 (`evals/runs/2026-10-11_scan-orientation.md`): 4% of scans are mis-oriented, and no local method is precise enough (E4B mostly says upright, 12B gets the direction wrong, EG2 has no signal). No method is chosen and `infer-v2` is not built. `rotate_cw` moves into `label-v2` (task 3.1) and is scored against Opus in 6.5.
+- [x] 1.5 How much of the pool5k drop came from orientation: two of the 44 targets are mis-oriented, and upright they change image-route MRR by about −0.001. Orientation explains none of it.
 
 ## 2. Eval corpus `eval-1k`
 
-- [ ] 2.1 Config: add `held_back` path globs (`Pictures/toren phone/**`, `Pictures/Jude Profile/**`, `documents/**`), and record Claude as an approved hosted model. Update `privacy check` to report both. Verify with tests: a held-back path is skipped and reported.
+- [ ] 2.1 Config: add `held_back` path globs (`Pictures/toren phone/**`, `Pictures/Jude Profile/**`, `Important documents/**`), and record Claude as an approved hosted model. Update `privacy check` to report both. Verify with tests: a held-back path is skipped and reported.
 - [ ] 2.2 Draw `eval-1k`: the 45 targets plus 955 of the 1,966 12B-processed non-target pool items, by a seeded draw. Run the hosted-eligibility screen: never-send, held-back paths, consent, and an Opus pre-screen for medical, ID and financial images. Swap exclusions from the rest of the pool. Write the README. Verify the draw is reproducible and every substitution is listed.
 
 ## 3. Captions
 
-- [ ] 3.1 Write `config/prompts/label-v2.md` and the schema (D7). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
+- [ ] 3.1 Write `config/prompts/label-v2.md` and the schema (D7), including `rotate_cw` (D6a). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
 - [ ] 3.2 Run Gemini 3.8 Flash `label-v2` (`medium`, thinking `low`) on `eval-1k` with a $5 cap. Verify the spend is logged and the skipped items are reported.
 - [ ] 3.3 Run E4B `label-v2` (about 1 h) and 12B `label-v2` (about 2 h) on `eval-1k`, and top up E4B and 12B `label-v1` where they are missing. Caption-embed all of them with EG2. Verify every arm covers all 1,000 photos or lists its invalids.
 
@@ -57,7 +56,7 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 - [ ] 6.2 Pool the top-10 of every route per query, plus the targets, and judge them all ($25 cap). Verify pool coverage is 1.0 for every route.
 - [ ] 6.3 Opus audit: a stratified 10% plus all target disagreements. Compute weighted kappa overall and per route, and re-judge the test pool with Opus if kappa < 0.6.
 - [ ] 6.4 Local review page (static HTML on the laptop, derived JPEGs): the owner judges 100 audited items and rates 30 caption sets blind. Store the results with provenance.
-- [ ] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements.
+- [ ] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements. Score every arm's `rotate_cw` on the `eval-1k` scans against Opus (precision on upright scans, recall on mis-oriented ones).
 
 ## 7. Decision rule and reports
 
