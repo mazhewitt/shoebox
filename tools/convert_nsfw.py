@@ -38,7 +38,7 @@ from pathlib import Path
 
 os.environ.setdefault("TF_USE_LEGACY_KERAS", "1")  # opennsfw2's tf-keras path
 
-import numpy as np  # noqa: E402
+import numpy as np
 
 WEIGHTS_URL = "https://github.com/bhky/opennsfw2/releases/download/v0.1.0/open_nsfw_weights.h5"
 NAME = "opennsfw2-v1"

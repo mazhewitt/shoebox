@@ -282,19 +282,34 @@ def chroma_stats(img: pyvips.Image) -> dict:
             "chromatic": float(chromatic.mean()), "hue_r": hue_r}
 
 
-def classify_colour(stats: dict, h: Header) -> tuple[str, float]:
+@dataclass(frozen=True)
+class ColourThresholds:
+    """Every cutoff of `classify_colour` (CIELAB chroma of mid-tones; tuned in `shoebox.evals.colour`)."""
+    mono_sure_c95: float = 2.0     # c95 below: mono, confidence 0.9
+    mono_c95: float = 3.5          # c95 below: mono, confidence 0.75
+    colour_c95: float = 30.0       # c95 at or above: colour, confidence 0.85
+    toned_hue_r: float = 0.92      # one hue (hue_r at or above) ...
+    toned_c50: float = 6.0         # ... with median chroma at or above: toned
+    colour_low_c95: float = 15.0   # c95 at or above ...
+    colour_low_hue_r: float = 0.75  # ... with spread hues (hue_r below): colour, confidence 0.75
+
+
+DEFAULT_THRESHOLDS = ColourThresholds()
+
+
+def classify_colour(stats: dict, h: Header, t: ColourThresholds = DEFAULT_THRESHOLDS) -> tuple[str, float]:
     if h.grey:
         return "mono", 0.95
     c50, c95, hue_r = stats["c50"], stats["c95"], stats["hue_r"]
-    if c95 < 2:
+    if c95 < t.mono_sure_c95:
         return "mono", 0.9
-    if c95 < 3.5:
+    if c95 < t.mono_c95:
         return "mono", 0.75
-    if c95 >= 30:
+    if c95 >= t.colour_c95:
         return "colour", 0.85
-    if hue_r >= 0.92 and c50 >= 6:
+    if hue_r >= t.toned_hue_r and c50 >= t.toned_c50:
         return "toned", 0.7
-    if c95 >= 15 and hue_r < 0.75:
+    if c95 >= t.colour_low_c95 and hue_r < t.colour_low_hue_r:
         return "colour", 0.75
     return "unknown", 0.3  # e.g. faded colour vs toned vs mono with a scanner cast
 
