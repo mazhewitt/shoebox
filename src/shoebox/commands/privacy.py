@@ -2,9 +2,10 @@
 
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
-from shoebox import config, privacy
+from shoebox import config, privacy, worklist
 
 
 def register(sub) -> None:
@@ -39,6 +40,12 @@ def register(sub) -> None:
         default=None,
         help="write the allowed items as JSONL (requires --items)",
     )
+    c.add_argument(
+        "--all-frames",
+        action="store_true",
+        help="also check every asset in the latest frame of every configured source and print "
+        "refused counts by reason and by restricting source (counts only, no paths or ids)",
+    )
     c.set_defaults(func=cmd_check)
 
     s = psub.add_parser(
@@ -71,6 +78,10 @@ def cmd_check(args) -> int:
             items, config.load(), never, others=others, provider=provider
         )
         print(f"items: {elig.summary()}")
+        _print_counts(
+            elig.counts(),
+            Counter(s.restricting_source or s.source for s in elig.skipped),
+        )
         if allowed_out:
             allowed_out.parent.mkdir(parents=True, exist_ok=True)
             allowed_out.write_text("".join(json.dumps(it) + "\n" for it in elig.allowed))
@@ -82,7 +93,19 @@ def cmd_check(args) -> int:
                 f"WARN  never-send entry {entry!r} matched no item in {args.items} or evals/sets "
                 "(paths are relative to a source root; a folder name blocks everything below it)"
             )
-    if failed and provider != "gemini" and args.items:
+    if getattr(args, "all_frames", False):
+        try:
+            rep = worklist.frame_refusals(config.load(), provider=provider)
+        except privacy.PrivacyError as e:
+            print(f"frames: {e}", file=sys.stderr)
+            return 1
+        print(
+            f"frames ({provider}): {rep['items']} location(s) of {rep['assets']} asset(s); "
+            f"{rep['allowed']} allowed, {rep['items'] - rep['allowed']} refused "
+            f"({rep['refused_assets']} asset(s))"
+        )
+        _print_counts(rep["by_reason"], rep["by_source"])
+    if failed and provider != "gemini" and (args.items or getattr(args, "all_frames", False)):
         print(
             f"{failed} Gemini checklist item(s) failed (informational for --provider {provider})."
         )
@@ -95,6 +118,14 @@ def cmd_check(args) -> int:
         return 1
     print("checklist confirmed.")
     return 0
+
+
+def _print_counts(by_reason: dict, by_source: dict) -> None:
+    """Refused counts by reason and by restricting source: counts only, never paths or asset ids."""
+    for reason, n in sorted(by_reason.items()):
+        print(f"  refused {reason}: {n}")
+    for source, n in sorted(by_source.items(), key=lambda kv: str(kv[0])):
+        print(f"  refused by source {source}: {n}")
 
 
 def cmd_spend(args) -> int:
