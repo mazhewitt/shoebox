@@ -7,14 +7,14 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2�
 ## 1. Config and the full derive pass
 
 - [x] 1.1 Amend `openspec/config.yaml` "Languages" to the owner's rule: Python for scripts and pipelines; Rust only for complex logic, long-running services, or speed/concurrency requirements. API including ranking = Rust; all batch stages = Python. Verify with `openspec validate add-pipeline-foundations`.
-- [ ] 1.2 Add the pixel hash to the derive decode (design D1).
+- [x] 1.2 Add the pixel hash to the derive decode (design D1).
   - BLAKE3 over the orientation-normalised, full-resolution buffer, plus width/height/bands, taken before resize/ICC. Written to result kind `pixelhash/<version>` with `decoded|rendered`. The `infer-v1` `settings_hash` is unchanged.
   - Verify with tests on synthetic fixtures:
     - same pixels, different EXIF → same hash;
     - orientation-flag variant → same hash;
     - re-encoded → different hash;
     - the existing derive tests and the `infer-v1` settings hash are unchanged.
-- [ ] 1.3 Add a pixel-hash backfill mode for already-derived assets (decode only, no re-encode), resumable by `(asset_id, version)`. Verify it covers the 5,045 pool5k assets and is a no-op on re-run.
+- [x] 1.3 Add a pixel-hash backfill mode for already-derived assets (decode only, no re-encode), resumable by `(asset_id, version)`. Verify it covers the 5,045 pool5k assets and is a no-op on re-run.
 - [ ] 1.4 Run `derive` over every unique ImportantFiles image asset (resumable, on the Mac Studio, wired to the NAS; see `docs/handoff-studio.md`).
   - Record img/h after the first 1k, total coverage and errors by kind in `evals/runs/<date>_derive-importantfiles.md` (counts only).
   - Verify that every unique image asset_id has an `ok` record and a pixel hash, or a listed error.
