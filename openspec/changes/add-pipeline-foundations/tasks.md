@@ -46,7 +46,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
   - a `held_back` copy refuses the other copy;
   - a missing frame refuses everything and names the source;
   - existing privacy tests still pass.
-- [ ] 3.3 Extend `shoebox privacy check --provider <p>` to report refused counts by reason and restricting source, with no paths. Verify by running it over the real frame and recording the counts in `.scratch/sources/04` Comments.
+- [x] 3.3 Extend `shoebox privacy check --provider <p>` to report refused counts by reason and restricting source, with no paths. Verify by running it over the real frame and recording the counts in `.scratch/sources/04` Comments.
 
 ## 4. Nudity screen runner (sensitive-content-screen/01)
 

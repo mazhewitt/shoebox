@@ -46,3 +46,10 @@ It already has a `copy_restricted` reason, but that only sees copies inside the 
 - **Capture extension:** `dedup/04`.
 
 ## Comments
+
+**2026-10-11 (Studio, add-pipeline-foundations 3.3).** `shoebox privacy check --provider gemini --all-frames` over `frame-2026-10-10` (ImportantFiles only), with the copy index and an empty quarantine, gives the same counts for `gemini` and `claude`:
+- 73,527 locations of 53,812 assets (all rows with an asset id, sidecars included): 71,905 allowed, 1,622 refused (1,058 assets).
+- Refused by reason: `held_back` 1,355; `copy_restricted` 260; `never_send` 7; `quarantined` 0 (the screen hasn't run yet).
+- Refused by restricting source: `importantfiles` 1,622.
+- So 260 locations sit outside a held-back folder but share bytes with a held-back or never-send copy. Before this change they would have been allowed.
+- Same-pixel links covered only the pool5k pixel hashes at this point. Re-run after the full derive (1.4).
