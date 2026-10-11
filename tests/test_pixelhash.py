@@ -203,3 +203,18 @@ def test_cli_pixelhash_only(env, tmp_path, capsys):
     assert main(["derive", "--items", str(items), "--pixelhash-only"]) == 0
     assert "pixel hashes backfilled 1" in capsys.readouterr().out
     assert len(_pixels(cfg)) == 1
+
+
+def test_hash_is_of_full_resolution_pixels_not_the_resized_image(env):
+    cfg, src = env
+    big = _pix(50, h=40, w=2100)  # long edge above infer-v1's 2048, so the derive resizes
+    img = pyvips.Image.new_from_array(big).copy(interpretation="srgb")
+    (src / "wide.tif").write_bytes(_tiff(img))
+    _, px = _derive(cfg, src, ["wide.tif"])
+    rec = px["wide.tif"]
+    idx = derive.load_index(cfg, PROFILE)[_item(src, "wide.tif")["asset_id"]]
+    assert idx["width"] == 2048  # the derived image was resized ...
+    assert (rec["width"], rec["height"]) == (2100, 40)  # ... the pixel hash was not
+    assert rec["pixel_hash"] == derive.pixel_hash(img, "decoded")["pixel_hash"]
+    resized = img.resize(2048 / 2100, kernel="lanczos3")
+    assert rec["pixel_hash"] != derive.pixel_hash(resized, "decoded")["pixel_hash"]
