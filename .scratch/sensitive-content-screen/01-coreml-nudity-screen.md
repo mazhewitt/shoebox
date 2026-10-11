@@ -64,3 +64,5 @@ Using it would need a developer provisioning profile and a `.app` wrapper. **Wha
 - 500 screened in 224 s, about 8,000 img/h, including model load. The run is bound by reading the derived JPEGs from the NAS; the model takes 3.8 ms per image.
 - 15 flagged (3%), now `pending` in `evals/quarantine.jsonl` (hashes only). Counts only; nobody has looked at them.
 - At 3%, the whole of ImportantFiles would give about 1,500 flags for the owner to review. The threshold is set recall-first from the first review (9.4).
+
+**2026-10-11 (9.3 retro-check).** 1,565 assets already sent to a hosted model or named in the shown eval sets were screened, and 39 were flagged: 27 had gone to Gemini, 26 had been seen by Claude, and 12 appear only in eval-set lists. All 39 are `pending` until the owner's review. Details are in `evals/runs/2026-10-11_screen-retro.md` (counts only).

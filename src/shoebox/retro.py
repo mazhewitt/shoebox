@@ -19,6 +19,7 @@ SHOWN_SETS = ("pilot-v0", "eval-1k")
 SETS_DIR = REPO_ROOT / "evals" / "sets"
 
 _ASSET_ID = re.compile(r"\b[0-9a-f]{64}\b")
+_CHECKSUM = re.compile(r'"\w*sha256"\s*:\s*"([0-9a-f]{64})"')  # file checksums in set metadata
 
 
 def hosted_store_ids(cfg: Config) -> set[str]:
@@ -30,7 +31,8 @@ def hosted_store_ids(cfg: Config) -> set[str]:
         for mdir in sorted(kind.iterdir()):
             if mdir.is_dir() and mdir.name.startswith(HOSTED_MODEL_DIR_PREFIXES):
                 for d in sorted(p for p in mdir.iterdir() if p.is_dir()):
-                    out.update(r["asset_id"] for r in store.iter_dir(d))
+                    # some kinds key non-image records (e.g. query categories) by asset_id
+                    out.update(r["asset_id"] for r in store.iter_dir(d) if _ASSET_ID.fullmatch(r["asset_id"]))
     return out
 
 
@@ -39,7 +41,8 @@ def set_ids(sets: Iterable[str] = SHOWN_SETS, sets_dir: Path = SETS_DIR) -> set[
     out: set[str] = set()
     for name in sets:
         for path in sorted((Path(sets_dir) / name).glob("*.json*")):
-            out.update(_ASSET_ID.findall(path.read_text()))
+            text = path.read_text()
+            out.update(set(_ASSET_ID.findall(text)) - set(_CHECKSUM.findall(text)))
     return out
 
 

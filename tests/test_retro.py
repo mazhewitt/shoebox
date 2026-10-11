@@ -17,9 +17,11 @@ def test_union_of_hosted_stores_and_shown_sets(tmp_path):
     store.append(cfg, _rec(A, "gemini/gemini-3.8-flash"), kind="labels")
     store.append(cfg, _rec(B, "claude/opus-5.5"), kind="judgments")
     store.append(cfg, _rec(C, "ollama/gemma4:12b"), kind="labels")  # local: not sent
+    store.append(cfg, _rec("category-beach", "claude/opus-5.5"), kind="queries")  # not an image
     sets = tmp_path / "sets"
     (sets / "eval-1k").mkdir(parents=True)
     (sets / "eval-1k" / "pool.jsonl").write_text(json.dumps({"pairs": [{"asset_id": D}]}) + "\n")
+    (sets / "eval-1k" / "draw.json").write_text(json.dumps({"items_sha256": "f" * 64}))  # a checksum
     (sets / "other").mkdir()
     (sets / "other" / "items.jsonl").write_text(json.dumps({"asset_id": E}) + "\n")  # not a shown set
     assert retro.retro_ids(cfg, ("eval-1k",), sets) == {A, B, D}
