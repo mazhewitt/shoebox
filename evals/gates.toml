@@ -1,0 +1,60 @@
+# Pre-registered decision rule for the MVP captioner + search method (design D11, task 7.2).
+# Committed before any test-split search metric is computed. Changing anything below after the test
+# split has been scored needs a new file version and a note in the run record explaining why.
+#
+# Already known when this was written (2026-10-11), so stated rather than hidden:
+# - the Opus caption audit of 200 test-split photos (evals/runs/2026-10-11_eval-1k-caption-audit.md):
+#   no local arm is within the caption error margin below. The caption rule was fixed in design D11
+#   (commit 5ab1a4e) before that audit ran.
+# - dev-split judgments exist and are used for tuning (blend weight, expansion prompt, filters).
+
+version = 1
+written = "2026-10-11"
+set = "eval-1k"
+queries = "queries-v1.jsonl"
+
+[judging]
+judge = "gemini-judge-v2"            # Gemini 3.8 Flash, judge-v2.md, photos + date/folder notes
+audit_model = "claude/opus-5.5"
+kappa = "linear-weighted"            # Gemini vs Opus on the stratified audit sample
+kappa_floor = 0.6                    # below: Opus re-judges the whole test pool before scoring
+unjudged = "non-relevant"            # pool coverage is reported per route
+
+[search]
+metric = "ndcg@20"                   # graded 0/1/2 gains, over test known_item + category queries together
+also_report = ["mrr (known_item)", "recall@20 (category)", "per style", "per facet", "owner_note subset"]
+split = "test"
+statistic = "paired bootstrap over queries, 2000 resamples, seed 20261010, 95% percentile CI"
+non_inferiority_margin = 0.03        # pass: lower bound of (candidate - reference) > -0.03
+mdd_note = "differences inside the MDD are reported as ties and decided on cost"
+
+[reference]
+captioner = "gemini-medium-v2"
+route = "the best gemini-medium-v2 route on dev nDCG@20"   # chosen on dev, frozen before test scoring
+
+[candidates]
+# Every (captioner, prompt, route) triple on the eval-1k grid, the route chosen per captioner on dev,
+# plus "no captioner" (eg2-image@768, meta, image-meta and their +exp/+filt variants).
+captioners = ["e4b-bf16", "e4b-bf16-v2", "g12b-q4", "g12b-q4-v2", "gemini-medium-v2", "none"]
+route_choice = "best route per captioner on dev nDCG@20; one route per captioner goes to test"
+
+[captions]
+# From the Opus caption audit (blind, 200 test-split photos).
+error_rate = "share of photos with >= 1 wrong or invented fact, or no caption"
+error_margin = 0.02                  # pass: candidate error rate <= reference + 0.02 (point estimate)
+mono_precision_min = 0.98            # colour/mono precision vs the Opus reference (high/medium confidence)
+no_captioner = "no caption rule applies; reported as search-only, and flagged as not meeting the MVP's 'describe every photo'"
+
+[decision]
+order = [
+  "1. drop candidates that fail search non-inferiority or (captioners) the caption rules",
+  "2. among the rest, choose the lowest projected full-library cost (hosted USD and local hours both shown)",
+  "3. a cost tie goes to local",
+  "4. if no local captioner passes: recommend gemini-medium-v2 for the bulk run, re-quoted at batch price, and state whether it fits the remaining budget; 'no captioner' is reported alongside as the zero-cost fallback",
+  "5. mono precision below the gate does not block a captioner; it blocks using its colour_class as a filter, which then falls back to the frame's colour heuristic or the best passing source",
+]
+
+[projection]
+library_images = 71600
+price_basis = "gemini-medium-v2 measured USD per image on eval-1k; batch = 50% of standard (to be re-checked on the pricing page on the day)"
+local_basis = "img/h measured on the M5 Max laptop for each local arm on eval-1k"
