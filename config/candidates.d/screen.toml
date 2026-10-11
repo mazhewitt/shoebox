@@ -1,0 +1,19 @@
+# Local nudity screen (design D2, spec content-screen). runtime = "screen" (shoebox/runners/screen.py).
+# OpenNSFW2 (MIT; Yahoo open_nsfw weights, BSD-2) converted to Core ML by tools/convert_nsfw.py into
+# <shoebox_root>/models/. The runner checks package_sha256 when it loads the package and refuses a
+# mismatch. Every key below is hashed except `profile` (hashed as the derive profile params) and notes;
+# so a threshold re-tune re-screens under a new params_hash. Only `sensitive` (score >= threshold) is
+# stored, never the score.
+# float32 chosen over float16: max abs diff vs Keras 4.6e-5; 3.8 ms/img with ComputeUnit.ALL.
+
+[candidates.nsfw-coreml-v1]
+runtime = "screen"
+model_id = "nsfw-coreml-v1"   # store dir: results/screen/nsfw-coreml-v1/<params_hash>/
+model = "opennsfw2-v1"
+package = "opennsfw2-v1-float32.mlpackage"
+package_sha256 = "6b935854cc5a3e8c1153377c2020bdf6b46127846dd5386859192f3994bc2d70"
+threshold = 0.2               # sensitive when nsfw score >= threshold
+compute_units = "ALL"
+preprocess = "yahoo-v1"       # 256x256 bilinear, JPEG q75 re-encode, centre 224, BGR minus VGG means
+runner = "screen-v1"
+profile = "infer-v1"
