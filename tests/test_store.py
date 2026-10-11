@@ -132,3 +132,31 @@ def test_append_refuses_a_source_root_reached_through_a_symlink(tmp_path):
     with pytest.raises(ValueError, match="source root"):
         store.append(cfg, rec("a" * 64))
     assert list((src / "inner").iterdir()) == []
+
+
+def test_append_many_rotates_parts_like_append(cfg, monkeypatch):
+    monkeypatch.setattr(store, "PART_LINES", 3)
+    store.append(cfg, rec("a0"))
+    paths = store.append_many(cfg, [rec(f"a{i}") for i in range(1, 8)])
+    assert [p.name for p in paths] == ["part-0000.jsonl"] * 2 + ["part-0001.jsonl"] * 3 + ["part-0002.jsonl"] * 2
+    ids = [r["asset_id"] for r in store.iter_records(cfg, "ollama/gemma4:e4b-mlx-bf16", "0123456789abcdef")]
+    assert ids == [f"a{i}" for i in range(8)]
+    assert store.append(cfg, rec("a8")).name == "part-0002.jsonl"
+
+
+def test_append_many_across_store_dirs_and_torn_tail(cfg):
+    p = store.append(cfg, rec("a1"))
+    with open(p, "a") as f:
+        f.write('{"asset_id": "half')
+    store.append_many(cfg, [rec("a2"), rec("b1", ph="fedcba9876543210"), rec("a3")])
+    ids = [r["asset_id"] for r in store.iter_records(cfg, "ollama/gemma4:e4b-mlx-bf16", "0123456789abcdef")]
+    assert ids == ["a1", "a2", "a3"]
+    assert [r["asset_id"] for r in store.iter_records(cfg, "ollama/gemma4:e4b-mlx-bf16", "fedcba9876543210")] == ["b1"]
+
+
+def test_append_many_checks_every_record_before_writing(cfg):
+    bad = rec("a2")
+    del bad["status"]
+    with pytest.raises(ValueError):
+        store.append_many(cfg, [rec("a1"), bad])
+    assert list(store.iter_records(cfg, "ollama/gemma4:e4b-mlx-bf16", "0123456789abcdef")) == []

@@ -14,6 +14,7 @@ An asset with no ok derived image, or one made with other profile settings/tools
 import hashlib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -92,6 +93,17 @@ def preprocess(path: Path) -> np.ndarray:
     return x[None]
 
 
+FLUSH_EVERY = 200  # records per store write (one append costs ~240 ms over SMB)
+
+
+@contextmanager
+def _finally(fn: Callable[[], None]):
+    try:
+        yield
+    finally:
+        fn()
+
+
 @dataclass
 class ScreenTally:
     screened: int = 0   # records written this run (ok or error)
@@ -152,7 +164,14 @@ def screen_items(res, items: list[dict], cfg: Config, model: Model | None = None
         except Exception as e:  # noqa: BLE001 - an unreadable image is a retryable error record
             return aid, None, f"{type(e).__name__}: {e}"
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+    buf: list[dict] = []  # records written FLUSH_EVERY at a time; flags reach the quarantine at once
+
+    def flush() -> None:
+        if buf:
+            store.append_many(cfg, buf, res.kind)
+            buf.clear()
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool, _finally(flush):
         for aid, x, err in pool.map(prepare, pending):
             if err is None:
                 try:
@@ -160,7 +179,7 @@ def screen_items(res, items: list[dict], cfg: Config, model: Model | None = None
                 except Exception as e:  # noqa: BLE001 - a model failure is retryable, never a verdict
                     err = f"{type(e).__name__}: {e}"
             if err is not None:
-                store.append(cfg, _record(res, aid, None, err), res.kind)
+                buf.append(_record(res, aid, None, err))
                 tally.errors += 1
             else:
                 if sensitive:  # quarantine before the record, so a crash between them can't lose a flag
@@ -170,8 +189,10 @@ def screen_items(res, items: list[dict], cfg: Config, model: Model | None = None
                         groups = copies.CopyIndex.build([], copies.load_pixel_keys(cfg)).pixel_group
                     tally.queued += quarantine.flag([aid], "nudity", quarantine_path, groups=groups)
                     tally.flagged += 1
-                store.append(cfg, _record(res, aid, bool(sensitive)), res.kind)
+                buf.append(_record(res, aid, bool(sensitive)))
             tally.screened += 1
+            if len(buf) >= FLUSH_EVERY:
+                flush()
             if progress:
                 progress(tally)
     return tally

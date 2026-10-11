@@ -228,3 +228,28 @@ def test_real_package_screens_through_load_model_with_network_blocked(world, mon
     assert (t.screened, t.errors) == (5, 0)
     recs = store.index(world, res.model_id, res.params_hash, "screen")
     assert all(r["status"] == "ok" and isinstance(r["sensitive"], bool) for r in recs.values())
+
+
+def test_records_are_written_in_batches_and_flushed_on_failure(world, monkeypatch):
+    """One store write per batch, not per image (an append costs ~240 ms over SMB); a crash mid-run still
+    writes the records already scored."""
+    calls = []
+    real = store.append_many
+    monkeypatch.setattr(store, "append_many", lambda cfg, recs, kind="labels": calls.append(len(recs)) or
+                        real(cfg, recs, kind))
+    monkeypatch.setattr(screen, "FLUSH_EVERY", 2)
+    res = runners.resolve("nsfw-coreml-v1")
+    t = screen.screen_items(res, items(), world, model=StubModel())
+    assert t.screened == 5 and calls == [2, 2, 1]
+
+    class Dies(StubModel):
+        def predict(self, x):
+            if self.calls == 3:
+                raise KeyboardInterrupt
+            return super().predict(x)
+    cand = {k: v for k, v in res.cand.items() if k not in ("name", "model_id", "params_hash")} | {"threshold": 0.9}
+    res2 = runners._resolve_cand("nsfw-coreml-v1", cand, runners.CONFIG_DIR)
+    calls.clear()
+    with pytest.raises(KeyboardInterrupt):
+        screen.screen_items(res2, items(), world, model=Dies())
+    assert sum(calls) == 3

@@ -127,26 +127,47 @@ def _target_part(d: Path) -> Path:
 
 def append(cfg: Config, record: dict, kind: str = "labels") -> Path:
     """Append one record (one JSON line) to its key's store dir. Returns the part file written."""
-    missing = [k for k in KEY_FIELDS if not record.get(k)]
-    if missing:
-        raise ValueError(f"record lacks key fields: {missing}")
-    d = store_dir(cfg, record["model_id"], record["params_hash"], kind)
-    check_write_location(cfg, d)
-    d.mkdir(parents=True, exist_ok=True)
-    part = _target_part(d)
-    data = (json.dumps(record, ensure_ascii=False) + "\n").encode()
-    if part.exists() and part.stat().st_size:
-        with open(part, "rb") as f:
-            f.seek(-1, os.SEEK_END)
-            if f.read(1) != b"\n":
-                data = b"\n" + data  # seal a torn line left by a killed writer
-    fd = os.open(part, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
-    try:
-        os.write(fd, data)
-    finally:
-        os.close(fd)
-    size = part.stat().st_size
-    cached = _tail.get(d)
-    lines = (cached[2] if cached and cached[0] == part else 0) + data.count(b"\n")
-    _tail[d] = (part, size, lines)
-    return part
+    return append_many(cfg, [record], kind)[0]
+
+
+def append_many(cfg: Config, records: list[dict], kind: str = "labels") -> list[Path]:
+    """Append records in order, one open/write/close per part file touched rather than per record (each
+    costs tens of ms over SMB). Every record is checked before anything is written. Returns each
+    record's part file."""
+    for record in records:
+        missing = [k for k in KEY_FIELDS if not record.get(k)]
+        if missing:
+            raise ValueError(f"record lacks key fields: {missing}")
+    by_dir: dict[Path, list[int]] = {}
+    for i, record in enumerate(records):
+        by_dir.setdefault(store_dir(cfg, record["model_id"], record["params_hash"], kind), []).append(i)
+    out: list[Path] = [Path()] * len(records)
+    for d, idxs in by_dir.items():
+        check_write_location(cfg, d)
+        d.mkdir(parents=True, exist_ok=True)
+        lines = [(json.dumps(records[i], ensure_ascii=False) + "\n").encode() for i in idxs]
+        pos = 0
+        while pos < len(lines):
+            part = _target_part(d)
+            cached = _tail.get(d)
+            have = cached[2] if cached and cached[0] == part else 0
+            take = max(1, PART_LINES - have)
+            chunk = lines[pos:pos + take]
+            data = b"".join(chunk)
+            if part.exists() and part.stat().st_size:
+                with open(part, "rb") as f:
+                    f.seek(-1, os.SEEK_END)
+                    if f.read(1) != b"\n":
+                        data = b"\n" + data  # seal a torn line left by a killed writer
+            fd = os.open(part, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+            try:
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view):]
+            finally:
+                os.close(fd)
+            _tail[d] = (part, part.stat().st_size, have + data.count(b"\n"))
+            for i in idxs[pos:pos + len(chunk)]:
+                out[i] = part
+            pos += len(chunk)
+    return out
