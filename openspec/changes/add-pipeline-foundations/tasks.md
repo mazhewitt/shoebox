@@ -82,7 +82,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 6. Dedup: groups, captures, canonical, worklist (dedup/01, 02, 04)
 
-- [ ] 6.1 Build the exact and `same_pixels` groups from the frames and `pixelhash`. Group id = `g-` + the first 12 hex of the smallest member id. Write to the keyed store.
+- [x] 6.1 Build the exact and `same_pixels` groups from the frames and `pixelhash`. Group id = `g-` + the first 12 hex of the smallest member id. Write to the keyed store.
   - Verify with fixture tests (byte-identical; same pixels; re-encoded not grouped).
   - Verify with an ImportantFiles count by source/folder pair in `evals/runs/` once 1.4 is done.
 - [x] 6.2 Implement the capture rules as `capture/<version>`:
