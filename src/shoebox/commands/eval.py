@@ -80,6 +80,7 @@ def register(sub) -> None:
     _register_judge(esub)
     _register_audit(esub)
     _register_caption_audit(esub)
+    _register_opus_pool(esub)
 
 
 def _register_search(esub) -> None:
@@ -308,8 +309,101 @@ def _register_caption_audit(esub) -> None:
     r.add_argument("--params-hash", default=None)
     r.add_argument("--date", default=None)
     r.add_argument("--bootstrap", type=int, default=ca.BOOTSTRAP)
+    r.add_argument("--rescore-params-hash", default=None, help="caption_usefulness store dir (default: the only one)")
+    r.add_argument("--owner-params-hash", default=None, help="owner_reviews store dir (default: the only one)")
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
     r.set_defaults(func=_caption_report)
+    _register_review(esub, sets)
+
+
+def _register_review(esub, sets: Path) -> None:
+    from shoebox.evals import review as rv
+
+    p = esub.add_parser("review-page", help="offline owner review page: blind caption usefulness + query realism")
+    p.add_argument("--set", required=True, dest="set_name")
+    p.add_argument("--packets", required=True, type=Path, help="caption-packets dir (batch-*.json, map.json)")
+    p.add_argument("--n", type=int, default=rv.DEFAULT_N)
+    p.add_argument("--seed", type=int, default=rv.DEFAULT_SEED)
+    p.add_argument("--realism", required=True, type=Path, help="JSON list of query_ids")
+    p.add_argument("--queries", default="queries-v1.jsonl")
+    p.add_argument("--out", required=True, type=Path, help="scratch dir (never under evals/)")
+    p.add_argument("--sets-dir", type=Path, default=sets)
+    p.set_defaults(func=_review_page)
+
+    i = esub.add_parser("review-ingest", help="validate, un-blind and store the owner's downloaded answers")
+    i.add_argument("--set", required=True, dest="set_name")
+    i.add_argument("--answers", required=True, type=Path)
+    i.add_argument("--page", required=True, type=Path, help="the review-page --out dir (page-map.json)")
+    i.add_argument("--queries", default="queries-v1.jsonl")
+    i.add_argument("--sets-dir", type=Path, default=sets)
+    i.set_defaults(func=_review_ingest)
+
+    r = esub.add_parser("rescore-ingest", help="validate, un-blind and store Opus rubric usefulness rescore-*.jsonl")
+    r.add_argument("--set", required=True, dest="set_name")
+    r.add_argument("--dir", required=True, type=Path)
+    r.add_argument("--model-id", default=None)
+    r.add_argument("--sets-dir", type=Path, default=sets)
+    r.set_defaults(func=_rescore_ingest)
+
+
+def _review_page(args) -> int:
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import review as rv
+    from shoebox.evals import search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        rows = search.read_jsonl(set_dir / ca.SAMPLE_FILE)
+        qs = search.read_jsonl(set_dir / args.queries)
+        ids = json.loads(args.realism.read_text())
+        pm = rv.build_page(args.packets, rows, qs, ids, args.n, args.seed, args.out, rv.rubric_text())
+    except (ValueError, FileNotFoundError, KeyError) as e:
+        print(f"shoebox eval review-page: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {args.out / 'index.html'}: {len(pm['photos'])} photos, {len(pm['queries'])} queries "
+          f"(page {pm['page_id']})")
+    return 0
+
+
+def _review_ingest(args) -> int:
+    from shoebox.evals import review as rv
+    from shoebox.evals import search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        ans = json.loads(args.answers.read_text())
+        qs = search.read_jsonl(set_dir / args.queries)
+        res = rv.review_ingest(_cfg(), ans, args.page, rv.rubric_text(), qs, set_dir / "QUERIES.md")
+    except (rv.IngestError, ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval review-ingest: {e}", file=sys.stderr)
+        return 1
+    print(f"stored {res.stored} owner reviews ({res.already} already stored, {res.incomplete} incomplete skipped) "
+          f"as {rv.OWNER_MODEL_ID} {res.params_hash}; updated {set_dir / 'QUERIES.md'}")
+    if res.conflicts:
+        print(f"shoebox eval review-ingest: {len(res.conflicts)} already stored differently "
+              f"(kept the stored one): {res.conflicts[:10]}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _rescore_ingest(args) -> int:
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import review as rv
+    from shoebox.evals import search
+
+    try:
+        rows = search.read_jsonl(args.sets_dir / args.set_name / ca.SAMPLE_FILE)
+        res = rv.rescore_ingest(_cfg(), args.dir, rows, rv.rubric_text(), args.model_id or ca.MODEL_ID)
+    except (rv.IngestError, FileNotFoundError) as e:
+        print(f"shoebox eval rescore-ingest: {e}", file=sys.stderr)
+        return 1
+    print(f"stored {res.stored} usefulness rescores ({res.already} already stored) as "
+          f"{args.model_id or ca.MODEL_ID} {res.params_hash}")
+    if res.conflicts:
+        print(f"shoebox eval rescore-ingest: {len(res.conflicts)} photos already stored differently "
+              f"(kept the stored one): {res.conflicts[:10]}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _caption_sample(args) -> int:
@@ -380,20 +474,91 @@ def _caption_report(args) -> int:
     from datetime import date
 
     from shoebox.evals import caption_audit as ca
+    from shoebox.evals import review as rv
     from shoebox.evals import search
 
+    cfg = _cfg()
     try:
-        ph, recs = ca.audit_records(_cfg(), args.model_id, args.params_hash)
+        ph, recs = ca.audit_records(cfg, args.model_id, args.params_hash)
+        rph, rescore = rv.records(cfg, rv.RESCORE_KIND, args.model_id, args.rescore_params_hash)
+        oph, owner = rv.records(cfg, rv.OWNER_KIND, rv.OWNER_MODEL_ID, args.owner_params_hash)
     except (ValueError, FileNotFoundError) as e:
         print(f"shoebox eval caption-report: {e}", file=sys.stderr)
         return 2
     meta = {"set": args.set_name, "date": args.date or date.today().isoformat(), "opus_model_id": args.model_id,
             "opus_params_hash": ph}
-    rep = ca.build_report(recs, meta, args.bootstrap)
+    if rescore:
+        meta["rescore_params_hash"] = rph
+        if owner:
+            meta["owner_params_hash"] = oph
+    rep = ca.build_report(recs, meta, args.bootstrap, rescore=rescore or None, owner=owner or None)
     stem = args.out_dir / f"{meta['date']}_{args.set_name}-caption-audit"
     search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
     search._atomic_write(stem.with_suffix(".md"), ca.render_md(rep))
     print(f"wrote {stem}.md/.json: {rep['photos']} photos, {len(rep['arms'])} arms")
+    return 0
+
+
+def _register_opus_pool(esub) -> None:
+    """Opus judging of a whole split's pool (D10 re-judge): `audit-sample --all --split S` writes every pool pair
+    to opus-pool-S.jsonl; `audit-packets`/`audit-report --sample FILE` read it; `judgments --source opus`
+    exports the Opus grades as qrels to judgments-opus.jsonl. Added to the existing parsers."""
+    from shoebox.evals import audit
+
+    s = esub.choices["audit-sample"]
+    s.add_argument("--all", action="store_true", help="every pool pair of --split (Opus judges the whole pool)")
+    s.add_argument("--split", choices=("dev", "test"), default=None)
+    s.add_argument("--out", default=None, help=f"with --all (default {audit.POOL_SAMPLE_FILE})")
+    s.set_defaults(func=_audit_sample_any)
+    for name in ("audit-packets", "audit-report"):
+        esub.choices[name].add_argument("--sample", default=audit.SAMPLE_FILE, help="sample file in the set dir")
+    j = esub.choices["judgments"]
+    j.add_argument("--source", choices=("gemini", "opus"), default="gemini")
+    j.add_argument("--model-id", default=audit.MODEL_ID, help="with --source opus")
+    j.add_argument("--params-hash", default=None, help="with --source opus (default: the only one)")
+    j.set_defaults(func=_judgments_any, out=None)
+
+
+def _audit_sample_any(args) -> int:
+    from shoebox.evals import audit, judge, search
+
+    if not args.all:
+        return _audit_sample(args)
+    if not args.split:
+        print("shoebox eval audit-sample: --all needs --split", file=sys.stderr)
+        return 2
+    set_dir = args.sets_dir / args.set_name
+    try:
+        pool = search.read_jsonl(set_dir / args.pool)
+        jfile = set_dir / args.judgments
+        gem = audit.gemini_grades(search.read_jsonl(jfile)) if jfile.exists() else {}
+    except FileNotFoundError as e:
+        print(f"shoebox eval audit-sample: {e}", file=sys.stderr)
+        return 2
+    rows = audit.pool_sample(pool, gem, args.split)
+    out = set_dir / (args.out or audit.POOL_SAMPLE_FILE.format(split=args.split))
+    judge.write_jsonl(out, rows)
+    s = audit.pool_summary(rows)
+    print(f"wrote {out}: {s['pairs']} pairs over {s['queries']} {args.split} queries; "
+          f"{s['no_gemini']} without a Gemini grade")
+    return 0
+
+
+def _judgments_any(args) -> int:
+    from shoebox.evals import audit, judge
+
+    if args.source == "gemini":
+        args.out = args.out or judge.JUDGMENTS_FILE
+        return _judgments(args)
+    try:
+        rows = audit.opus_qrels(_cfg(), args.model_id, args.params_hash)
+    except ValueError as e:
+        print(f"shoebox eval judgments: {e}", file=sys.stderr)
+        return 2
+    out = args.sets_dir / args.set_name / (args.out or audit.OPUS_JUDGMENTS_FILE)
+    judge.write_jsonl(out, rows)
+    print(f"wrote {out}: {len(rows)} Opus judgments ({len({r['query_id'] for r in rows})} queries), "
+          f"params {rows[0]['params_hash'] if rows else None}")
     return 0
 
 
@@ -423,7 +588,7 @@ def _audit_packets(args) -> int:
     cfg = _cfg()
     try:
         audit.check_out_dir(args.out)
-        rows = search.read_jsonl(set_dir / audit.SAMPLE_FILE)
+        rows = search.read_jsonl(set_dir / getattr(args, "sample", audit.SAMPLE_FILE))
         pool = search.read_jsonl(set_dir / args.pool)
         items = search.read_jsonl(set_dir / "items.jsonl")
         frows = queries.frame_rows_for(items, _frame(cfg, args.frame))
@@ -463,7 +628,7 @@ def _audit_report(args) -> int:
 
     set_dir = args.sets_dir / args.set_name
     try:
-        rows = search.read_jsonl(set_dir / audit.SAMPLE_FILE)
+        rows = search.read_jsonl(set_dir / getattr(args, "sample", audit.SAMPLE_FILE))
         exported = search.read_jsonl(set_dir / args.judgments)
         ph, opus = audit.opus_grades(_cfg(), args.model_id, args.params_hash)
     except (ValueError, FileNotFoundError) as e:

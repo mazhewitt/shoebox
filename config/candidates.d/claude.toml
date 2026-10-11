@@ -1,0 +1,16 @@
+# Claude Opus label arm (label-v2). runtime = "external" (shoebox/runners/external.py): no API call is made
+# from shoebox. Claude Code subagents read the packets written by `shoebox label packets --provider claude`
+# (1024px thumbnails of the derived infer-v1 image, keyed k-0001..; map.json keeps key -> asset_id), caption
+# each photo with prompt label-v2.md, and write labels-*.jsonl; `shoebox label ingest --candidate opus-v2`
+# validates them against label-v2.json and stores them like any other runner's records, so `label_index`,
+# `embed run --caption-from`, `search-run` and the caption audit read them unchanged.
+# `producer` is hashed and stored as each record's `runtime`: change it if how the labels are made changes.
+
+[candidates.opus-v2]
+runtime = "external"
+model = "claude-opus-5.5"
+model_id = "claude/opus-5.5"
+producer = "Claude Code subagent, 1024px thumbnail of the infer-v1 image"
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"

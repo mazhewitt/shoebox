@@ -39,6 +39,20 @@ def register(sub) -> None:
     ls = lsub.add_parser("list", help="list candidate names")
     ls.set_defaults(func=cmd_list)
 
+    ig = lsub.add_parser("ingest", help="store an external candidate's labels-*.jsonl (e.g. Opus subagents)")
+    ig.add_argument("--candidate", required=True, help="a runtime = \"external\" candidate")
+    ig.add_argument("--dir", required=True, type=Path, help="dir of labels-*.jsonl (and map.json for keys)")
+    ig.add_argument("--items", type=Path, help="refuse asset_ids not in this items JSONL")
+    ig.set_defaults(func=cmd_ingest)
+
+    pk = lsub.add_parser("packets", help="1024px thumbnails and batch files for an external labeller")
+    pk.add_argument("--items", type=Path, required=True)
+    pk.add_argument("--out", type=Path, required=True, help="scratch dir (never under evals/)")
+    pk.add_argument("--per-batch", type=int, default=25)
+    pk.add_argument("--provider", default="claude", help="hosted provider the images go to (privacy filter)")
+    pk.add_argument("--prompt", default="label-v2.md", help="prompt file in config/prompts named in the batches")
+    pk.set_defaults(func=cmd_packets)
+
 
 def _err(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
@@ -141,4 +155,36 @@ def cmd_list(args: argparse.Namespace) -> int:
     for name, cand in runners.load_candidates(runners.CONFIG_DIR).items():
         if cand.get("runtime") != "embed":  # embedders are `shoebox embed` candidates
             print(name)
+    return 0
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    from shoebox.runners import external
+
+    res = _resolve(args.candidate)
+    if res is None:
+        return 2
+    try:
+        items = read_items(args.items) if args.items else None
+        out = external.ingest(config.load(), res, args.dir, items)
+    except (external.IngestError, FileNotFoundError) as e:
+        _err(f"shoebox label ingest: {e}")
+        return 1
+    print(f"{res.name}: ok {out.ok}  invalid {out.invalid}  already {out.already} -> {res.params_hash}")
+    return 0
+
+
+def cmd_packets(args: argparse.Namespace) -> int:
+    from shoebox import privacy
+    from shoebox.runners import external
+
+    try:
+        res = external.packets(config.load(), read_items(args.items), args.out, args.per_batch, args.provider,
+                               privacy.known_items(), prompt_file=runners.CONFIG_DIR / "prompts" / args.prompt)
+    except (ValueError, FileNotFoundError) as e:
+        _err(f"shoebox label packets: {e}")
+        return 2
+    for s in res.skipped:
+        _err(f"skipped {s['asset_id']}: {s['reason']}")
+    print(f"wrote {len(res.keys)} photos in {len(res.batches)} batches to {args.out}; {len(res.skipped)} skipped")
     return 0

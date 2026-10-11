@@ -419,8 +419,10 @@ def _structured(rows: list[tuple[dict, dict]]) -> dict:
 
 
 def build_report(records: list[dict], meta: dict, b: int = BOOTSTRAP, seed: int = DEFAULT_SEED,
-                 reference: str = REFERENCE_ARM) -> dict:
-    """Per-arm audit numbers. Reads counts and enums only; no caption, description or note text is copied."""
+                 reference: str = REFERENCE_ARM, rescore: list[dict] | None = None,
+                 owner: list[dict] | None = None) -> dict:
+    """Per-arm audit numbers. Reads counts and enums only; no caption, description or note text is copied.
+    With `rescore` (caption_usefulness records) adds `usefulness` (rubric scores, owner review if `owner`)."""
     arms = sorted({arm for r in records for arm in r["sets"]})
     per_arm, structured, by_arm = {}, {}, {}
     for arm in arms:
@@ -460,7 +462,12 @@ def build_report(records: list[dict], meta: dict, b: int = BOOTSTRAP, seed: int 
         diff = out["error_rate"]["diff"]
         out["d11_error_rate_pass"] = None if diff is None else diff <= ERROR_RATE_MARGIN + 1e-12
         paired[arm] = out
-    return {**meta, "photos": len(records), "reference_arm": reference, "bootstrap": b, "arms": per_arm,
+    extra = {}
+    if rescore:
+        from shoebox.evals import review
+
+        extra["usefulness"] = review.usefulness_report(records, rescore, owner, b, seed, reference)
+    return {**meta, **extra, "photos": len(records), "reference_arm": reference, "bootstrap": b, "arms": per_arm,
             "paired_vs_reference": paired, "structured": structured,
             "rules": {"error_rate": "share of photos with >= 1 wrong or invented fact, or no caption at all "
                                     "(a blocked or invalid photo counts as an error and as usefulness 1; it adds "
@@ -521,5 +528,9 @@ def render_md(rep: dict) -> str:
         lines += [f"#### {arm}", "", head[0].format("stratum"), head[1]]
         lines += [row(st, v) for st, v in s["per_stratum"].items()]
         lines.append("")
+    if rep.get("usefulness"):
+        from shoebox.evals import review
+
+        lines += [review.render_md(rep["usefulness"])]
     lines += ["## Rules", "", *(f"- {k}: {v}" for k, v in rep["rules"].items())]
     return "\n".join(lines) + "\n"

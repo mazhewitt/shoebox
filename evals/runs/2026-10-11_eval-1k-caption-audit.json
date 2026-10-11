@@ -360,6 +360,7 @@
  },
  "photos": 200,
  "reference_arm": "gemini-medium-v2",
+ "rescore_params_hash": "e993ea8f27fbec6c",
  "rules": {
   "ci": "95% percentile bootstrap over photos; paired differences resample photos jointly (candidate minus reference)",
   "d11": "candidate error rate <= reference + 2% (point estimate; paired CI shown); mono precision >= 0.98",
@@ -3347,6 +3348,142 @@
      }
     }
    }
+  }
+ },
+ "usefulness": {
+  "arms": {
+   "e4b-bf16": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      3.72,
+      3.93
+     ],
+     "mean": 3.83
+    },
+    "unanchored": {
+     "ci95": [
+      3.105,
+      3.28
+     ],
+     "mean": 3.195
+    },
+    "unanchored_n": 200
+   },
+   "e4b-bf16-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      3.79,
+      4.04
+     ],
+     "mean": 3.915
+    },
+    "unanchored": {
+     "ci95": [
+      3.3,
+      3.51
+     ],
+     "mean": 3.405
+    },
+    "unanchored_n": 200
+   },
+   "g12b-q4": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.08,
+      4.295
+     ],
+     "mean": 4.19
+    },
+    "unanchored": {
+     "ci95": [
+      3.535,
+      3.705
+     ],
+     "mean": 3.62
+    },
+    "unanchored_n": 200
+   },
+   "g12b-q4-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.2,
+      4.41
+     ],
+     "mean": 4.305
+    },
+    "unanchored": {
+     "ci95": [
+      3.72,
+      3.9
+     ],
+     "mean": 3.815
+    },
+    "unanchored_n": 200
+   },
+   "gemini-medium-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.865,
+      4.965
+     ],
+     "mean": 4.92
+    },
+    "unanchored": {
+     "ci95": [
+      4.715,
+      4.865
+     ],
+     "mean": 4.795
+    },
+    "unanchored_n": 200
+   }
+  },
+  "bootstrap": 2000,
+  "paired_vs_reference": {
+   "e4b-bf16": {
+    "ci95": [
+     -1.205,
+     -0.965
+    ],
+    "diff": -1.09,
+    "n": 200
+   },
+   "e4b-bf16-v2": {
+    "ci95": [
+     -1.135,
+     -0.88
+    ],
+    "diff": -1.005,
+    "n": 200
+   },
+   "g12b-q4": {
+    "ci95": [
+     -0.85,
+     -0.61
+    ],
+    "diff": -0.73,
+    "n": 200
+   },
+   "g12b-q4-v2": {
+    "ci95": [
+     -0.725,
+     -0.495
+    ],
+    "diff": -0.615,
+    "n": 200
+   }
+  },
+  "reference_arm": "gemini-medium-v2",
+  "rules": {
+   "owner": "owner's blind 1-5 on the review page; agreement vs the Opus rubric score: Spearman across the arms of each photo (photos where either side is constant are skipped), averaged; pooled Spearman over all (photo, arm) pairs; mean absolute difference",
+   "paired": "candidate minus reference, photos resampled jointly; 95% percentile bootstrap",
+   "rubric": "Opus usefulness against config/prompts/caption-usefulness-v1.md (1-5), mean per photo",
+   "unanchored": "the caption audit's original 1-5 usefulness (no anchored rubric), same photos"
   }
  }
 }

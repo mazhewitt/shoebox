@@ -34,6 +34,9 @@ DEFAULT_FRAC = 0.10
 DEFAULT_SEED = 20261013
 NO_ROUTE = "(none)"
 TARGET_REASON = "target_grade_lt2"
+POOL_REASON = "pool"
+POOL_SAMPLE_FILE = "opus-pool-{split}.jsonl"
+OPUS_JUDGMENTS_FILE = "judgments-opus.jsonl"
 MODEL_ID = "claude/opus-5.5"
 WRITER = "Claude Code subagent"
 PRESENTATION = "contact sheet 420px grids of 10"
@@ -99,6 +102,27 @@ def sample_summary(rows: list[dict], pool: list[dict], gemini: dict[str, int]) -
     return {"queries": len(rows), "pairs": n, "judged_pairs": judged,
             "fraction": round(n / judged, 4) if judged else 0.0,
             "targets_lt2": sum(TARGET_REASON in p["reasons"] for r in rows for p in r["pairs"])}
+
+
+def pool_sample(pool: list[dict], gemini: dict[str, int], split: str) -> list[dict]:
+    """Every pool pair of the split's queries, in `sample`'s row shape, for Opus to judge the whole pool (D10
+    re-judge). Pairs Gemini did not grade are included with `gemini_grade: null`; reasons are `["pool"]`."""
+    out = []
+    for row in sorted((r for r in pool if r.get("split") == split), key=lambda r: r["query_id"]):
+        rel = set(row.get("relevant") or [])
+        pairs = [{"asset_id": a, "gemini_grade": gemini.get(f"{row['query_id']}:{a}"),
+                  "routes": _routes_of(row, a), "target": a in rel, "reasons": [POOL_REASON]}
+                 for a in sorted(set(row["asset_ids"]))]
+        if pairs:
+            out.append({"query_id": row["query_id"], "kind": row.get("kind"), "split": row.get("split"),
+                        "pairs": pairs})
+    return out
+
+
+def pool_summary(rows: list[dict]) -> dict:
+    n = sum(len(r["pairs"]) for r in rows)
+    graded = sum(p["gemini_grade"] is not None for r in rows for p in r["pairs"])
+    return {"queries": len(rows), "pairs": n, "gemini_graded": graded, "no_gemini": n - graded}
 
 
 def gemini_grades(rows: list[dict]) -> dict[str, int]:
@@ -298,6 +322,15 @@ def opus_grades(cfg: Config, model_id: str = MODEL_ID, params_hash: str | None =
     return params_hash, {k: int(r["grade"]) for k, r in idx.items() if r.get("status") == "ok"}
 
 
+def opus_qrels(cfg: Config, model_id: str = MODEL_ID, params_hash: str | None = None) -> list[dict]:
+    """The Opus judgments as `{query_id, asset_id, grade, model_id, params_hash}` rows, sorted: the same shape
+    as `judge.qrels` (the Gemini `eval judgments` export)."""
+    ph, grades = opus_grades(cfg, model_id, params_hash)
+    rows = [{"query_id": k.rsplit(":", 1)[0], "asset_id": k.rsplit(":", 1)[1], "grade": g, "model_id": model_id,
+             "params_hash": ph} for k, g in grades.items()]
+    return sorted(rows, key=lambda r: (r["query_id"], r["asset_id"]))
+
+
 # ---------- kappa ----------
 
 
@@ -358,8 +391,12 @@ def build_report(rows: list[dict], opus: dict[str, int], meta: dict, b: int = BO
                  seed: int = DEFAULT_SEED) -> dict:
     """Gemini (rows) vs Opus agreement. Ids only: no query text is read or written."""
     all_pairs, by_query, by_kind, by_route, targets = [], {}, {}, {}, []
+    no_gemini = 0
     for r in rows:
         for p in r["pairs"]:
+            if p.get("gemini_grade") is None:  # a full-pool row Gemini never graded: not comparable
+                no_gemini += 1
+                continue
             k = f"{r['query_id']}:{p['asset_id']}"
             if k not in opus:
                 continue
@@ -381,7 +418,7 @@ def build_report(rows: list[dict], opus: dict[str, int], meta: dict, b: int = BO
         tot = sum(row)
         per_grade[str(g)] = {"n": tot, "opus": row, "agree": round(row[g] / tot, 4) if tot else None}
     lin = overall["kappa_linear"]
-    return {**meta, "sampled_pairs": sampled, "opus_graded_pairs": len(all_pairs),
+    return {**meta, "sampled_pairs": sampled, "no_gemini_grade": no_gemini, "opus_graded_pairs": len(all_pairs),
             "coverage": round(len(all_pairs) / sampled, 4) if sampled else 0.0, "queries": len(by_query),
             "overall": overall, "per_kind": {k: _stats(v) for k, v in sorted(by_kind.items())},
             "per_route": {k: _stats(v) for k, v in sorted(by_route.items())},

@@ -139,6 +139,21 @@
 | unknown|other|noscan | 1.000 (n=16) | 1.000 (n=14) | 1.000 (n=17) | 1.000 | 1.000 | True | 1.000 (n=2) | 1.000 (n=15) |
 | unknown|other|scan | 0.765 (n=17) | 0.789 (n=19) | 0.952 (n=21) | 0.000 | n/a | False | n/a (n=0) | 1.000 (n=21) |
 
+## Usefulness against the rubric (Opus rescore)
+
+| arm | n | rubric useful (95% CI) | unanchored useful (95% CI) | paired diff vs reference (95% CI) |
+|---|---|---|---|---|
+| e4b-bf16 | 200 | 3.830 (3.720–3.930) | 3.195 (3.105–3.280) | -1.090 (-1.205–-0.965) |
+| e4b-bf16-v2 | 200 | 3.915 (3.790–4.040) | 3.405 (3.300–3.510) | -1.005 (-1.135–-0.880) |
+| g12b-q4 | 200 | 4.190 (4.080–4.295) | 3.620 (3.535–3.705) | -0.730 (-0.850–-0.610) |
+| g12b-q4-v2 | 200 | 4.305 (4.200–4.410) | 3.815 (3.720–3.900) | -0.615 (-0.725–-0.495) |
+| gemini-medium-v2 | 200 | 4.920 (4.865–4.965) | 4.795 (4.715–4.865) | reference |
+
+- rubric: Opus usefulness against config/prompts/caption-usefulness-v1.md (1-5), mean per photo
+- unanchored: the caption audit's original 1-5 usefulness (no anchored rubric), same photos
+- paired: candidate minus reference, photos resampled jointly; 95% percentile bootstrap
+- owner: owner's blind 1-5 on the review page; agreement vs the Opus rubric score: Spearman across the arms of each photo (photos where either side is constant are skipped), averaged; pooled Spearman over all (photo, arm) pairs; mean absolute difference
+
 ## Rules
 
 - error_rate: share of photos with >= 1 wrong or invented fact, or no caption at all (a blocked or invalid photo counts as an error and as usefulness 1; it adds nothing to the wrong/invented/missing means)
