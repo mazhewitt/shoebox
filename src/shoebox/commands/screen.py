@@ -65,12 +65,25 @@ def cmd_run(args) -> int:
     if args.all_derived:
         index = derive.load_index(cfg, res.cand.get("profile", "infer-v1"))
         items = [{"asset_id": a} for a, r in index.items() if r.get("status") == "ok"]
+    elif args.retro:
+        from shoebox import retro
+
+        items = [{"asset_id": a} for a in sorted(retro.retro_ids(cfg))]
     else:
         items = [json.loads(line) for line in args.items.read_text().splitlines() if line.strip()]
     print(f"{res.name}: params_hash={res.params_hash} runtime={res.runtime} items={len(items)}", file=sys.stderr)
     tally = runner.screen_items(res, items, cfg, workers=args.workers)
-    print(json.dumps({"candidate": res.name, "screened": tally.screened, "flagged": tally.flagged,
-                      "cached": tally.cached, "errors": tally.errors}))
+    out = {"candidate": res.name, "screened": tally.screened, "flagged": tally.flagged,
+           "cached": tally.cached, "errors": tally.errors}
+    if args.retro:  # counts over the whole retro set, cached results included
+        from shoebox import store
+
+        done = store.index(cfg, res.model_id, res.params_hash, res.kind)
+        ids = {it["asset_id"] for it in items}
+        out.update(retro_union=len(ids),
+                   retro_flagged=sum(1 for a in ids if (done.get(a) or {}).get("sensitive") is True),
+                   retro_unscreened=sum(1 for a in ids if not store.is_final(done.get(a))))
+    print(json.dumps(out))
     return 1 if tally.errors else 0
 
 
@@ -84,6 +97,8 @@ def register(sub) -> None:
     src = r.add_mutually_exclusive_group(required=True)
     src.add_argument("--items", type=Path, help="items file (JSONL with asset_id)")
     src.add_argument("--all-derived", action="store_true", help="every ok asset in the profile's derive index")
+    src.add_argument("--retro", action="store_true",
+                     help="every asset already sent to a hosted model or shown to Claude (retro-check)")
     r.add_argument("--candidate", default=DEFAULT_CANDIDATE)
     r.add_argument("--workers", type=int, default=4, help="threads reading and preprocessing images")
     r.set_defaults(func=cmd_run)
