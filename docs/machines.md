@@ -47,3 +47,18 @@ Verified 2026-10-10:
 - `mount` shows both as `//shoebox@192.168.1.9/...`.
 
 Don't use the `/Volumes/*` mounts for Shoebox. They are read-write under the owner's account.
+
+## Mac Studio (M1, 32 GB; 192.168.1.117 wired): mounts
+
+From 2026-10-11 the build runs here, because it is wired to the NAS at 1 GbE. The laptop's Wi-Fi measured 12–47 MB/s. Use the same mounts and paths as the laptop, so `config/shoebox.toml` works unchanged:
+
+```sh
+mkdir -p ~/mnt/importantfiles-ro ~/mnt/shoebox
+mount_smbfs -o rdonly,nobrowse //shoebox@192.168.1.9/ImportantFiles ~/mnt/importantfiles-ro
+mount_smbfs -o nobrowse //shoebox@192.168.1.9/shoebox ~/mnt/shoebox
+```
+
+- Don't mount `ImportantFiles` read-write on the Studio at all.
+- radiobox shares this machine: its Ollama listens on `:11434` on the LAN, and its speech-recognition service on `:8645`. Leave both as they are.
+- Run the 12B and other large local models on the M5 Ultra (due end of October 2026) or the laptop.
+- The setup check is in `docs/handoff-studio.md`. Repeat it on the M5 Ultra when it arrives.
