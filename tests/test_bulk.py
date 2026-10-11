@@ -196,14 +196,39 @@ def test_linked_edit_label_is_reused(wb):
     assert wb.t.submits == []
 
 
-def test_a_refused_label_is_not_a_usable_label(wb):
-    """A refused sync record is no label: the capture is still sent (the fallback handles a second refusal)."""
+def test_a_refused_label_is_not_resent_but_left_to_the_fallback(wb, capsys):
+    """A refused sync record is no usable label, but sending the image to Gemini again would only be refused
+    again (and paid for): the capture is counted as `fallback` and left to `label fallback`."""
     store.append(wb.cfg, label_rec(wb.medium, AIDS[0], "invalid",
                                    raw=json.dumps({"finishReason": None, "blockReason": "PROHIBITED_CONTENT",
                                                    "text": None})))
+    p = write_worklist(wb.cfg, "r", [capture(AIDS[0]), capture(AIDS[1])])
+    assert main(bulk_args(p)) == 0
+    assert [a for s in wb.t.submits for a in s] == [AIDS[1]]
+    assert "reused 0 -> fallback 1 -> to send 1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("rec,fallback", [
+    ({"status": "invalid", "reason": "refused"}, 1),
+    ({"status": "invalid", "reason": "truncated"}, 1),                        # no retry: unrecovered
+    ({"status": "invalid", "reason": "truncated", "awaiting_retry": True}, 0),  # its retry has not run: not routed
+    ({"status": "invalid", "error": "schema: bad"}, 0),                       # not routed: sent again
+    ({"status": "error", "error": "HTTP 500"}, 0),
+])
+def test_plan_counts_falls_through_records_as_fallback(rec, fallback):
+    caps = [capture(AIDS[0]), capture(AIDS[2])]
+    plan = bulk.plan(caps, "hosted", {AIDS[0]: rec})
+    n = plan.counts
+    assert n["fallback"] == fallback
+    assert n["reused"] + n["fallback"] + n["to_send"] == n["for_candidate"] == 2
+    assert (AIDS[0] in [c["canonical_asset_id"] for c in plan.to_send]) == (not fallback)
+
+
+def test_batch_refused_record_in_the_batch_store_is_not_resent(wb):
+    store.append(wb.cfg, label_rec(wb.res, AIDS[0], "invalid", reason="refused"))
     p = write_worklist(wb.cfg, "r", [capture(AIDS[0])])
     assert main(bulk_args(p)) == 0
-    assert [a for s in wb.t.submits for a in s] == [AIDS[0]]
+    assert wb.t.submits == []
 
 
 def test_label_outside_the_chain_is_not_reused(wb, monkeypatch):
@@ -221,7 +246,7 @@ def test_summary_counts_reconcile(wb, capsys):
     assert main(bulk_args(p, "--dry-run")) == 0
     out = capsys.readouterr().out
     assert wb.t.submits == []
-    assert ("assets 5 -> captures 4 -> eligible 2 -> hosted 2 -> reused 1 -> to send 1" in out), out
+    assert ("assets 5 -> captures 4 -> eligible 2 -> hosted 2 -> reused 1 -> fallback 0 -> to send 1" in out), out
     assert "local 1, held 1, not_derived 0" in out
 
 
@@ -236,6 +261,151 @@ def test_default_chain_for_batch_includes_the_sync_store():
     res = runners.resolve("gemini-batch-v2")
     assert bulk.chain_names(res, None) == ["gemini-batch-v2", "gemini-medium-v2"]
     assert bulk.chain_names(res, "gemini-medium-v2") == ["gemini-batch-v2", "gemini-medium-v2"]
+
+
+# ---------- eligibility re-checked at send time ----------
+
+
+def test_member_added_to_never_send_after_the_worklist_blocks_the_capture(wb, capsys):
+    """The worklist said eligible; since then the RAW member went on the never-send list: nothing is sent
+    for that capture (the canonical carries the capture as its group, the members are its siblings)."""
+    p = write_worklist(wb.cfg, "w", [capture(AIDS[0], members=[AIDS[0], AIDS[1]]), capture(AIDS[2])])
+    (wb.tmp / "never-send.txt").write_text(AIDS[1] + "\n")
+    assert main(bulk_args(p)) == 0
+    assert wb.t.submits == [[AIDS[2]]]
+    assert f"skipped {AIDS[0]}: copy_restricted" in capsys.readouterr().err
+
+
+def test_linked_asset_added_to_never_send_blocks_the_capture(wb):
+    p = write_worklist(wb.cfg, "w", [capture(AIDS[0], linked=[AIDS[3]]), capture(AIDS[2])])
+    (wb.tmp / "never-send.txt").write_text(AIDS[3] + "\n")
+    assert main(bulk_args(p)) == 0
+    assert wb.t.submits == [[AIDS[2]]]
+
+
+def test_member_quarantined_pending_after_the_worklist_blocks_the_capture(wb, capsys):
+    from shoebox import quarantine
+
+    p = write_worklist(wb.cfg, "w", [capture(AIDS[0], members=[AIDS[0], AIDS[1]]), capture(AIDS[2])])
+    quarantine.flag([AIDS[1]], "nudity")
+    assert main(bulk_args(p)) == 0
+    assert wb.t.submits == [[AIDS[2]]]
+    assert f"skipped {AIDS[0]}: quarantined" in capsys.readouterr().err
+
+
+def test_items_for_gives_the_capture_as_group_and_every_member_location_as_others(wb):
+    wb.locs = [*wb.locs, ("importantfiles", "Raw/x.dng", AIDS[1])]
+    items, others, unlocated = bulk.items_for([capture(AIDS[0], members=[AIDS[0], AIDS[1]], linked=[AIDS[3]])],
+                                              wb.cfg)
+    assert unlocated == []
+    assert items == [{"asset_id": AIDS[0], "source": "importantfiles", "relpath": LOC[AIDS[0]][1],
+                      "group_id": f"c-{AIDS[0][:12]}"}]
+    assert sorted((o["asset_id"], o["relpath"]) for o in others) == sorted(
+        [(AIDS[1], "Raw/x.dng"), (AIDS[1], LOC[AIDS[1]][1]), (AIDS[3], LOC[AIDS[3]][1])])
+    assert {o["group_id"] for o in others} == {f"c-{AIDS[0][:12]}"}
+
+
+# ---------- fail closed on a missing inventory ----------
+
+
+def test_run_batch_with_a_source_missing_its_frame_refuses_and_names_it(wb, monkeypatch):
+    from test_gemini_batch import run
+
+    monkeypatch.setattr(privacy, "default_copy_index",
+                        lambda cfg: copies.CopyIndex.build(wb.locs, {}, ("x",)))
+    with pytest.raises(privacy.PrivacyError, match="x"):
+        run(wb, wb.t)
+    assert wb.t.submits == []
+
+
+def test_label_bulk_with_a_source_missing_its_frame_refuses_and_names_it(wb, monkeypatch, capsys):
+    monkeypatch.setattr(privacy, "default_copy_index",
+                        lambda cfg: copies.CopyIndex.build(wb.locs, {}, ("x",)))
+    p = write_worklist(wb.cfg, "w", [capture(a) for a in AIDS])
+    assert main(bulk_args(p)) == 2
+    err = capsys.readouterr().err
+    assert "refused" in err and "source(s): x" in err
+    assert wb.t.submits == [] and wb.t.polls == []
+
+
+# ---------- 9.2 tiny images (evals/runs/2026-10-11_tiny-images.md) ----------
+
+
+def tiny_derived(cfg, aid, side=72):
+    """A synthetic 72 px image, derived as `shoebox derive` would record it (source dims in the index)."""
+    import io
+
+    from derived_fixture import write_derived
+    from PIL import Image
+
+    from shoebox import derive
+
+    buf = io.BytesIO()
+    Image.new("RGB", (side, side * 2 // 3), (90, 140, 200)).save(buf, "JPEG", quality=90)
+    write_derived(cfg, aid, buf.getvalue())
+    idx = derive.index_path(cfg, "infer-v1")
+    last = json.loads(idx.read_text().splitlines()[-1])
+    with open(idx, "a") as f:
+        f.write(json.dumps({**last, "width": side, "height": side * 2 // 3, "src_width": side,
+                            "src_height": side * 2 // 3}) + "\n")
+
+
+def test_g12b_carries_the_tiny_rule_unhashed(fake_ollama, monkeypatch):
+    res = runners.resolve("g12b-q4-v2")
+    assert (res.cand["tiny_max_side"], res.cand["tiny_action"]) == (256, "route_hosted_else_mark")
+    assert "tiny_max_side" not in res.params and "tiny_action" not in res.params
+    cands = runners.load_candidates()
+    for k in ("tiny_max_side", "tiny_action"):
+        del cands["g12b-q4-v2"][k]
+    monkeypatch.setattr(runners, "load_candidates", lambda config_dir=None: cands)
+    bare = runners.resolve("g12b-q4-v2")
+    assert (bare.params_hash, bare.retry.params_hash) == (res.params_hash, res.retry.params_hash)
+
+
+def test_gemini_has_no_tiny_rule():
+    for name in ("gemini-batch-v2", "gemini-medium-v2"):
+        assert runners.tiny_rule(runners.resolve(name)) is None
+
+
+def test_tiny_eligible_capture_is_routed_to_hosted_not_captioned_locally(wb, fake_ollama, capsys):
+    tiny_derived(wb.cfg, AIDS[0])
+    routed = {**capture(AIDS[0], queue="local"), "eligible": True}
+    p = write_worklist(wb.cfg, "t", [routed, capture(AIDS[1], queue="local")])
+    assert main(bulk_args(p, candidate="g12b-q4-v2")) == 0
+    assert fake_ollama == [AIDS[1]]
+    out = capsys.readouterr().out
+    assert "tiny routed 1 -> to send 1" in out
+    (rec_path,) = (wb.cfg.results_dir / "bulk-runs" / "g12b-q4-v2").glob("*.json")
+    assert json.loads(rec_path.read_text())["counts"]["tiny_routed"] == 1
+
+
+def test_tiny_ineligible_capture_is_captioned_locally_and_marked(wb, fake_ollama):
+    tiny_derived(wb.cfg, AIDS[0])
+    p = write_worklist(wb.cfg, "t", [capture(AIDS[0], queue="local"), capture(AIDS[1], queue="local")])
+    assert main(bulk_args(p, candidate="g12b-q4-v2")) == 0
+    assert sorted(fake_ollama) == sorted([AIDS[0], AIDS[1]])
+    g12 = runners.resolve("g12b-q4-v2")
+    idx = store.index(wb.cfg, g12.model_id, g12.params_hash)
+    assert idx[AIDS[0]]["tiny"] is True and idx[AIDS[0]]["tiny_rule"] == "route_hosted_else_mark"
+    assert idx[AIDS[0]]["tiny_max_side"] == 256
+    assert "tiny" not in idx[AIDS[1]]  # 64 px wide derived, but no source dims recorded: not judged tiny
+
+
+def test_fallback_marks_a_tiny_caption(wb, fake_ollama):
+    """The rule is applied on every local path, not just bulk: a refused tiny image is captioned and marked."""
+    tiny_derived(wb.cfg, AIDS[0])
+    store.append(wb.cfg, label_rec(wb.res, AIDS[0], "invalid", reason="refused"))
+    assert main(["label", "fallback", "--candidate", "g12b-q4-v2", "--primary", "gemini-batch-v2"]) == 0
+    g12 = runners.resolve("g12b-q4-v2")
+    assert store.index(wb.cfg, g12.model_id, g12.params_hash)[AIDS[0]]["tiny"] is True
+
+
+def test_at_the_threshold_is_not_tiny(wb, fake_ollama):
+    tiny_derived(wb.cfg, AIDS[0], side=256)
+    p = write_worklist(wb.cfg, "t", [capture(AIDS[0], queue="local")])
+    assert main(bulk_args(p, candidate="g12b-q4-v2")) == 0
+    g12 = runners.resolve("g12b-q4-v2")
+    assert "tiny" not in store.index(wb.cfg, g12.model_id, g12.params_hash)[AIDS[0]]
 
 
 # ---------- refusal classification (8.7) ----------
@@ -323,6 +493,20 @@ def test_fallback_does_not_run_quarantined_assets(wb, fake_ollama):
     quarantine.flag([AIDS[0]], "nudity")
     assert main(["label", "fallback", "--candidate", "g12b-q4-v2", "--primary", "gemini-batch-v2"]) == 0
     assert AIDS[0] not in fake_ollama
+
+
+def test_fallback_skips_an_asset_whose_same_pixel_copy_is_quarantined(wb, fake_ollama, monkeypatch, capsys):
+    """Only the copy (another asset id, same pixels) is flagged; the refused asset is held all the same."""
+    from shoebox import quarantine
+
+    _primary_records(wb)
+    copy_id = "ee" + "d" * 62
+    monkeypatch.setattr(privacy, "default_copy_index", lambda cfg: copies.CopyIndex.build(
+        [*wb.locs, ("importantfiles", "Copy/y.jpg", copy_id)], {AIDS[0]: "px1", copy_id: "px1"}))
+    quarantine.flag([copy_id], "nudity")
+    assert main(["label", "fallback", "--candidate", "g12b-q4-v2", "--primary", "gemini-batch-v2"]) == 0
+    assert AIDS[0] not in fake_ollama and AIDS[2] in fake_ollama
+    assert f"skipped {AIDS[0]}: quarantined for local stages" in capsys.readouterr().err
 
 
 def test_fallback_refuses_a_hosted_candidate(wb, capsys):

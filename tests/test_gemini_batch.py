@@ -55,12 +55,29 @@ class FakeTransport:
         self.polls: list[str] = []
         self.deleted: list[str] = []
         self.crash_polls = 0
+        self.lost_submits = 0     # the next n submits never reach the server (raise, nothing created)
+        self.timeout_submits = 0  # the next n submits create the job, then the client times out
+        self.find_fails = False   # the provider's job listing itself fails
+        self.finds: list[str] = []
 
     def submit(self, model, requests, display_name):
+        if self.lost_submits:
+            self.lost_submits -= 1
+            raise httpx.ConnectError("connection refused before the request was sent")
         jid = f"batches/job{len(self.submits)}"
         self.submits.append([key for key, _ in requests])
-        self.jobs[jid] = {"requests": requests, "states": list(self.states_script), "model": model}
+        self.jobs[jid] = {"requests": requests, "states": list(self.states_script), "model": model,
+                          "display_name": display_name}
+        if self.timeout_submits:
+            self.timeout_submits -= 1
+            raise httpx.ReadTimeout("client timed out after the server accepted the job")
         return jid
+
+    def find(self, display_name):
+        self.finds.append(display_name)
+        if self.find_fails:
+            raise httpx.ConnectError("cannot list batches")
+        return next((j for j, v in self.jobs.items() if v["display_name"] == display_name), None)
 
     def poll(self, job_id):
         self.polls.append(job_id)
@@ -346,6 +363,98 @@ def test_crash_mid_poll_then_restart_polls_and_does_not_resubmit(b):
     assert json.loads((b.ledger / "batches_job0.json").read_text())["state"] == "stored"
 
 
+def _ledger_records(b):
+    return [json.loads(p.read_text()) for p in sorted(b.ledger.glob("*.json"))]
+
+
+def test_intent_is_in_the_ledger_before_submit(b):
+    t = FakeTransport()
+    seen = []
+    real = t.submit
+
+    def submit(model, requests, display_name):
+        seen.extend(_ledger_records(b))
+        return real(model, requests, display_name)
+
+    t.submit = submit
+    run(b, t)
+    (intent,) = seen
+    assert intent["state"] == "submitting" and intent["job_id"] is None
+    assert sorted(intent["items"]) == sorted(AIDS)
+    assert intent["display_name"] == t.jobs["batches/job0"]["display_name"]
+
+
+def test_client_timeout_after_server_accepted_then_restart_adopts_the_job(b):
+    t = FakeTransport()
+    t.timeout_submits = 1
+    with pytest.raises(httpx.ReadTimeout):
+        run(b, t)
+    assert len(t.submits) == 1 and [j["state"] for j in _ledger_records(b)] == ["submitting"]
+    tally = run(b, t)
+    assert len(t.submits) == 1  # adopted, not resubmitted: paid once
+    assert tally.ok == 5 and tally.jobs_resumed == 1
+    (job,) = _ledger_records(b)
+    assert job["job_id"] == "batches/job0" and job["state"] == "stored"
+
+
+def test_crash_between_submit_and_ledger_update_then_restart_adopts_the_job(b, monkeypatch):
+    t = FakeTransport()
+    real = gemini_batch.save_job
+
+    def crash_on_job_id(cfg, job):
+        if job.get("job_id"):
+            raise KeyboardInterrupt("killed")
+        return real(cfg, job)
+
+    monkeypatch.setattr(gemini_batch, "save_job", crash_on_job_id)
+    with pytest.raises(KeyboardInterrupt):
+        run(b, t)
+    monkeypatch.setattr(gemini_batch, "save_job", real)
+    tally = run(b, t)
+    assert len(t.submits) == 1 and tally.ok == 5
+    assert [j["state"] for j in _ledger_records(b)] == ["stored"]
+
+
+def test_submit_that_never_reached_the_server_returns_items_to_pending(b):
+    t = FakeTransport()
+    t.lost_submits = 1
+    with pytest.raises(httpx.ConnectError):
+        run(b, t)
+    assert t.submits == [] and [j["state"] for j in _ledger_records(b)] == ["submitting"]
+    tally = run(b, t)
+    assert t.finds and len(t.submits) == 1 and sorted(t.submits[0]) == sorted(AIDS) and tally.ok == 5
+    assert sorted(j["state"] for j in _ledger_records(b)) == ["failed", "stored"]
+
+
+def test_failed_lookup_of_a_submitting_job_refuses_to_submit(b):
+    t = FakeTransport()
+    t.lost_submits = 1
+    with pytest.raises(httpx.ConnectError):
+        run(b, t)
+    t.find_fails = True
+    with pytest.raises(gemini_batch.LedgerError, match="submitting"):
+        run(b, t)
+    assert t.submits == [] and [j["state"] for j in _ledger_records(b)] == ["submitting"]
+
+
+def test_open_job_under_other_params_is_refused_not_collected_into_the_new_key(b, monkeypatch):
+    t = FakeTransport(states=("running",))
+    run(b, t, max_poll_rounds=0)
+    assert len(t.submits) == 1
+    old_hash = b.res.params_hash
+    cands = runners.load_candidates()
+    cands["gemini-batch-v2"]["max_output_tokens"] = 2048  # hashed: a new store key
+    monkeypatch.setattr(runners, "load_candidates", lambda config_dir=None: cands)
+    new = runners.resolve("gemini-batch-v2")
+    assert new.params_hash != old_hash
+    t.jobs["batches/job0"]["states"] = ["succeeded"]
+    polls = len(t.polls)
+    with pytest.raises(gemini_batch.LedgerError) as e:
+        run(b, t, res=new)
+    assert "batches/job0" in str(e.value) and old_hash in str(e.value) and new.params_hash in str(e.value)
+    assert len(t.submits) == 1 and stored(b, new) == {} and len(t.polls) == polls
+
+
 def test_stopped_polling_leaves_the_job_open_for_the_next_run(b):
     t = FakeTransport(states=("running",))
     tally = run(b, t, max_poll_rounds=2)
@@ -408,3 +517,13 @@ def test_run_one_stops_the_framework_loop():
 def test_http_transport_refuses_under_pytest():
     with pytest.raises(gemini.GeminiError, match="pytest"):
         gemini_batch.HttpTransport("k").submit("gemini-3.8-flash", [], "x")
+
+
+def test_a_restricted_sibling_in_others_blocks_the_item(b):
+    """`others` (a capture's members, same group_id) reach filter_items: a never-send RAW blocks its JPEG."""
+    (b.tmp / "never-send.txt").write_text("ff" + "e" * 62 + "\n")
+    b.items[0]["group_id"] = "cap-0"
+    raw = {"asset_id": "ff" + "e" * 62, "source": "importantfiles", "relpath": "Raw/x.dng", "group_id": "cap-0"}
+    t = FakeTransport()
+    tally = run(b, t, others=[raw])
+    assert AIDS[0] not in t.submits[0] and dict(tally.skipped_items)[AIDS[0]] == "copy_restricted"

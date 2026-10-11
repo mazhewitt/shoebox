@@ -12,7 +12,9 @@ one (`ollama`) only `queue == "local"` rows; `held` and `not_derived` rows never
 
 Reuse (`plan`): a capture is skipped and counted as reused when its canonical asset, any member or any linked
 asset has an `ok` record in the candidate's ordered label-source chain (`chain_names`), resolved through
-`runners.source_index`. Only the remaining captures' canonical assets are sent.
+`runners.source_index`. A hosted capture whose chain record was refused (or truncated and not recovered) is
+counted as `fallback` and not sent again (`shoebox label fallback` captions it locally). Only the remaining
+captures' canonical assets are sent.
 """
 
 import json
@@ -117,11 +119,21 @@ class Plan:
     to_send: list[dict]
 
 
+def _falls_through(rec: dict | None) -> bool:
+    return bool(rec) and store.is_final(rec) and runners._falls_through(rec)
+
+
 def plan(captures: list[dict], queue: str, index: dict[str, dict]) -> Plan:
-    """Captures of `queue`, less those with an `ok` label on any of their assets in `index`."""
+    """Captures of `queue`, less those with an `ok` label on any of their assets in `index` (`reused`), and,
+    for the hosted queue, less those whose chain record falls through (refused, or truncated and not
+    recovered: `runners._falls_through`). Those are `fallback`: sending them to the hosted model again would
+    only be refused again, so they are left to `shoebox label fallback`."""
     mine = [c for c in captures if c.get("queue") == queue]
     reused = [c for c in mine if any((index.get(a) or {}).get("status") == "ok" for a in capture_assets(c))]
     rset = {id(c) for c in reused}
+    fallback = [c for c in mine if id(c) not in rset and queue == "hosted"
+                and any(_falls_through(index.get(a)) for a in capture_assets(c))]
+    rset |= {id(c) for c in fallback}
     to_send = [c for c in mine if id(c) not in rset]
     by_queue = {q: sum(c.get("queue") == q for c in captures) for q in ("hosted", "local", "held", "not_derived")}
     counts = {
@@ -132,34 +144,78 @@ def plan(captures: list[dict], queue: str, index: dict[str, dict]) -> Plan:
         "queue": queue,
         "for_candidate": len(mine),
         "reused": len(reused),
+        "fallback": len(fallback),
         "to_send": len(to_send),
     }
-    assert counts["reused"] + counts["to_send"] == counts["for_candidate"] <= counts["captures"], counts
+    assert counts["reused"] + counts["fallback"] + counts["to_send"] == counts["for_candidate"] <= counts["captures"], counts
     assert sum(by_queue.values()) == counts["captures"], counts
     return Plan(counts, to_send)
 
 
+def route_tiny(p: Plan, res: runners.Resolved, cfg: config.Config) -> Plan:
+    """The candidate's tiny-image rule (`runners.tiny_rule`, task 9.2) on a local plan: a capture to send whose
+    canonical is tiny and that is hosted-eligible is left for the hosted candidate (`tiny_routed`). Tiny
+    captures that are not eligible stay; `runners.run_items` marks their records."""
+    if runners.tiny_rule(res) is None:
+        return p
+    tiny = runners.tiny_assets(res, cfg, [c["canonical_asset_id"] for c in p.to_send])
+    routed = [c for c in p.to_send if c.get("eligible") and c["canonical_asset_id"] in tiny]
+    rset = {id(c) for c in routed}
+    to_send = [c for c in p.to_send if id(c) not in rset]
+    counts = {**p.counts, "tiny_routed": len(routed), "to_send": len(to_send)}
+    assert (counts["reused"] + counts["fallback"] + counts["tiny_routed"] + counts["to_send"]
+            == counts["for_candidate"]), counts
+    return Plan(counts, to_send)
+
+
 def summary_line(n: dict) -> str:
+    tiny = f" -> tiny routed {n['tiny_routed']}" if "tiny_routed" in n else ""
     return (f"assets {n['assets']} -> captures {n['captures']} -> eligible {n['eligible']} -> {n['queue']} "
-            f"{n['for_candidate']} -> reused {n['reused']} -> to send {n['to_send']}  "
+            f"{n['for_candidate']} -> reused {n['reused']} -> fallback {n['fallback']}{tiny} -> "
+            f"to send {n['to_send']}  "
             f"(queues: hosted {n['hosted']}, local {n['local']}, held {n['held']}, "
             f"not_derived {n['not_derived']})")
 
 
-def items_for(captures: list[dict], cfg: config.Config) -> tuple[list[dict], list[str]]:
-    """One item per capture (its canonical asset at its first location in the copy index, so the privacy
-    filter checks a real source and relpath), and the canonical ids with no location in the current frames."""
+def items_for(captures: list[dict], cfg: config.Config) -> tuple[list[dict], list[dict], list[str]]:
+    """`(items, others, unlocated)`. One item per capture: its canonical asset at its first location in the
+    copy index (so the privacy filter checks a real source and relpath), with `group_id` = the capture id.
+    `others`: every member and linked asset at every location in the copy index, same `group_id`, so a
+    restriction on any of them (e.g. never-send, added after the worklist was built) restricts the capture
+    at send time. `unlocated`: canonical ids with no location in the current frames."""
     index = privacy.default_copy_index(cfg)
-    items, unlocated = [], []
+    items, others, unlocated = [], [], []
     for c in captures:
-        aid = c["canonical_asset_id"]
+        aid, gid = c["canonical_asset_id"], c["capture_id"]
         locs = sorted(index.locations(aid))
         if not locs:
             unlocated.append(aid)
             continue
         src, rel, _ = locs[0]
-        items.append({"asset_id": aid, "source": src, "relpath": rel, "group_id": None})
-    return items, unlocated
+        items.append({"asset_id": aid, "source": src, "relpath": rel, "group_id": gid})
+        for a in capture_assets(c)[1:]:
+            others += [{"asset_id": a, "source": s, "relpath": r, "group_id": gid}
+                       for s, r, _ in sorted(index.locations(a))] or [{"asset_id": a, "group_id": gid}]
+    return items, others, unlocated
+
+
+def recheck_hosted(items: list[dict], others: list[dict], cfg: config.Config,
+                   provider: str = "gemini") -> privacy.Eligibility:
+    """Hosted eligibility at send time, whatever the worklist said: `privacy.filter_items` with the capture
+    members and linked assets as siblings (never-send, consent, held-back, copies; raises PrivacyError on a
+    source without a current frame), then the quarantine over every sibling and its same-pixel copies
+    (`filter_items` checks it only for the item itself)."""
+    elig = privacy.filter_items(items, cfg, others=[*privacy.known_items(), *others], provider=provider)
+    checker = quarantine.Checker.load()
+    if not checker.rows:
+        return elig
+    index = privacy.default_copy_index(cfg)
+    held = {o["group_id"] for o in others
+            if o.get("group_id") and checker.refused(o["asset_id"], "hosted", index.pixel_group(o["asset_id"]))}
+    allowed = [it for it in elig.allowed if it.get("group_id") not in held]
+    skipped = [*elig.skipped, *(privacy.Skip(it["asset_id"], it.get("source"), it.get("relpath"), "quarantined")
+                                for it in elig.allowed if it.get("group_id") in held)]
+    return privacy.Eligibility(allowed, skipped)
 
 
 # ---------- run record ----------

@@ -18,13 +18,23 @@ queue for 3.8 Flash: 3M tokens, research/mvp-models.md) and each job's inline re
 `max_job_bytes`.
 
 Job ledger: `results/batch-jobs/<candidate>/<job_id>.json` (`/` in the id becomes `_`), written (fsynced,
-atomically) right after submit and on every state change:
-  {job_id, candidate, model_id, params_hash, items: [asset_id], state, submitted_ts, updated_ts,
-   est_input_tokens, est_usd, spend_logged, actual_usd, n_results}
-States: `submitted`/`pending`/`running` (open), `succeeded` (downloaded, labels not all stored yet),
-`stored` (done), `expired`/`failed`/`cancelled` (its items are pending again).
-A restarted run first polls every open job and finishes every `succeeded` one; an item in such a job is
-never resubmitted. Items of a stored job are cached by the store (final records) like any run.
+atomically) on every state change:
+  {job_id, display_name, candidate, model_id, params_hash, items: [asset_id], state, submitted_ts,
+   updated_ts, est_input_tokens, est_usd, spend_logged, actual_usd, n_results}
+Before `transport.submit`, an intent record (`job_id: null`, a unique `display_name`, state `submitting`) is
+written as `intent_<display_name>.json`; after submit it becomes the `<job_id>.json` record and the intent file
+is removed. A crash or client timeout after the server accepted the job therefore leaves the intent behind.
+States: `submitting` (intent; may or may not exist at the provider), `submitted`/`pending`/`running` (open),
+`succeeded` (downloaded, labels not all stored yet), `stored` (done), `expired`/`failed`/`cancelled` (its
+items are pending again).
+A restarted run first reconciles every `submitting` intent through `transport.find(display_name)`: a job
+found is adopted (open, never resubmitted); a lookup that succeeds and finds none marks the intent `failed`
+(its items are pending again); a lookup that fails raises `LedgerError` before anything is submitted.
+It then polls every open job and finishes every `succeeded` one; an item in such a job is never resubmitted.
+Items of a stored job are cached by the store (final records) like any run.
+A `submitting`, open or `succeeded` job recorded under another params_hash than the candidate's current one
+is refused (`LedgerError`, naming the job and both hashes): its results belong to the old store key, and
+collecting them under the new one would label them with params they were not made with.
 
 On download: the job's actual cost (from each response's usageMetadata at the batch price) and result count
 are appended to `evals/spend.jsonl` before any label is stored, and only once per job (`spend_logged`).
@@ -59,6 +69,10 @@ REFUSAL = {"SAFETY", "PROHIBITED_CONTENT", "RECITATION", "BLOCKLIST", "SPII", "I
 
 class BatchOnly(gemini.GeminiError, gemini.StopRun):
     """`gemini-batch` candidates run through `run_batch`, not the per-item loop."""
+
+
+class LedgerError(gemini.GeminiError):
+    """The job ledger cannot be reconciled safely; nothing is submitted (fail closed)."""
 
 
 # ---------- runner interface (framework) ----------
@@ -113,6 +127,10 @@ class Transport(Protocol):
     def delete(self, job_id: str) -> None:
         """Remove the job and its results from the provider (research/mvp-models.md: delete after download)."""
 
+    def find(self, display_name: str) -> str | None:
+        """The id of the job submitted with `display_name`, or None if the provider has none. Raises if the
+        lookup itself fails (never None for "could not tell")."""
+
 
 class HttpTransport:
     """The Gemini Batch API over v1beta REST (httpx, as the sync runner; the google-genai SDK is not a
@@ -163,6 +181,20 @@ class HttpTransport:
     def delete(self, job_id):
         self._call("DELETE", f"{gemini.API_ROOT}/{job_id}")
 
+    def find(self, display_name):
+        """List batches (`GET batches`, every page) and match the displayName. Not yet exercised live."""
+        token = None
+        while True:
+            params = {"pageSize": 100, **({"pageToken": token} if token else {})}
+            page = self._call("GET", f"{gemini.API_ROOT}/batches", params=params)
+            for op in page.get("operations") or page.get("batches") or []:
+                meta = op.get("metadata") or {}
+                if display_name in (op.get("displayName"), meta.get("displayName")):
+                    return op.get("name") or meta.get("name")
+            token = page.get("nextPageToken")
+            if not token:
+                return None
+
 
 # ---------- ledger ----------
 
@@ -172,7 +204,16 @@ def ledger_dir(cfg: config.Config, candidate: str) -> Path:
 
 
 def _ledger_path(cfg: config.Config, job: dict) -> Path:
-    return ledger_dir(cfg, job["candidate"]) / f"{job['job_id'].replace('/', '_')}.json"
+    name = job["job_id"] if job.get("job_id") else f"intent_{job['display_name']}"
+    return ledger_dir(cfg, job["candidate"]) / f"{name.replace('/', '_')}.json"
+
+
+def _record_job_id(cfg: config.Config, job: dict, job_id: str) -> None:
+    """The intent becomes the `<job_id>.json` record (saved first), then the intent file goes."""
+    intent = _ledger_path(cfg, job)
+    job.update(job_id=job_id, state="submitted")
+    save_job(cfg, job)
+    intent.unlink(missing_ok=True)
 
 
 def save_job(cfg: config.Config, job: dict) -> None:
@@ -323,7 +364,8 @@ def _machine() -> str:
     return machine()
 
 
-def _prepare(res, items: list[dict], cfg, busy: set[str], tally: BatchTally) -> list[tuple[dict, Path, int]]:
+def _prepare(res, items: list[dict], cfg, busy: set[str], tally: BatchTally,
+             others: list[dict] = ()) -> list[tuple[dict, Path, int]]:
     """Items to send: not final in the store, not in an open job, with an ok derived image, allowed by
     filter_items, and passing the derived-image checks. `(item, image, size)` each."""
     from shoebox import runners
@@ -334,7 +376,8 @@ def _prepare(res, items: list[dict], cfg, busy: set[str], tally: BatchTally) -> 
     for aid, why in rt.skipped_items:
         tally.skip(aid, why)
     pending = [(it, im) for it, im in pending if it["asset_id"] not in busy]
-    elig = privacy.filter_items([it for it, _ in pending], cfg, others=privacy.known_items(), provider="gemini")
+    elig = privacy.filter_items([it for it, _ in pending], cfg, others=[*privacy.known_items(), *others],
+                                provider="gemini")
     for s in elig.skipped:
         tally.skip(s.asset_id, s.reason)
     allowed = {it["asset_id"] for it in elig.allowed}
@@ -369,8 +412,9 @@ def _chunks(work, per_item_tokens: int, prompt_bytes: int, queue_tokens: int, ma
 def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, *,
               queue_tokens: int = QUEUE_TOKENS, max_job_bytes: int = MAX_JOB_BYTES,
               poll_interval_s: float = POLL_INTERVAL_S, sleep: Callable[[float], None] = time.sleep,
-              max_poll_rounds: int | None = None) -> BatchTally:
+              max_poll_rounds: int | None = None, others: list[dict] = ()) -> BatchTally:
     """Label `items` with a `gemini-batch` candidate through `transport`; resumable (see the module doc).
+    `others` are further siblings for `privacy.filter_items` (e.g. a capture's members, same `group_id`).
 
     Raises PrivacyError before anything is polled or submitted when the checklist is not confirmed, the price
     has expired or the candidate has no batch discount. Returns with `refused` set when a job would breach
@@ -386,8 +430,17 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
     run = _Run(res, cfg, transport, tally, sleep, poll_interval_s)
     store.write_params(cfg, res.model_id, res.params_hash, _params_doc(res), res.kind)
 
-    # 1. resume: finish downloaded jobs, poll open ones (their items are never resubmitted)
-    for job in load_jobs(cfg, res.name):
+    # 1. resume: reconcile intents, finish downloaded jobs, poll open ones (their items are never resubmitted)
+    jobs = load_jobs(cfg, res.name)
+    for job in jobs:
+        if job["state"] in ("submitting", "succeeded", *OPEN) and job.get("params_hash") != res.params_hash:
+            raise LedgerError(
+                f"batch job {job.get('job_id') or job.get('display_name')} ({job['state']}) was made under "
+                f"params_hash {job.get('params_hash')}, not the current {res.params_hash}: its results are not "
+                f"stored under the new key. Finish it with the old candidate config, or move its ledger record "
+                f"out of {ledger_dir(cfg, res.name)}")
+    jobs = _reconcile_intents(cfg, transport, jobs, tally)
+    for job in jobs:
         if job["state"] == "succeeded":
             tally.jobs_resumed += 1
             run.collect(job)
@@ -399,7 +452,7 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
     busy = {aid for j in run.open for aid in j["items"]}
 
     # 2. what is left to send
-    work = _prepare(res, items, cfg, busy, tally)
+    work = _prepare(res, items, cfg, busy, tally, others)
     lim = privacy.limits()
     per_item = privacy.estimate(run.bcand, 1).input_tokens
     prompt_bytes = len(gemini.prompt_text(cand).encode()) + len(json.dumps(run.schema))
@@ -424,12 +477,14 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
             break
         requests = [(it["asset_id"], gemini.build_request(cand, gemini.prompt_text(cand), run.schema,
                                                           path.read_bytes())) for it, path in chunk]
-        job_id = transport.submit(cand["model"], requests, f"{res.name}-{uuid.uuid4().hex[:8]}")
-        job = {"job_id": job_id, "candidate": res.name, "model_id": res.model_id,
-               "params_hash": res.params_hash, "items": [it["asset_id"] for it, _ in chunk],
-               "state": "submitted", "submitted_ts": gemini_now(), "est_input_tokens": est.input_tokens,
-               "est_usd": round(est.usd, 8), "spend_logged": False, "actual_usd": None, "n_results": None}
-        save_job(cfg, job)
+        job = {"job_id": None, "display_name": f"{res.name}-{uuid.uuid4().hex}", "candidate": res.name,
+               "model_id": res.model_id, "params_hash": res.params_hash,
+               "items": [it["asset_id"] for it, _ in chunk], "state": "submitting", "submitted_ts": gemini_now(),
+               "est_input_tokens": est.input_tokens, "est_usd": round(est.usd, 8), "spend_logged": False,
+               "actual_usd": None, "n_results": None}
+        save_job(cfg, job)  # the intent, before anything reaches the provider
+        job_id = transport.submit(cand["model"], requests, job["display_name"])
+        _record_job_id(cfg, job, job_id)
         run.mine.add(job_id)
         run.open.append(job)
         tally.jobs_submitted += 1
@@ -439,6 +494,34 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
     run.wait(lambda: not run.open, max_poll_rounds)
     tally.open_jobs = len(run.open)
     return tally
+
+
+def _reconcile_intents(cfg, transport: Transport, jobs: list[dict], tally: BatchTally) -> list[dict]:
+    """Settle every `submitting` intent before anything is submitted (see the module doc). Returns the ledger
+    with each intent replaced by what it became."""
+    recorded = {j.get("display_name") for j in jobs if j.get("job_id")}
+    out = []
+    for job in jobs:
+        if job["state"] != "submitting":
+            out.append(job)
+            continue
+        if job["display_name"] in recorded:  # crashed after the job record was saved, before the unlink
+            _ledger_path(cfg, job).unlink(missing_ok=True)
+            continue
+        try:
+            found = transport.find(job["display_name"])
+        except Exception as e:  # any lookup failure: we cannot tell, so we must not resubmit
+            raise LedgerError(
+                f"batch job intent {job['display_name']} is `submitting` and the provider lookup failed "
+                f"({type(e).__name__}); not submitting anything until it can be checked (rerun)") from e
+        if found:
+            _record_job_id(cfg, job, found)
+        else:
+            job["state"] = "failed"
+            save_job(cfg, job)
+            tally.returned += len(job["items"])
+        out.append(job)
+    return out
 
 
 def _params_doc(res) -> dict:
