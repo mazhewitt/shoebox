@@ -31,6 +31,11 @@ def register(sub) -> None:
         default=1,
         help="derive this many items at once (threads; each holds one original in memory)",
     )
+    p.add_argument(
+        "--pixelhash-only",
+        action="store_true",
+        help="only backfill pixel hashes of already-derived items (decode, no re-encode)",
+    )
     p.set_defaults(func=run)
 
 
@@ -43,11 +48,12 @@ def run(args) -> int:
         print("shoebox derive: --workers must be at least 1")
         return 2
     counts = derive.derive_items(
-        cfg, args.profile, items, force=args.force, log=print, workers=args.workers
+        cfg, args.profile, items, force=args.force, log=print, workers=args.workers,
+        pixelhash_only=args.pixelhash_only,
     )
     print(
         f"{args.profile}: ok {counts.ok}, skipped {counts.skipped}, error {counts.error} "
-        f"(of {counts.total}); clipped {counts.flagged} of the ok beyond tolerance "
+        f"(of {counts.total}); pixel hashes backfilled {counts.backfilled}; clipped {counts.flagged} of the ok beyond tolerance "
         f"-> {derive.index_path(cfg, args.profile)}"
     )
     return 1 if counts.total and counts.error == counts.total else 0

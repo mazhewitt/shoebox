@@ -3,6 +3,10 @@
 Turns an original into a profile's model-input JPEG: decoded with libvips (raws with
 LibRaw via rawpy, PSDs from their flattened composite), orientation applied, ICC -> sRGB,
 8-bit, long edge capped, every metadata block stripped. Originals are only ever read.
+
+The same decode also gives the asset's pixel hash (design D1): BLAKE3 over the decoded,
+orientation-normalised, full-resolution buffer, taken before flatten, ICC and resize, and
+stored as result kind `pixelhash`. Raws and PSDs hash their rendered image.
 """
 
 import hashlib
@@ -18,11 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
+import blake3
 import numpy as np
 import pyvips
 import rawpy
 
-from shoebox import ids
+from shoebox import ids, store
 from shoebox.config import (
     REPO_ROOT,
     Config,
@@ -32,6 +37,10 @@ from shoebox.config import (
 )
 
 PROFILES_PATH = REPO_ROOT / "config" / "profiles.toml"
+
+# Pixel hashes (design D1): result kind `pixelhash`, keyed by this version and pixelhash_params.
+PIXELHASH_KIND = "pixelhash"
+PIXELHASH_VERSION = "pixelhash-v1"
 
 KIND_BY_EXT = {
     **dict.fromkeys(("jpg", "jpeg", "jpe", "jfif"), "jpeg"),
@@ -127,6 +136,7 @@ class Rendered:
     src_kind: str
     rendered_from: str  # decoded | libheif | raw | composite
     tone: dict  # clip check: see _tone_check
+    pixel: dict | None = None  # see pixel_hash; None when render() was asked not to hash
 
 
 @dataclass
@@ -136,6 +146,8 @@ class Counts:
     error: int = 0
     # ok, but clipped beyond the profile's tolerance (also counted in ok)
     flagged: int = 0
+    # already derived; pixel hash added by a decode-only backfill (also counted in ok/error)
+    backfilled: int = 0
 
     @property
     def total(self) -> int:
@@ -180,6 +192,42 @@ def tool_versions() -> dict:
         "psd-tools": psd_tools.__version__,
         "numpy": np.__version__,
     }
+
+
+def pixelhash_params(settings: dict) -> dict:
+    """What the pixel hash depends on: its version, and the settings raws and PSDs render with."""
+    return {
+        "version": PIXELHASH_VERSION,
+        "raw": settings.get("raw"),
+        "psd": settings.get("psd"),
+    }
+
+
+def pixelhash_key(settings: dict) -> tuple[str, str]:
+    """`(model_id, params_hash)` of the pixel-hash store for a profile's settings."""
+    return PIXELHASH_VERSION, store.params_hash(pixelhash_params(settings))
+
+
+def pixelhash_index(cfg: Config, settings: dict) -> dict[str, dict]:
+    """`{asset_id: pixel-hash record}` for a profile's settings (see `store.index`)."""
+    return store.index(cfg, *pixelhash_key(settings), kind=PIXELHASH_KIND)
+
+
+def _pixel_record(
+    aid: str, profile: str, settings: dict, tools: dict, pixel: dict | None, error: str | None = None
+) -> dict:
+    model_id, phash = pixelhash_key(settings)
+    rec = {
+        "asset_id": aid,
+        "model_id": model_id,
+        "params_hash": phash,
+        "status": "ok" if pixel else "error",
+        "profile": profile,
+        "tools": tools,
+        "error": error,
+    }
+    rec.update(pixel or {})
+    return rec
 
 
 def profile_dir(cfg: Config, profile: str) -> Path:
@@ -253,23 +301,16 @@ def sniff_kind(data: bytes, ext: str) -> str | None:
     return content_kind(data) or KIND_BY_EXT.get(ext.lower().lstrip("."))
 
 
-def render(data: bytes, ext: str, settings: dict) -> Rendered:
-    """Render an original's bytes to the profile's JPEG. Raises DecodeError or pyvips.Error."""
-    kind = sniff_kind(data, ext)
-    if kind is None:
-        raise DecodeError(f"unsupported file type .{ext}")
-    if kind == "raw":
-        (img, bits), src_from = _decode_raw(data, settings["raw"]), "raw"
-    elif kind == "psd":
-        (img, bits), src_from = _decode_psd(data), "composite"
-    else:
-        try:
-            img, kind, bits = _decode_vips(data, settings)
-            src_from = "decoded"
-        except pyvips.Error:
-            if data[4:8] != b"ftyp":
-                raise
-            (img, bits), kind, src_from = _decode_heif_libheif(data), "heif", "libheif"
+def render(data: bytes, ext: str, settings: dict, hash_pixels: bool = True) -> Rendered:
+    """Render an original's bytes to the profile's JPEG. Raises DecodeError or pyvips.Error.
+
+    With `hash_pixels`, `Rendered.pixel` carries the pixel hash of the same decode.
+    """
+    img, kind, bits, src_from = decode(data, ext, settings)
+    pixel = None
+    if hash_pixels:
+        img = img.copy_memory()  # decode once: hashed here, then rendered below
+        pixel = pixel_hash(img, src_from)
     src_w, src_h = img.width, img.height
     img = _flatten(img)
     tonal = img.bands in (1, 3) and img.interpretation not in _NON_TONAL
@@ -289,8 +330,52 @@ def render(data: bytes, ext: str, settings: dict) -> Rendered:
         keep=pyvips.enums.ForeignKeep.NONE,
     )
     return Rendered(
-        jpeg, img.width, img.height, src_w, src_h, int(bits), kind, src_from, tone
+        jpeg, img.width, img.height, src_w, src_h, bits, kind, src_from, tone, pixel
     )
+
+
+def decode(data: bytes, ext: str, settings: dict) -> tuple[pyvips.Image, str, int, str]:
+    """Decode an original: `(image, src_kind, bits, rendered_from)`, orientation applied.
+
+    Raises DecodeError or pyvips.Error.
+    """
+    kind = sniff_kind(data, ext)
+    if kind is None:
+        raise DecodeError(f"unsupported file type .{ext}")
+    if kind == "raw":
+        (img, bits), src_from = _decode_raw(data, settings["raw"]), "raw"
+    elif kind == "psd":
+        (img, bits), src_from = _decode_psd(data), "composite"
+    else:
+        try:
+            img, kind, bits = _decode_vips(data, settings)
+            src_from = "decoded"
+        except pyvips.Error:
+            if data[4:8] != b"ftyp":
+                raise
+            (img, bits), kind, src_from = _decode_heif_libheif(data), "heif", "libheif"
+    return img, kind, int(bits), src_from
+
+
+def pixel_hash(img: pyvips.Image, rendered_from: str) -> dict:
+    """The pixel hash of a decoded, orientation-normalised image (design D1).
+
+    BLAKE3 over a header (hash version, width, height, bands, sample format), then the
+    raw pixel buffer. Metadata, file encoding and orientation flags don't change it; any
+    changed pixel does. `pixel_from` is `rendered` for raws and PSD composites.
+    """
+    h = blake3.blake3(
+        f"{PIXELHASH_VERSION}:{img.width}x{img.height}x{img.bands}:{img.format}\n".encode()
+    )
+    h.update(img.write_to_memory())
+    return {
+        "pixel_hash": h.hexdigest(),
+        "width": img.width,
+        "height": img.height,
+        "bands": img.bands,
+        "format": img.format,
+        "pixel_from": "rendered" if rendered_from in ("raw", "composite") else "decoded",
+    }
 
 
 _TIFF_MAGIC = (b"II*\0", b"MM\0*", b"II+\0", b"MM\0+")  # classic and BigTIFF
@@ -568,10 +653,29 @@ def _check_settings_unchanged(index: dict[str, dict], profile: str, shash: str) 
         )
 
 
+def _read_original(cfg: Config, item: dict) -> bytes:
+    data = original_path(cfg, item).read_bytes()
+    if ids.bytes_id(data) != item["asset_id"]:
+        raise DecodeError("original's blake3 does not match the item's asset_id (file changed?)")
+    return data
+
+
+def pixelhash_one(cfg: Config, profile: str, settings: dict, item: dict, tools: dict) -> dict:
+    """Decode-only pixel hash of one item (no derived image written); returns its pixel record."""
+    ext = item.get("ext") or Path(item.get("relpath", "")).suffix.lstrip(".")
+    try:
+        img, _, _, src_from = decode(_read_original(cfg, item), ext, settings)
+        pixel = pixel_hash(img, src_from)
+    except Exception as e:  # noqa: BLE001 - any decode failure becomes an error record
+        return _pixel_record(item["asset_id"], profile, settings, tools, None, _short(e))
+    return _pixel_record(item["asset_id"], profile, settings, tools, pixel)
+
+
 def derive_one(
     cfg: Config, profile: str, settings: dict, item: dict, tools: dict
-) -> dict:
-    """Derive one item and return its index record (status ok or error); writes the image only on ok."""
+) -> tuple[dict, dict | None]:
+    """Derive one item: `(index record, pixel record)`. The index record's status is ok or error;
+    the image and the pixel record are written only on ok (pixel record None otherwise)."""
     aid = item["asset_id"]
     ext = item.get("ext") or Path(item.get("relpath", "")).suffix.lstrip(".")
     rec = {
@@ -593,15 +697,10 @@ def derive_one(
         "tone": None,
     }
     try:
-        data = original_path(cfg, item).read_bytes()
-        if ids.bytes_id(data) != aid:
-            raise DecodeError(
-                "original's blake3 does not match the item's asset_id (file changed?)"
-            )
-        r = render(data, ext, settings)
+        r = render(_read_original(cfg, item), ext, settings)
     except Exception as e:  # noqa: BLE001 - any decode failure becomes an error record
         rec["error"] = _short(e)
-        return rec
+        return rec, None
     out = derived_path(cfg, profile, aid)
     _atomic_write(out, r.jpeg)
     rec.update(
@@ -617,7 +716,7 @@ def derive_one(
         rendered_from=r.rendered_from,
         tone=r.tone,
     )
-    return rec
+    return rec, _pixel_record(aid, profile, settings, tools, r.pixel)
 
 
 def derive_items(
@@ -627,8 +726,13 @@ def derive_items(
     force: bool = False,
     log: Callable[[str], None] | None = None,
     workers: int = 1,
+    pixelhash_only: bool = False,
 ) -> Counts:
     """Derive every item, appending one index record per attempt; skips current ok records unless `force`.
+
+    Each derive also writes the item's pixel hash. An item whose image is current but which
+    has no final pixel hash gets a decode-only backfill (no image re-encoded). With
+    `pixelhash_only`, items without a current image are skipped instead of derived.
 
     `workers` > 1 derives that many items at once on a thread pool (libvips and LibRaw release the GIL).
     Index appends, counts and log lines are serialised by a lock, so each record stays one whole line.
@@ -643,22 +747,47 @@ def derive_items(
     pyvips.cache_set_max(0)  # don't hold decoded originals between items
     index = load_index(cfg, profile)
     _check_settings_unchanged(index, profile, shash)
+    pixels = pixelhash_index(cfg, settings)
+    model_id, phash = pixelhash_key(settings)
+    store.write_params(cfg, model_id, phash, pixelhash_params(settings), kind=PIXELHASH_KIND)
     counts = Counts()
     lock = threading.Lock()
 
+    def skip(aid: str, item: dict) -> None:
+        with lock:
+            counts.skipped += 1
+            if log:
+                log(f"skip  {aid[:12]}  {item.get('relpath', '')}")
+
     def one(item: dict) -> None:
         aid = item["asset_id"]
-        if not force and _is_current(cfg, profile, index.get(aid), shash, tools):
-            with lock:
-                counts.skipped += 1
-                if log:
-                    log(f"skip  {aid[:12]}  {item.get('relpath', '')}")
+        current = not force and _is_current(cfg, profile, index.get(aid), shash, tools)
+        if (current and store.is_final(pixels.get(aid))) or (pixelhash_only and not current):
+            skip(aid, item)
             return
         t0 = time.monotonic()
-        rec = derive_one(cfg, profile, settings, item, tools)
+        if current:
+            px = pixelhash_one(cfg, profile, settings, item, tools)
+            with lock:
+                store.append(cfg, px, kind=PIXELHASH_KIND)
+                pixels[aid] = px
+                counts.backfilled += 1
+                if px["status"] == "ok":
+                    counts.ok += 1
+                    msg = f"hash  {aid[:12]}  {item.get('relpath', '')}  {time.monotonic() - t0:.1f}s"
+                else:
+                    counts.error += 1
+                    msg = f"ERROR {aid[:12]}  {item.get('relpath', '')}  pixel hash: {px['error']}"
+                if log:
+                    log(msg)
+            return
+        rec, px = derive_one(cfg, profile, settings, item, tools)
         with lock:
             _append_index(cfg, profile, rec)
             index[aid] = rec
+            if px is not None:
+                store.append(cfg, px, kind=PIXELHASH_KIND)
+                pixels[aid] = px
             secs = time.monotonic() - t0
             if rec["status"] == "ok":
                 counts.ok += 1
