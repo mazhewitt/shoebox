@@ -38,33 +38,43 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 
 - [x] 3.1 Write `config/prompts/label-v2.md` and the schema (D7), including `rotate_cw` (D6a). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
   Done 2026-10-11 for E4B and 12B (22 dev photos incl. 2 mis-oriented scans; two Opus review rounds: errors e4b 28 → 19, g12b 17 → 10). Gemini validation runs as the first batch of 3.2. Local `rotate_cw` is unreliable (1 of 4 right on the two rotated scans); it is scored, not trusted. The dev photos' capture groups are pinned to the dev split in 4.2.
-- [ ] 3.2 Run Gemini 3.8 Flash `label-v2` (`medium`, thinking `low`) on `eval-1k` with a $5 cap. Verify the spend is logged and the skipped items are reported.
-- [ ] 3.3 Run E4B `label-v2` (about 1 h) and 12B `label-v2` (about 2 h) on `eval-1k`, and top up E4B and 12B `label-v1` where they are missing. Caption-embed all of them with EG2. Verify every arm covers all 1,000 photos or lists its invalids.
+- [x] 3.2 Run Gemini 3.8 Flash `label-v2` (`medium`, thinking `low`) on `eval-1k` with a $5 cap. Verify the spend is logged and the skipped items are reported.
+  Done 2026-10-11: 998/1000 ok ($2.77); 2 blocked as PROHIBITED_CONTENT (benign photos of a child), counted as Gemini failures.
+- [x] 3.3 Run E4B `label-v2` (about 1 h) and 12B `label-v2` (about 2 h) on `eval-1k`, and top up E4B and 12B `label-v1` where they are missing. Caption-embed all of them with EG2. Verify every arm covers all 1,000 photos or lists its invalids.
+  Done 2026-10-11: e4b-bf16-v2 1000 ok (1 truncation recovered), g12b-q4-v2 1000 ok; v1 arms already covered eval-1k; all five arms caption-embedded.
 
 ## 4. Queries (Opus)
 
-- [ ] 4.1 Write `config/prompts/query-writer-v1.md` with the style mix (D9). Opus subagents write about 200 known-item queries from a stratified draw of `eval-1k`, and about 80 category queries from the corpus summary. Store them keyed in the results store, and write `evals/sets/eval-1k/queries-v1.jsonl` with kind, style, source and provenance. Add the 39 owner notes as subset `owner_notes`.
-- [ ] 4.2 Split dev/test about 1:2 by source capture group, from a seed. Verify there is no capture group in both splits.
+- [x] 4.1 Write `config/prompts/query-writer-v1.md` with the style mix (D9). Opus subagents write about 200 known-item queries from a stratified draw of `eval-1k`, and about 80 category queries from the corpus summary. Store them keyed in the results store, and write `evals/sets/eval-1k/queries-v1.jsonl` with kind, style, source and provenance. Add the 39 owner notes as subset `owner_notes`.
+  Done 2026-10-11: 200 known-item (stratified, one per capture group; 39 fell back to visual) + 80 category queries by Opus subagents; 37 owner notes as `owner_note`.
+- [x] 4.2 Split dev/test about 1:2 by source capture group, from a seed. Verify there is no capture group in both splits.
+  Done 2026-10-11: dev/test by capture group (seed 20261012), the label-v2 dev photos pinned to dev; 67+27 dev, 133+53 test.
 - [ ] 4.3 Owner realism check on 30 random queries, using the local review page. Record it in the set README.
 
 ## 5. Search routes
 
-- [ ] 5.1 Metadata route: FTS over path, folder and filename tokens, plus EXIF date and year. Also attribute filters (mono/colour, film-scan bucket, year range) taken from the labels.
-- [ ] 5.2 Query expansion: a small local model (E4B text-only) rewrites a query into keywords and synonyms for FTS and a second embedding query. The prompt is versioned and expansions are cached per query.
-- [ ] 5.3 Run every route over `eval-1k`, for each captioner arm and with no captioner: image@768, caption, FTS, hybrid, blend, metadata, expansion variants and filters. Verify the rankings are written and indexed per route, and that the params_hash covers the expansion prompt and the filters.
+- [x] 5.1 Metadata route: FTS over path, folder and filename tokens, plus EXIF date and year. Also attribute filters (mono/colour, film-scan bucket, year range) taken from the labels.
+  Done 2026-10-11: `meta`, `image-meta`, `hybrid-meta`, `+filt` (soft, reorders only retrieved items).
+- [x] 5.2 Query expansion: a small local model (E4B text-only) rewrites a query into keywords and synonyms for FTS and a second embedding query. The prompt is versioned and expansions are cached per query.
+  Done 2026-10-11: `+exp` with config/prompts/expand-v1.md; all 317 queries expanded and cached.
+- [x] 5.3 Run every route over `eval-1k`, for each captioner arm and with no captioner: image@768, caption, FTS, hybrid, blend, metadata, expansion variants and filters. Verify the rankings are written and indexed per route, and that the params_hash covers the expansion prompt and the filters.
+  Done 2026-10-11: 64 routes over 317 queries for 5 captioner arms + no captioner.
 
 ## 6. Judging
 
-- [ ] 6.1 Gemini grid judge: query plus up to 10 numbered thumbnails, returning grades 0/1/2 as JSON, keyed `(query_id, asset_id, …)`, with a USD cap. Verify on a 5-query dry run with a mocked API, then live on 10 dev queries.
+- [x] 6.1 Gemini grid judge: query plus up to 10 numbered thumbnails, returning grades 0/1/2 as JSON, keyed `(query_id, asset_id, …)`, with a USD cap. Verify on a 5-query dry run with a mocked API, then live on 10 dev queries.
+  Done 2026-10-11: judge-v2 (photos + capture date/folder notes, after judge-v1 failed date queries on the 10-query dry run).
 - [ ] 6.2 Pool the top-10 of every route per query, plus the targets, and judge them all ($25 cap). Verify pool coverage is 1.0 for every route.
 - [ ] 6.3 Opus audit: a stratified 10% plus all target disagreements. Compute weighted kappa overall and per route, and re-judge the test pool with Opus if kappa < 0.6.
 - [ ] 6.4 Local review page (static HTML on the laptop, derived JPEGs): the owner judges 100 audited items and rates 30 caption sets blind. Store the results with provenance.
-- [ ] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements. Score every arm's `rotate_cw` on the `eval-1k` scans against Opus (precision on upright scans, recall on mis-oriented ones).
+- [x] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements. Score every arm's `rotate_cw` on the `eval-1k` scans against Opus (precision on upright scans, recall on mis-oriented ones).
+  Done 2026-10-11 (caption part): `evals/runs/2026-10-11_eval-1k-caption-audit.md`. Owner check of disagreements pending (6.4).
 
 ## 7. Decision rule and reports
 
 - [ ] 7.1 Tune on dev only: blend weight, expansion prompt, filters. Freeze them.
-- [ ] 7.2 Write and commit `evals/gates.toml` (D11) before any test-split scoring. Verify the commit precedes the test run records.
+- [x] 7.2 Write and commit `evals/gates.toml` (D11) before any test-split scoring. Verify the commit precedes the test run records.
+  Done 2026-10-11 (542640b), before any test-split search scoring.
 - [ ] 7.3 Score test: graded nDCG@20 and paired-bootstrap deltas against the reference, per kind, style and the owner-notes subset; caption error rates; structured-field precision per stratum. Add cost and time projections for 71.6k images (USD at the stated price date, local hours on the M5 Max).
 - [ ] 7.4 Confirm the chosen pipeline on `pilot-v0-pool5k` (owner notes plus the subset of queries whose source photos are in it). Report any change in route order.
 
