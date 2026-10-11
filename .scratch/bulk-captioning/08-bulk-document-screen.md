@@ -48,3 +48,5 @@ Decide the screening method, then run it over the caption-once worklist (`dedup/
 - Does a document-like photo the owner wants searchable (receipts, letters, tickets) go to local 12B captioning instead of being dropped? Probably yes. That keeps "describe every photo" without sending documents.
 
 ## Comments
+
+- 2026-10-11: shares the quarantine (`sensitive-content-screen/02`) and the owner review page (`sensitive-content-screen/03`) with the nudity screen. Build them once.

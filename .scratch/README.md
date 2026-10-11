@@ -39,6 +39,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 |---|---|---|---|
 | 1 | [`sources/`](sources/README.md) | Every photo share mounted read-only, Takeout landed and verified, Drive scans mirrored once, per-person consent, skip rules, a complete inventory (Gate A) | owner DSM and Takeout actions |
 | 2 | [`catalogue/`](catalogue/README.md) | One metadata record per asset with per-field provenance: EXIF, Takeout sidecars, filename parsers, date kinds, places, colour/mono, capture axes, thumbnails, EG2 image vectors, videos catalogued (Gate B) | 1 |
+| 2a | [`sensitive-content-screen/`](sensitive-content-screen/README.md) | Local nudity/explicit classifier; flagged assets quarantined (no hosted send, no Claude viewing, hidden from family) until the owner rules on a local review page | `infer-v1` images; gates 4 and every ingest run |
 | 3 | [`dedup/`](dedup/README.md) | Exact, pixel and near-duplicate groups; captures (Live/Motion, RAW+JPEG, edits); a canonical member, so each capture is captioned once (Gate C) | 2 |
 | 4 | [`bulk-captioning/`](bulk-captioning/README.md) | Gemini Batch runner; pool5k confirmation (7.4); refusal fallback; tiny images; colour-filter source; then the back-catalogue run itself | runner and 7.4 now; the bulk run → 1, 3 |
 | 5 | [`search/`](search/README.md) | SQLite schema v1; importing the keyed result stores; FTS5 + EG2 blend + filters; a parity eval proving the production path reproduces the eval-1k numbers | 2 (schema), 4 (captions) |
@@ -47,7 +48,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 | 8 | [`ops/`](ops/README.md) | Private git remote, Litestream DB → NAS → GCS, results-store backup, Ollama bound to localhost | 5 for the DB parts; the rest now |
 | 9 | [`eval-followups/`](eval-followups/README.md) | Close out the eval change: owner-rephrase subset, older harness bugs, archive the OpenSpec change, rewrite PLAN.md to match decisions 1–41 | none |
 
-**Critical path to a usable MVP:** 1 → 2 → 3 → 4 (bulk run) → 5 → 6.
+**Critical path to a usable MVP:** 1 → 2 → 2a → 3 → 4 (bulk run) → 5 → 6.
 
 **Spend gate:** every new Gemini spend is approved by the owner first and logged in `evals/spend.jsonl`. Remaining budget: $139.96 of $150.
 
@@ -61,6 +62,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 | `catalogue/` | 07 (colour/mono heuristic), 12 (EG2 image vectors). 02, 05, 06, 09 and 10 follow once 01 is decided |
 | `dedup/` | 01 (exact/pixel groups), 02 (capture grouping) |
 | `sources/` | 04 (consent eligibility), 05 (skip rules) |
+| `sensitive-content-screen/` | 01 (classifier eval), 02 (quarantine stage), 03 (owner review page) |
 | `eval-followups/` | 01 (rephrase subset), 02 (agreement matrix), 05 (PLAN.md rewrite; owner reviews the diff) |
 
 **Owner actions** (`ready-for-human` / `needs-info`):
