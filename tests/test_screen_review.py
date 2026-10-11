@@ -265,3 +265,49 @@ def test_documented_commands_run_as_written(env, monkeypatch, capsys):
     assert {r["verdict"] for r in quarantine.load().values()} == {"private"}
     assert not (pg.default_out() / "img").exists()
     capsys.readouterr()
+
+
+# ---------- propagation never loosens a verdict ----------
+
+
+def page_numbers(res) -> dict[str, int]:
+    pm = json.loads(res.page_map.read_text())
+    return {v["asset_id"]: int(k) for k, v in pm["items"].items()}
+
+
+def test_ingest_never_loosens_a_group_members_owner_verdict(env):
+    """aid(4) was ruled exclude earlier; aid(0), a same-pixel copy on this page, is ruled include."""
+    cfg, home = env
+    quarantine.flag([aid(4)], "nudity")
+    quarantine.record_verdict(aid(4), "exclude", "owner")
+    res = build(cfg, home / "r")
+    n_of = page_numbers(res)
+    r = ing.ingest(answers(res, {n_of[aid(0)]: "include", n_of[aid(1)]: "include", n_of[aid(2)]: "include"}),
+                   res.page_map, groups={aid(0): {aid(0), aid(4)}})
+    assert quarantine.load()[aid(4)]["verdict"] == "exclude"
+    assert r.kept_stricter == 1
+    assert quarantine.Checker.load(groups={aid(0): [aid(4)]}).refused(aid(0), "hosted")
+
+
+def test_ingest_tightens_a_less_restrictive_member(env):
+    cfg, home = env
+    quarantine.flag([aid(4)], "nudity")
+    quarantine.record_verdict(aid(4), "include", "owner")
+    res = build(cfg, home / "r")
+    n_of = page_numbers(res)
+    ing.ingest(answers(res, {n_of[aid(0)]: "exclude", n_of[aid(1)]: "include", n_of[aid(2)]: "include"}),
+               res.page_map, groups={aid(0): {aid(0), aid(4)}})
+    assert quarantine.load()[aid(4)]["verdict"] == "exclude"
+
+
+@pytest.mark.parametrize("first, second", [("include", "exclude"), ("exclude", "include")])
+def test_ingest_same_group_on_one_page_most_restrictive_wins(env, first, second):
+    """aid(0) and aid(1) are same-pixel copies, both on the page, ruled differently: exclude wins for all."""
+    cfg, home = env
+    res = build(cfg, home / "r")
+    n_of = page_numbers(res)
+    group = {aid(0), aid(1), aid(5)}
+    ing.ingest(answers(res, {n_of[aid(0)]: first, n_of[aid(1)]: second, n_of[aid(2)]: "include"}),
+               res.page_map, groups={aid(0): group, aid(1): group})
+    rows = quarantine.load()
+    assert {rows[a]["verdict"] for a in group} == {"exclude"}

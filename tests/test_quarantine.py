@@ -103,3 +103,32 @@ def test_extra_group_argument(tmp_path):
     p = tmp_path / "q.jsonl"
     q.flag([A], "nudity", path=p)
     assert q.Checker.load(p).refused(B, "hosted", group=[A])
+
+
+# ---------- a newly flagged same-pixel copy inherits its group's owner verdict ----------
+
+
+@pytest.mark.parametrize("verdict", ["exclude", "include", "private"])
+def test_flagged_copy_of_ruled_asset_inherits_verdict_not_requeued(tmp_path, verdict):
+    p = tmp_path / "q.jsonl"
+    q.flag([A], "nudity", path=p)
+    q.record_verdict(A, verdict, "owner", path=p)
+    assert q.flag([B], "nudity", path=p, groups={B: [A]}) == 0  # nothing queued for review
+    row = q.load(p)[B]
+    assert row["verdict"] == verdict and row["inherited_from"] == A and row["verdict_by"] == "owner"
+
+
+def test_flag_inherits_most_restrictive_ruled_member(tmp_path):
+    p = tmp_path / "q.jsonl"
+    q.flag([A, C], "nudity", path=p)
+    q.record_verdict(A, "include", "owner", path=p)
+    q.record_verdict(C, "private", "owner", path=p)
+    q.flag([B], "nudity", path=p, groups=lambda a: [A, C] if a == B else [])
+    assert q.load(p)[B]["verdict"] == "private"
+
+
+def test_flag_with_only_pending_members_queues_pending(tmp_path):
+    p = tmp_path / "q.jsonl"
+    q.flag([A], "nudity", path=p)
+    assert q.flag([B], "nudity", path=p, groups={B: [A]}) == 1
+    assert q.load(p)[B]["verdict"] == "pending"

@@ -93,6 +93,10 @@ def build_data(cfg: Config, items_path: Path, labels_path: Path, out_dir: Path |
     # Quarantine (content-screen spec): the sheet may be viewed by Claude, so the hosted rule applies.
     held = _quarantined(cfg, [i["asset_id"] for i in items])
     items = [i for i in items if i["asset_id"] not in held]
+    # Screen gate (same spec): an asset with no ok screen record is not shown either.
+    gate = _screen_gate(cfg)
+    unscreened = {i["asset_id"] for i in items if not gate.screened(i["asset_id"])}
+    items = [i for i in items if i["asset_id"] not in unscreened]
     cands, outputs = _candidates(cfg, {i["asset_id"] for i in items})
     blind = blind_slice([i["asset_id"] for i in items])
     rows = []
@@ -117,7 +121,7 @@ def build_data(cfg: Config, items_path: Path, labels_path: Path, out_dir: Path |
         "candidates": cands,
         "items": rows,
         "labels": {lab["asset_id"]: lab for lab in _read_jsonl(labels_path)},
-        "left_out": {"quarantined": len(held)},
+        "left_out": {"quarantined": len(held), "unscreened": len(unscreened)},
     }
 
 
@@ -130,6 +134,12 @@ def _quarantined(cfg: Config, asset_ids: list[str]) -> set[str]:
         return set()
     index = privacy.default_copy_index(cfg)
     return {a for a in asset_ids if chk.refused(a, "hosted", index.pixel_group(a))}
+
+
+def _screen_gate(cfg: Config):
+    from shoebox import privacy
+
+    return privacy.default_screen_index(cfg)
 
 
 def render(data: dict) -> str:

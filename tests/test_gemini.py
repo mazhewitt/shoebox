@@ -652,3 +652,13 @@ def test_preflight_refuses_quarantined(env, verdict):
     assert gemini.preflight(CAND, [env.item], env.cfg) == []
     assert gemini.last_eligibility.counts() == {"quarantined": 1}
     assert not env.requests
+
+
+def test_preflight_fails_closed_on_missing_frame(env, monkeypatch):
+    """Runner level: a copy index with a configured source lacking a frame refuses the run, no request."""
+    from shoebox import copies, privacy
+
+    monkeypatch.setattr(privacy, "default_copy_index", lambda cfg: copies.CopyIndex.build([], {}, ("x",)))
+    with pytest.raises(privacy.PrivacyError, match=r"source\(s\): x \("):
+        gemini.preflight(CAND, [env.item], env.cfg)
+    assert not env.requests

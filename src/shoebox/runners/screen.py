@@ -98,7 +98,8 @@ class ScreenTally:
     flagged: int = 0    # of those, sensitive
     cached: int = 0     # already final in the store
     errors: int = 0     # error records written this run
-    queued: int = 0     # quarantine rows appended (an asset already in the quarantine is not re-queued)
+    queued: int = 0     # pending rows appended (an asset already in the quarantine, or a same-pixel copy of a
+                        # ruled one, is not re-queued)
 
 
 def _record(res, asset_id: str, sensitive: bool | None, error: str | None = None) -> dict:
@@ -110,10 +111,12 @@ def _record(res, asset_id: str, sensitive: bool | None, error: str | None = None
 
 
 def screen_items(res, items: list[dict], cfg: Config, model: Model | None = None, workers: int = 1,
-                 quarantine_path: Path | None = None,
+                 quarantine_path: Path | None = None, groups: quarantine.Groups | None = None,
                  progress: Callable[[ScreenTally], None] | None = None) -> ScreenTally:
     """Screen every item not already final under `res`. `model` defaults to `load_model` (loaded only if
-    something needs screening). `workers` threads read and preprocess images; scoring is sequential."""
+    something needs screening). `workers` threads read and preprocess images; scoring is sequential.
+    `groups` (default: same-pixel copies from the pixel-hash store, loaded on the first flag) lets a flagged
+    copy of an already-ruled asset inherit that verdict instead of being re-queued (`quarantine.flag`)."""
     from shoebox import derive
     from shoebox.runners import _derived_problem, _params_doc, derived_image
 
@@ -161,7 +164,11 @@ def screen_items(res, items: list[dict], cfg: Config, model: Model | None = None
                 tally.errors += 1
             else:
                 if sensitive:  # quarantine before the record, so a crash between them can't lose a flag
-                    tally.queued += quarantine.flag([aid], "nudity", quarantine_path)
+                    if groups is None:
+                        from shoebox import copies
+
+                        groups = copies.CopyIndex.build([], copies.load_pixel_keys(cfg)).pixel_group
+                    tally.queued += quarantine.flag([aid], "nudity", quarantine_path, groups=groups)
                     tally.flagged += 1
                 store.append(cfg, _record(res, aid, bool(sensitive)), res.kind)
             tally.screened += 1

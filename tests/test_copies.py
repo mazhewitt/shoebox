@@ -113,3 +113,44 @@ def test_config_added_key(tmp_path):
 def test_repo_config_records_added():
     cfg_ = config.load(config.REPO_ROOT / "config" / "shoebox.toml")
     assert cfg_.sources["importantfiles"].added == date(2026, 10, 10)
+
+
+# ---------- pixel-hash coverage (same-pixel copies only count if hashed) ----------
+
+
+def write_kind_frame(c: config.Config, day: str, rows: list[tuple]) -> None:
+    """(source, relpath, asset_id, kind) rows."""
+    d = c.shoebox_root / "frame"
+    d.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({k: [r[i] for r in rows] for i, k in enumerate(("source", "relpath", "asset_id", "kind"))}),
+                   d / f"frame-{day}.parquet")
+
+
+def write_derive_index(c: config.Config, recs: dict[str, str], profile="infer-v1") -> None:
+    import json
+
+    p = c.derived_dir / profile / "index.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a") as f:
+        for aid, status in recs.items():
+            f.write(json.dumps({"asset_id": aid, "status": status}) + "\n")
+
+
+def test_unhashed_and_undecodable_image_rows(tmp_path):
+    D, V = "d" * 64, "e" * 64
+    c = cfg(tmp_path)
+    write_kind_frame(c, "2026-10-10", [("importantfiles", "a.jpg", A, "image"), ("importantfiles", "b.jpg", B, "image"),
+                                       ("importantfiles", "c.tif", C, "image"), ("importantfiles", "d.jpg", D, "image"),
+                                       ("importantfiles", "v.mp4", V, "video")])
+    write_pixels(c, {A: "px1"})
+    write_derive_index(c, {B: "ok", C: "error", D: "error"})
+    write_derive_index(c, {D: "ok"})  # latest record wins: D was re-derived, but has no pixel hash yet
+    idx = copies.load(c)
+    assert sorted(idx.unhashed) == [("importantfiles", "b.jpg", B), ("importantfiles", "d.jpg", D)]
+    assert idx.undecodable == (("importantfiles", "c.tif", C),)
+
+
+def test_frame_without_kind_column_counts_every_row_as_image(tmp_path):
+    c = cfg(tmp_path)
+    write_frame(c, "2026-10-10", [("importantfiles", "a.jpg", A)])
+    assert copies.load(c).unhashed == (("importantfiles", "a.jpg", A),)

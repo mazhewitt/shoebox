@@ -275,6 +275,7 @@ def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> lis
     profile = res.cand.get("profile", "infer-v1")
     derived = derive.load_index(cfg, profile)
     held = _quarantine_check(cfg)
+    gate = None  # the screen gate (spec content-screen), loaded once something needs running
     seen: set[str] = set()
     pending = []
     for it in items:
@@ -287,6 +288,13 @@ def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> lis
             continue
         if held(aid):
             tally.skip(aid, "quarantined")
+            continue
+        if gate is None:
+            from shoebox import privacy
+
+            gate = privacy.default_screen_index(cfg)
+        if not gate.screened(aid):
+            tally.skip(aid, "unscreened")
             continue
         image = derived_image(cfg, profile, aid)
         why = _derived_problem(res, derived.get(aid), image)

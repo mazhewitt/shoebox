@@ -137,6 +137,23 @@ def test_missing_or_stale_derived_is_an_error_record(world):
         assert "score" not in recs[aid]
 
 
+@pytest.mark.parametrize("verdict", ["exclude", "include", "private"])
+def test_flagged_same_pixel_copy_inherits_owner_verdict(world, verdict):
+    """X was ruled earlier; "e" (flagged now) has the same pixel hash in the pixel-hash store: it takes X's
+    verdict and is not re-queued for review."""
+    x = "f" * 64
+    quarantine.flag([x], "nudity")
+    quarantine.record_verdict(x, verdict, "owner")
+    for a in (x, "e" * 64):
+        store.append(world, {"asset_id": a, "model_id": "pixelhash-v1", "params_hash": "p1", "status": "ok",
+                             "pixel_hash": "same"}, kind="pixelhash")
+    t = screen.screen_items(runners.resolve("nsfw-coreml-v1"), items(), world, model=StubModel())
+    rows = quarantine.load()
+    assert (rows["e" * 64]["verdict"], rows["e" * 64]["inherited_from"]) == (verdict, x)
+    assert {a for a, r in rows.items() if r["verdict"] == "pending"} == {"c" * 64, "d" * 64}
+    assert (t.flagged, t.queued) == (3, 2)
+
+
 def test_model_failure_is_an_error_record(world):
     class Broken(StubModel):
         def predict(self, x):
@@ -195,3 +212,19 @@ def test_real_package_loads_and_scores_a_synthetic_image(tmp_path):
     Image.new("RGB", (300, 300), (40, 120, 200)).save(p)
     s = model.predict(screen.preprocess(p))
     assert 0.0 <= s <= 1.0
+
+
+@pytest.mark.skipif(not REAL_PKG.exists(), reason="real Core ML package not present")
+def test_real_package_screens_through_load_model_with_network_blocked(world, monkeypatch):
+    """screen_items with no model passed: load_model finds the package under <shoebox_root>/models/, checks its
+    hash, and scores every synthetic image with the network blocked."""
+    import shutil
+
+    shutil.copytree(REAL_PKG, world.shoebox_root / "models" / REAL_PKG.name)
+    res = runners.resolve("nsfw-coreml-v1")
+    assert res.cand["package"] == REAL_PKG.name
+    no_network(monkeypatch)
+    t = screen.screen_items(res, items(), world)
+    assert (t.screened, t.errors) == (5, 0)
+    recs = store.index(world, res.model_id, res.params_hash, "screen")
+    assert all(r["status"] == "ok" and isinstance(r["sensitive"], bool) for r in recs.values())

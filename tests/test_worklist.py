@@ -32,7 +32,7 @@ def row(source, relpath, asset):
 
 CAND = {"media_resolution": "medium", "est_prompt_tokens": 2100, "est_output_tokens": 400,
         "est_thinking_tokens": 200, "price_input_usd_per_mtok": 0.75, "price_output_usd_per_mtok": 3.75,
-        "price_date": "2026-10-10"}
+        "price_date": "2026-10-10", "price_valid_until": "2099-12-31"}
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ def world(tmp_path, monkeypatch):
     ]), frames / "frame-2026-10-06.parquet")
     settings = derive.load_profile("infer-v1")
     model_id, ph = derive.pixelhash_key(settings)
-    for a, h in ((2, "h-b"), (3, "h-b")):
+    for a, h in ((2, "h-b"), (3, "h-b"), (8, "h-e")):  # every restricted image is hashed (else fail closed)
         store.append(cfg, {"asset_id": aid(a), "model_id": model_id, "params_hash": ph, "status": "ok",
                            "pixel_hash": h, "width": 4000, "height": 3000}, kind="pixelhash")
     idx = derive.index_path(cfg, "infer-v1")
@@ -169,3 +169,56 @@ def test_privacy_check_all_frames_prints_counts_no_paths(world, tmp_path, monkey
     assert "by source kyra: 3" in out
     assert ".jpg" not in out and "2004" not in out and aid(5) not in out
     assert rc == 1  # no checklist: hosted runs refused, but the counts are still reported
+
+
+def test_privacy_check_with_provider_prints_frame_counts_by_default(world, tmp_path, monkeypatch, capsys):
+    from shoebox.cli import main
+
+    monkeypatch.setattr(config, "load", lambda *a, **k: world)
+    main(["privacy", "check", "--checklist", str(tmp_path / "none.toml"), "--provider", "gemini"])
+    out = capsys.readouterr().out
+    assert "frames (gemini)" in out and "copy_restricted: 1" in out and "by source kyra: 3" in out
+    for needle in (".jpg", "2004", "x/", *(aid(n) for n in range(1, 9))):
+        assert needle not in out
+    main(["privacy", "check", "--checklist", str(tmp_path / "none.toml")])
+    assert "frames" not in capsys.readouterr().out  # checklist only, as before
+
+
+def test_unhashed_restricted_image_reported_and_fails_closed(world, tmp_path, monkeypatch, capsys):
+    """A new kyra file (no consent) with no pixel hash: its same-pixel copies are invisible."""
+    pq.write_table(pa.Table.from_pylist([
+        row("kyra", "x/b2.jpg", aid(3)), row("kyra", "x/e.jpg", aid(8)), row("kyra", "x/f.jpg", aid(9)),
+        row("kyra", "x/g.tif", aid(10)),
+    ]), world.shoebox_root / "frame" / "frame-2026-10-07.parquet")
+    with open(derive.index_path(world, "infer-v1"), "a") as f:
+        f.write(json.dumps({"asset_id": aid(10), "status": "error"}) + "\n")  # undecodable: excluded
+    rep = worklist.frame_refusals(world)
+    assert (rep["uncovered"], rep["undecodable"]) == ({"kyra": 1}, {"kyra": 1})
+    with pytest.raises(privacy.PrivacyError, match="1 in kyra"):
+        worklist.build(world)
+    monkeypatch.setattr(config, "load", lambda *a, **k: world)
+    rc = privacy_cmd.cmd_check(Namespace(checklist=tmp_path / "none.toml", items=None, provider="gemini",
+                                         allowed_out=None, all_frames=True))
+    out = capsys.readouterr().out
+    assert rc == 1 and "no pixel hash: 1 (kyra 1)" in out and "undecodable" in out
+    assert "x/f" not in out and aid(9) not in out
+
+
+def test_expired_price_gives_no_quote(world):
+    wl = worklist.build(world)
+    md = worklist.summary_md(wl, "t", "gemini-batch-v2", {**CAND, "price_valid_until": "2026-01-01"})
+    assert "price expired" in md and "$" not in md
+    md = worklist.summary_md(wl, "t", "gemini-batch-v2", {k: v for k, v in CAND.items() if k != "price_valid_until"})
+    assert "price expired" in md and "$" not in md
+
+
+def test_worklist_requotes_with_the_batch_candidate_by_default():
+    import argparse
+
+    sub = argparse.ArgumentParser().add_subparsers()
+    dedup_cmd.register(sub)
+    ns = sub.choices["dedup"].parse_args(["worklist"])
+    assert ns.candidate == "gemini-batch-v2"
+    from shoebox.runners import load_candidates
+
+    assert load_candidates()["gemini-batch-v2"]["price_batch_discount"] == 0.5

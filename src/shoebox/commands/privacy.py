@@ -25,14 +25,16 @@ def register(sub) -> None:
         "--items",
         type=Path,
         default=None,
-        help="also report never-send/consent skips for these items, as the runner would",
+        help="also report never-send/consent skips for these items, as the runner would (counts by reason "
+        "and source only; no ids or paths are printed: use --allowed-out for the allowed items)",
     )
     c.add_argument(
         "--provider",
         choices=("gemini", "claude"),
-        default="gemini",
+        default=None,
         help="hosted provider the items would go to (default gemini); the checklist is Gemini's, "
-        "so with claude a failing checklist is reported but does not fail the command",
+        "so with claude a failing checklist is reported but does not fail the command. Given without "
+        "--items, also prints the frame-wide refused counts (as --all-frames)",
     )
     c.add_argument(
         "--allowed-out",
@@ -60,7 +62,9 @@ def cmd_check(args) -> int:
     for r in results:
         print(f"{'PASS' if r.ok else 'FAIL'}  {r.item}: {r.detail}")
     failed = sum(not r.ok for r in results)
-    provider = getattr(args, "provider", "gemini")
+    provider = getattr(args, "provider", None)
+    all_frames = getattr(args, "all_frames", False) or (provider is not None and not args.items)
+    provider = provider or "gemini"
     allowed_out = getattr(args, "allowed_out", None)
     if allowed_out and not args.items:
         print("--allowed-out needs --items", file=sys.stderr)
@@ -74,9 +78,13 @@ def cmd_check(args) -> int:
         others = privacy.known_items()
         never = privacy.load_never_send()
         # The same rules the runner's preflight applies, so this report matches the run.
-        elig = privacy.filter_items(
-            items, config.load(), never, others=others, provider=provider
-        )
+        try:
+            elig = privacy.filter_items(
+                items, config.load(), never, others=others, provider=provider
+            )
+        except privacy.PrivacyError as e:
+            print(f"items: {e}", file=sys.stderr)
+            return 1
         print(f"items: {elig.summary()}")
         _print_counts(
             elig.counts(),
@@ -86,14 +94,15 @@ def cmd_check(args) -> int:
             allowed_out.parent.mkdir(parents=True, exist_ok=True)
             allowed_out.write_text("".join(json.dumps(it) + "\n" for it in elig.allowed))
             print(f"wrote {len(elig.allowed)} allowed item(s) to {allowed_out}")
-        for s in elig.skipped:
-            print(f"skip  {s.asset_id} {s.source} {s.relpath}: {s.reason}")
-        for entry in never.unmatched([*items, *others]):
+        unmatched = never.unmatched([*items, *others])
+        if unmatched:  # a count: the entries themselves are ids and paths
             print(
-                f"WARN  never-send entry {entry!r} matched no item in {args.items} or evals/sets "
-                "(paths are relative to a source root; a folder name blocks everything below it)"
+                f"WARN  {len(unmatched)} never-send entr{'y' if len(unmatched) == 1 else 'ies'} matched no "
+                "item in the items file or evals/sets (paths are relative to a source root; a folder name "
+                "blocks everything below it)"
             )
-    if getattr(args, "all_frames", False):
+    uncovered = False
+    if all_frames:
         try:
             rep = worklist.frame_refusals(config.load(), provider=provider)
         except privacy.PrivacyError as e:
@@ -105,7 +114,15 @@ def cmd_check(args) -> int:
             f"({rep['refused_assets']} asset(s))"
         )
         _print_counts(rep["by_reason"], rep["by_source"])
-    if failed and provider != "gemini" and (args.items or getattr(args, "all_frames", False)):
+        if rep["uncovered"]:
+            per = ", ".join(f"{s} {n}" for s, n in rep["uncovered"].items())
+            und = ", ".join(f"{s} {n}" for s, n in rep["undecodable"].items()) or "none"
+            print(f"  restricted images with no pixel hash: {sum(rep['uncovered'].values())} ({per}); "
+                  f"undecodable excluded: {und}. Every hosted send is refused until they are derived.")
+            uncovered = True
+    if uncovered:
+        return 1
+    if failed and provider != "gemini" and (args.items or all_frames):
         print(
             f"{failed} Gemini checklist item(s) failed (informational for --provider {provider})."
         )

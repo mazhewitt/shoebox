@@ -4,8 +4,11 @@ Built from the latest frame of every configured source (`<shoebox_root>/frame/fr
 one frame may hold several sources), not from the items about to be sent, plus same-pixel links from the
 pixel-hash store (`results/pixelhash/...`, written by derive). A configured source with no frame dated on
 or after its `added` config date is listed in `missing`; `privacy.filter_items` then refuses to run.
+Image rows with no pixel hash are listed in `unhashed` (their same-pixel copies can't be seen); if any sits at a
+restricted location, `privacy.filter_items` refuses too (`privacy.uncovered`).
 """
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -28,10 +31,16 @@ class CopyIndex:
     pixel_keys: dict[str, frozenset[str]]  # asset_id -> pixel-hash keys (scoped to their store dir)
     missing: tuple[str, ...] = ()  # configured sources without a current frame
     _by_pixel: dict[str, frozenset[str]] = field(default_factory=dict, repr=False, compare=False)
+    # Image rows with no pixel-hash record: their same-pixel copies are invisible (`privacy.uncovered`).
+    unhashed: tuple[Location, ...] = ()
+    # Of the image rows without a pixel hash, those whose latest derive record is `error`: undecodable, so
+    # they can't be compared at all. Reported, never blocking.
+    undecodable: tuple[Location, ...] = ()
 
     @classmethod
     def build(cls, locations: Iterable[Location], pixels: Mapping[str, str | Iterable[str]],
-              missing: Iterable[str] = ()) -> "CopyIndex":
+              missing: Iterable[str] = (), unhashed: Iterable[Location] = (),
+              undecodable: Iterable[Location] = ()) -> "CopyIndex":
         """From `(source, relpath, asset_id)` rows and `{asset_id: pixel_hash or [keys]}`."""
         by_asset: dict[str, list[Location]] = defaultdict(list)
         for loc in locations:
@@ -42,7 +51,8 @@ class CopyIndex:
             for k in ks:
                 by_pixel[k].add(a)
         return cls({a: tuple(v) for a, v in by_asset.items()}, keys, tuple(sorted(missing)),
-                   {k: frozenset(v) for k, v in by_pixel.items()})
+                   {k: frozenset(v) for k, v in by_pixel.items()},
+                   tuple(sorted(tuple(x) for x in unhashed)), tuple(sorted(tuple(x) for x in undecodable)))
 
     def locations(self, asset_id: str) -> list[Location]:
         """Byte copies: every frame row with this asset_id."""
@@ -97,8 +107,26 @@ def load_pixel_keys(cfg: Config) -> dict[str, set[str]]:
     return out
 
 
-def load(cfg: Config) -> CopyIndex:
-    """The index over the latest frame of every configured source plus the pixel-hash store."""
+def derive_errors(cfg: Config, profile: str = "infer-v1") -> set[str]:
+    """Assets whose latest record in the profile's derive index is `error` (as `derive.load_index` reads it;
+    read here directly so this module needs no pyvips). Unparseable lines are skipped."""
+    path = cfg.derived_dir / profile / "index.jsonl"
+    latest: dict[str, str] = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(rec, dict) and isinstance(rec.get("asset_id"), str):
+                latest[rec["asset_id"]] = rec.get("status")
+    return {a for a, s in latest.items() if s == "error"}
+
+
+def load(cfg: Config, profile: str = "infer-v1") -> CopyIndex:
+    """The index over the latest frame of every configured source plus the pixel-hash store. Image rows (a
+    frame without a `kind` column counts every row as an image) with no pixel hash are listed in `unhashed`,
+    or in `undecodable` if the profile's derive record for them is `error`."""
     import pyarrow.parquet as pq
 
     latest, missing = latest_frames(cfg)
@@ -106,8 +134,20 @@ def load(cfg: Config) -> CopyIndex:
     for name, (_, p) in latest.items():
         by_path[p].append(name)
     locs: list[Location] = []
+    images: list[Location] = []
     for p, names in by_path.items():
-        t = pq.read_table(p, columns=["source", "relpath", "asset_id"]).to_pydict()
+        cols = ["source", "relpath", "asset_id"]
+        has_kind = "kind" in pq.read_schema(p).names
+        t = pq.read_table(p, columns=cols + ["kind"] * has_kind).to_pydict()
+        kinds = t["kind"] if has_kind else ["image"] * len(t["source"])
         wanted = set(names)
-        locs += [(s, r, a) for s, r, a in zip(t["source"], t["relpath"], t["asset_id"]) if a and s in wanted]
-    return CopyIndex.build(locs, load_pixel_keys(cfg), missing)
+        for s, r, a, k in zip(t["source"], t["relpath"], t["asset_id"], kinds):
+            if a and s in wanted:
+                locs.append((s, r, a))
+                if k in ("image", None):
+                    images.append((s, r, a))
+    pixels = load_pixel_keys(cfg)
+    errors = derive_errors(cfg, profile) if images else set()
+    unhashed = [loc for loc in images if loc[2] not in pixels]
+    return CopyIndex.build(locs, pixels, missing, [x for x in unhashed if x[2] not in errors],
+                           [x for x in unhashed if x[2] in errors])

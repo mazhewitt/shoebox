@@ -84,7 +84,8 @@ def cmd_sheet(args) -> int:
     left_out: dict = {}
     out = write_sheet(cfg, Path(args.items), Path(args.labels), Path(args.out) if args.out else None,
                       left_out=left_out)
-    _log(f"wrote {out}; left out {left_out.get('quarantined', 0)} quarantined")
+    _log(f"wrote {out}; left out {left_out.get('quarantined', 0)} quarantined, "
+         f"{left_out.get('unscreened', 0)} unscreened")
     return 0
 
 
