@@ -55,7 +55,7 @@ def normalise_label(parsed):
 
 
 def get(runtime: str) -> ModuleType:
-    return importlib.import_module(f"shoebox.runners.{runtime}")
+    return importlib.import_module(f"shoebox.runners.{runtime.replace('-', '_')}")  # gemini-batch -> gemini_batch
 
 
 def load_candidates(config_dir: Path = CONFIG_DIR) -> dict[str, dict]:
@@ -311,20 +311,57 @@ def run_items(res: Resolved, items: list[dict], cfg: Config,
     return tally
 
 
-def label_source(res: Resolved) -> dict:
+def label_source(res: "Resolved | list[Resolved]") -> dict | list[dict]:
     """What a reader needs to find a candidate's labels: `{candidate, model_id, params_hash}`, plus
-    `retry_params_hash` when it has a truncation retry."""
+    `retry_params_hash` when it has a truncation retry. A list of candidates gives the ordered list of their
+    sources (design D10: primary first, then fallbacks), which `source_index` resolves to one record per asset."""
+    if isinstance(res, list):
+        return [label_source(r) for r in res]
     src = {"candidate": res.name, "model_id": res.model_id, "params_hash": res.params_hash}
     if res.retry:
         src["retry_params_hash"] = res.retry.params_hash
     return src
 
 
-def source_index(cfg: Config, source: dict, kind: str = "labels") -> dict[str, dict]:
+def _falls_through(rec: dict) -> bool:
+    """A final record the next source in an ordered list should replace (design D10): the model refused the
+    image, or it was truncated and no retry recovered it (the retry failed, or the source has no retry).
+    Other failures are not routed; a truncated record still awaiting its retry is not final yet."""
+    if rec.get("status") != "invalid" or rec.get("awaiting_retry"):
+        return False
+    return rec.get("reason") == "refused" or rec.get("reason") == "truncated" or "retry_of" in rec
+
+
+def _usable(rec: dict) -> bool:
+    return store.is_final(rec) and not _falls_through(rec)
+
+
+def source_index(cfg: Config, source: dict | list[dict], kind: str = "labels") -> dict[str, dict]:
     """`{asset_id: record}` as evals should read a label source: its own records, except that a `truncated`
     record is replaced by its retry's final record (marked `retry_of`), so the retry counts if it is valid and
     the item counts as a failure if it is not. A truncated record whose retry has not run yet is returned
-    with `awaiting_retry: true`, so a consumer that needs final captions can wait for it."""
+    with `awaiting_retry: true`, so a consumer that needs final captions can wait for it.
+
+    `source` may be an ordered list of sources: each asset gets the first source's usable final record (each
+    record keeps its own model_id/params_hash; `fell_through` names the sources passed over). A refused or
+    unrecovered truncated record falls through to the next source; if no later source has a usable record,
+    the first source's record with one is returned, so coverage reports still see why."""
+    if isinstance(source, list):
+        out: dict[str, dict] = {}
+        passed: dict[str, list[str]] = {}
+        for src in source:
+            for aid, rec in source_index(cfg, src, kind).items():
+                have = out.get(aid)
+                if have is not None and (_usable(have) or not _usable(rec)):
+                    continue
+                if have is not None:
+                    passed.setdefault(aid, []).append(have.get("_source"))
+                out[aid] = {**rec, "_source": src.get("candidate")}
+        for aid, rec in out.items():
+            del rec["_source"]
+            if aid in passed:
+                rec["fell_through"] = passed[aid]
+        return out
     out = store.index(cfg, source["model_id"], source["params_hash"], kind)
     if source.get("retry_params_hash"):
         retried = store.index(cfg, source["model_id"], source["retry_params_hash"], kind)
