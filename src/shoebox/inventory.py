@@ -68,7 +68,11 @@ RAW_EXTS = frozenset(e for e, k in derive.KIND_BY_EXT.items() if k == "raw")
 SRC_KIND = {**derive.KIND_BY_EXT, "gif": "gif", "bmp": "bmp", **dict.fromkeys(VIDEO_EXTS, "video")}
 
 SKIP_DIRS = frozenset({"#recycle", "$RECYCLE.BIN", ".tmp.drivedownload", "@eaDir", ".Spotlight-V100",
-                       ".Trashes", ".fseventsd"})
+                       ".Trashes", ".fseventsd",
+                       # derived caches: Android thumbnails, Synology extended-attribute/resource forks
+                       ".thumbnails", "@SynoEAStream", "@SynoResource"})
+# iTunes writes resized copies for iPod sync here; matched case-insensitively (SMB/exFAT casing varies)
+SKIP_DIRS_ANYCASE = {"ipod photo cache": "iPod Photo Cache"}
 SKIP_FILES = {".ds_store": ".DS_Store", "thumbs.db": "Thumbs.db", "desktop.ini": "desktop.ini"}
 SKIP_EXAMPLES = 5
 
@@ -169,7 +173,7 @@ def skip_reason(name: str, is_dir: bool) -> str | None:
             return name
         if name.lower().endswith(".lrdata"):
             return "*.lrdata"
-        return None
+        return SKIP_DIRS_ANYCASE.get(name.lower())
     if name.startswith("._"):
         return "._*"
     return SKIP_FILES.get(name.lower())

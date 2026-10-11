@@ -437,3 +437,59 @@ def test_jpeg_named_nef_probed_as_jpeg_and_retry_errors(env, monkeypatch):
     row = _rows(out)[rel]
     assert (row["status"], row["src_kind"]) == ("ok", "jpeg")
     assert set(probed) == errors_before  # only the error records were probed again
+
+
+# --- derived-cache skip rules (add-pipeline-foundations 2.1) ---------------------------------------
+
+
+def _touch(root: Path, rel: str, data: bytes = b"x") -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+
+
+@pytest.mark.parametrize("cache, reason", [
+    ("DCIM/.thumbnails", ".thumbnails"),
+    ("Pictures/iPod Photo Cache", "iPod Photo Cache"),
+    ("Pictures/IPOD PHOTO CACHE", "iPod Photo Cache"),
+    ("Lightroom/Cat Previews.lrdata", "*.lrdata"),
+    ("Lightroom/Cat Smart Previews.lrdata", "*.lrdata"),
+    ("photos/@SynoEAStream", "@SynoEAStream"),
+    ("photos/@SynoResource", "@SynoResource"),
+])
+def test_derived_cache_folder_skipped_with_named_reason(tmp_path, cache, reason):
+    _touch(tmp_path, f"{cache}/1234.jpg")
+    _touch(tmp_path, f"{cache}/sub/5678.jpg")
+    _touch(tmp_path, "keep/IMG_0001.jpg")
+    w = inventory.walk_source("t", tmp_path)
+    assert [f.relpath for f in w.files] == ["keep/IMG_0001.jpg"]
+    assert w.skips == {reason: 1}
+    assert w.skip_examples[reason] == [cache]
+
+
+def test_owner_data_beside_caches_is_kept(tmp_path):
+    _touch(tmp_path, "Lightroom/Cat.lrcat")
+    _touch(tmp_path, "Lightroom/Cat Previews.lrdata/a/b.lrprev")
+    _touch(tmp_path, "Trip/.picasa.ini")
+    _touch(tmp_path, "Trip/Picasa.ini")
+    _touch(tmp_path, "Trip/IMG_0001.jpg")
+    _touch(tmp_path, "Trip/.thumbnails/IMG_0001.jpg")
+    _touch(tmp_path, "Trip/thumbnails/IMG_0002.jpg")
+    _touch(tmp_path, "Trip/my thumbnails/IMG_0003.jpg")
+    _touch(tmp_path, "Trip/iPod Photos/IMG_0004.jpg")
+    w = inventory.walk_source("t", tmp_path)
+    assert [f.relpath for f in w.files] == [
+        "Lightroom/Cat.lrcat", "Trip/.picasa.ini", "Trip/IMG_0001.jpg", "Trip/Picasa.ini",
+        "Trip/iPod Photos/IMG_0004.jpg", "Trip/my thumbnails/IMG_0003.jpg", "Trip/thumbnails/IMG_0002.jpg"]
+    assert w.skips == {"*.lrdata": 1, ".thumbnails": 1}
+
+
+def test_readme_reports_cache_skip_counts(env):
+    cfg, src, out = env
+    _touch(src, "DCIM/.thumbnails/1.jpg")
+    _touch(src, "Pictures/iPod Photo Cache/F00/1.jpg")
+    _run(cfg, out)
+    assert not [p for p in _rows(out) if ".thumbnails" in p or "iPod Photo Cache" in p]
+    text = inventory_readme.render(out / "frame-2026-10-10.parquet")
+    assert "| `.thumbnails` | 1 |" in text
+    assert "| `iPod Photo Cache` | 1 |" in text
