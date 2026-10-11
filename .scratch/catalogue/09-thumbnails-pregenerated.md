@@ -1,6 +1,6 @@
 # Pre-generated UI thumbnails, two sizes
 
-Status: ready-for-agent (after 01)
+Status: ready-for-agent
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 

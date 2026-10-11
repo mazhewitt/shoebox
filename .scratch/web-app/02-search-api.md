@@ -1,6 +1,6 @@
 # Search API
 
-Status: blocked (on 01, search/03, search/04)
+Status: blocked (on search/03, search/04)
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 

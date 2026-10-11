@@ -34,3 +34,5 @@ Reporter: claude (build-planning session)
 Nothing.
 
 ## Comments
+
+- 2026-10-11: include the owner's language rule in PLAN.md §0/§1 and in the decisions file: Owner's language rule (2026-10-11): Python for simple scripts and pipelines; Rust only where the logic is complex, the process is long-running (a service), or a non-functional requirement needs the speed or concurrency. It refines decision 17 and PLAN.md's "anything fast or long-running in Rust".

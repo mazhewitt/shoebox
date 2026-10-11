@@ -1,6 +1,6 @@
 # ExifTool metadata extract: raw fields per asset, batch mode, stored by asset_id
 
-Status: ready-for-agent (after 01)
+Status: ready-for-agent
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 

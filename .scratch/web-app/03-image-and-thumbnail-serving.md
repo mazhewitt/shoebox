@@ -1,6 +1,6 @@
 # Image and thumbnail serving
 
-Status: blocked (on 01; thumbnails from `catalogue/`)
+Status: blocked (on thumbnails from `catalogue/`)
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 

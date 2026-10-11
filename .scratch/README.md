@@ -59,7 +59,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 | Directory | Issues |
 |---|---|
 | `bulk-captioning/` | 01 (Batch runner), 03 (refusal fallback), 04 (tiny images), 07 (store `rotate_cw`) |
-| `catalogue/` | 07 (colour/mono heuristic), 12 (EG2 image vectors). 02, 05, 06, 09 and 10 follow once 01 is decided |
+| `catalogue/` | 02 (ExifTool extract), 07 (colour/mono heuristic), 09 (thumbnails), 12 (EG2 image vectors); 05, 06 and 10 after 02 |
 | `dedup/` | 01 (exact/pixel groups), 02 (capture grouping) |
 | `sources/` | 04 (consent eligibility), 05 (skip rules) |
 | `sensitive-content-screen/` | 01 (Core ML nudity screen), 02 (quarantine stage), 03 (owner review page) |
@@ -75,8 +75,6 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 - **Hardware:** the Mac Studio arrives (`ingest/04`).
 
 **Decisions to make** (`needs-triage`, each file has a recommendation):
-- Rust scanner or Python (`catalogue/01`; recommends Python).
-- API stack (`web-app/01`; recommends Rust serving + a Python ranking service).
 - Drive scans: Cloud Sync or rclone (`sources/03`).
 - How rules and the caption model combine for capture axes (`catalogue/08`).
 - Near-duplicate method and labels (`dedup/03`).
@@ -99,6 +97,12 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 - **Off-laptop copies.** The repo has no git remote yet (`ops/01`).
 - **Ollama.** The laptop's Ollama still listens on all interfaces, and radiobox uses the M1 Studio's Ollama over the LAN (`ops/04`).
 - **Task 4.3** is done but unticked; the owner rephrased 7 queries, not 8 (`eval-followups/01`, `04`).
+
+## Language rule (owner, 2026-10-11)
+
+Python for simple scripts and pipelines. Rust only where the logic is complex, the process is long-running (a service), or a non-functional requirement needs the speed or concurrency. Applied so far:
+- the catalogue and all batch stages: Python (`catalogue/01`);
+- the API, including ranking: Rust (`web-app/01`).
 
 ## Conventions
 

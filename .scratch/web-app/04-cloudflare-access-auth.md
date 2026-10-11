@@ -1,6 +1,6 @@
 # Cloudflare Access authentication
 
-Status: blocked (on 01)
+Status: ready-for-agent
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 

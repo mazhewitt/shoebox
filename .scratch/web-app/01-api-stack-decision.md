@@ -1,6 +1,6 @@
 # API stack: Rust (Axum) as planned, or Python?
 
-Status: needs-triage
+Status: done (decided 2026-10-11: A, Rust Axum, ranking included)
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 
@@ -44,3 +44,5 @@ Decide between three options and record the decision here, then in PLAN.md (via 
 Nothing. It blocks 02–07.
 
 ## Comments
+
+- 2026-10-11 (owner): Owner's language rule (2026-10-11): Python for simple scripts and pipelines; Rust only where the logic is complex, the process is long-running (a service), or a non-functional requirement needs the speed or concurrency. The API is a long-running service, so **A: Rust Axum**, including ranking (eg2-blend over about 100k vectors, filters) and calls to Ollama for query encoding. C is out, because its Python search service would be long-running. Python stays for the batch pipeline and for the eval harness, which is now the reference implementation. `search/05`'s parity eval is the guard that the Rust ranking matches it.

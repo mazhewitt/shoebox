@@ -1,6 +1,6 @@
 # Catalogue tooling: build the Rust `shoebox-scan`, or extend the Python inventory?
 
-Status: needs-triage (owner decision)
+Status: done (decided 2026-10-11: Python)
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 
@@ -43,3 +43,5 @@ The decision is recorded in a comment here and in the memory. Issues 02–10 nam
 Nothing.
 
 ## Comments
+
+- 2026-10-11 (owner): Owner's language rule (2026-10-11): Python for simple scripts and pipelines; Rust only where the logic is complex, the process is long-running (a service), or a non-functional requirement needs the speed or concurrency. The catalogue passes are batch pipelines, so **Python**: extend `inventory` and `derive`. The revisit trigger above is that rule's speed NFR: if a full re-scan is too slow, the hot loop moves to Rust.
