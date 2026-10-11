@@ -6,7 +6,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 1. Config and the full derive pass
 
-- [ ] 1.1 Amend `openspec/config.yaml` "Languages" to the owner's rule: Python for scripts and pipelines; Rust only for complex logic, long-running services, or speed/concurrency requirements. API including ranking = Rust; all batch stages = Python. Verify with `openspec validate add-pipeline-foundations`.
+- [x] 1.1 Amend `openspec/config.yaml` "Languages" to the owner's rule: Python for scripts and pipelines; Rust only for complex logic, long-running services, or speed/concurrency requirements. API including ranking = Rust; all batch stages = Python. Verify with `openspec validate add-pipeline-foundations`.
 - [ ] 1.2 Add the pixel hash to the derive decode (design D1).
   - BLAKE3 over the orientation-normalised, full-resolution buffer, plus width/height/bands, taken before resize/ICC. Written to result kind `pixelhash/<version>` with `decoded|rendered`. The `infer-v1` `settings_hash` is unchanged.
   - Verify with tests on synthetic fixtures:

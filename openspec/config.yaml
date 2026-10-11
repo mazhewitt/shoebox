@@ -52,11 +52,13 @@ context: |
   - Search is an HTTP API; web UI now and phone app later are thin clients.
 
   Languages
-  - Rust for anything fast or long-running: shoebox-api (Axum), shoebox-scan,
-    shared shoebox-core.
-  - Python (uv) for pipeline CLIs, model runners and evals. Batch CLIs and
+  - Python (uv) for scripts and pipelines: every batch stage (inventory, derive,
+    dedup, screen, embed, label runs), model runners and evals. Batch CLIs and
     supervised runners only (JSONL over stdin/stdout); no Python daemons or
     services.
+  - Rust only for complex logic, long-running services, or speed/concurrency
+    requirements: the search API including ranking (shoebox-api, Axum) and any
+    shared core it needs.
   - TypeScript for the web UI and for thin Vally eval plugins (executor and
     graders, pinned Vally version, telemetry off). Metrics and gates stay in
     Python.
