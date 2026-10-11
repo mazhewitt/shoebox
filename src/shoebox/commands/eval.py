@@ -82,6 +82,7 @@ def register(sub) -> None:
     _register_caption_audit(esub)
     _register_opus_pool(esub)
     _register_graded(esub)
+    _register_colour(esub)
 
 
 def _register_search(esub) -> None:
@@ -330,6 +331,198 @@ def _register_caption_audit(esub) -> None:
     g.add_argument("--sets-dir", type=Path, default=sets)
     g.set_defaults(func=_caption_audit_gemini)
     _register_review(esub, sets)
+
+
+def _register_colour(esub) -> None:
+    from shoebox.evals import colour
+
+    sets, evals = REPO_ROOT / "evals" / "sets", REPO_ROOT / "evals"
+
+    def common(p):
+        p.add_argument("--frame", type=Path, default=None, help="default: newest frame-*.parquet")
+        p.add_argument("--sets-dir", type=Path, default=sets)
+        p.add_argument("--audit-set", default="eval-1k", help="set holding the Opus caption-audit sample")
+        p.add_argument("--params-hash", default=None, help="caption_audits store dir (default: the only one)")
+
+    a = esub.add_parser("colour-audit", help="frame colour_guess vs the Opus caption-audit reference (counts only)")
+    common(a)
+    a.set_defaults(func=_colour_audit)
+
+    d = esub.add_parser("colour-draw", help=f"mono-stratified sample -> evals/sets/{colour.SET_NAME}/items.jsonl")
+    common(d)
+    d.add_argument("--seed", type=int, default=colour.DEFAULT_SEED)
+    d.add_argument("--n-mono", type=int, default=colour.N_MONO)
+    d.add_argument("--n-near", type=int, default=colour.N_NEAR)
+    d.add_argument("--floor", type=int, default=colour.FLOOR)
+    d.add_argument("--profile", default="infer-v1")
+    d.set_defaults(func=_colour_draw)
+
+    t = esub.add_parser("colour-tune", help="grid-search ColourThresholds on the dev half and freeze them")
+    common(t)
+    t.add_argument("--with-audit", action="store_true", help="also tune on the caption-audit sample (flagged)")
+    t.add_argument("--min-pred", type=int, default=colour.MIN_PRED)
+    t.add_argument("--gates", type=Path, default=evals / "gates.toml")
+    t.add_argument("--frozen", type=Path, default=evals / colour.FROZEN_PATH)
+    t.set_defaults(func=_colour_tune)
+
+    s = esub.add_parser("colour-test", help="score the frozen thresholds once on the test half")
+    common(s)
+    s.add_argument("--min-pred", type=int, default=colour.MIN_PRED)
+    s.add_argument("--gates", type=Path, default=evals / "gates.toml")
+    s.add_argument("--frozen", type=Path, default=evals / colour.FROZEN_PATH)
+    s.add_argument("--caption-audit-json", type=Path, default=None,
+                   help="eval-1k caption audit report (default: newest <out-dir>/*_eval-1k-caption-audit.json)")
+    s.add_argument("--force-rescore", default=None, metavar="REASON", help="score again; the reason is recorded")
+    s.add_argument("--date", default=None)
+    s.add_argument("--out-dir", type=Path, default=evals / "runs")
+    s.set_defaults(func=_colour_test)
+
+
+def _mono_gate(path: Path) -> float:
+    import tomllib
+
+    return float(tomllib.loads(Path(path).read_text())["captions"]["mono_precision_min"])
+
+
+def _colour_audit_inputs(args, cfg, frame_rows=None):
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import colour, search
+
+    _ph, recs = ca.audit_records(cfg, ca.MODEL_ID, args.params_hash)
+    items = search.read_jsonl(args.sets_dir / args.audit_set / "items.jsonl")
+    sample = {r["asset_id"] for r in search.read_jsonl(args.sets_dir / args.audit_set / ca.SAMPLE_FILE)}
+    frame_rows = frame_rows if frame_rows is not None else colour.read_frame(_frame(cfg, args.frame))
+    recs = [r for r in recs if r["asset_id"] in sample]
+    return recs, colour.rows_for([it for it in items if it["asset_id"] in sample], frame_rows)
+
+
+def _fmt_mono(m: dict) -> str:
+    return f"n {m['n']}, tp {m['tp']}, fp {m['fp']}, fn {m['fn']}, precision {m['precision']}, recall {m['recall']}"
+
+
+def _colour_audit(args) -> int:
+    from shoebox.evals import colour
+
+    try:
+        recs, frows = _colour_audit_inputs(args, _cfg())
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval colour-audit: {e}", file=sys.stderr)
+        return 2
+    rep = colour.audit(recs, frows)
+    sc = rep["frame"]
+    print(f"{rep['records']} audit records, {rep['n_trusted']} with a high/medium colour reference: "
+          f"{rep['predicted_mono']} frame-mono, {rep['reference_mono']} reference mono")
+    print(f"mono overall: {_fmt_mono(sc['overall'])}")
+    for s in colour.STRATA:
+        print(f"mono {s}: {_fmt_mono(sc['per_stratum'][s])}")
+    print(f"mono lenient (toned = mono): {_fmt_mono(sc['lenient_toned'])}")
+    print("confusion (guess -> reference counts): " + json.dumps(sc["confusion"], sort_keys=True))
+    return 0
+
+
+def _colour_draw(args) -> int:
+    from shoebox import derive, privacy
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import colour, judge, search
+
+    cfg = _cfg()
+    try:
+        frame_rows = colour.read_frame(_frame(cfg, args.frame))
+        derived = {a for a, r in derive.load_index(cfg, args.profile).items() if r.get("status") == "ok"}
+        exclude = {r["asset_id"] for r in search.read_jsonl(args.sets_dir / args.audit_set / ca.SAMPLE_FILE)}
+        items, meta = colour.draw(frame_rows, derived, exclude, cfg, args.seed, args.n_mono, args.n_near, args.floor)
+    except privacy.PrivacyError as e:
+        print(f"shoebox eval colour-draw: privacy check refused the draw: {e}", file=sys.stderr)
+        return 1
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval colour-draw: {e}", file=sys.stderr)
+        return 2
+    out = args.sets_dir / colour.SET_NAME
+    out.mkdir(parents=True, exist_ok=True)
+    judge.write_jsonl(out / "items.jsonl", items)
+    (out / colour.SAMPLE_META).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
+    for b, m in meta["buckets"].items():
+        print(f"{b}: drawn {m['drawn']} of available {m['available']}"
+              + (f"; shortfall below floor {args.floor}: {m['shortfall']}" if m["shortfall"] else ""))
+    print(f"wrote {out / 'items.jsonl'}: {meta['n']} items ({meta['splits']}); skipped {meta['skipped']}")
+    return 0
+
+
+def _colour_rows(args, cfg, split: str):
+    from shoebox.evals import colour, search
+
+    frame_rows = colour.read_frame(_frame(cfg, args.frame))
+    items = [it for it in search.read_jsonl(args.sets_dir / colour.SET_NAME / "items.jsonl")
+             if it.get("split") == split]
+    refs = colour.load_labels(cfg, colour.REFERENCE_CANDIDATE)
+    gem = colour.load_labels(cfg, colour.GEMINI_CANDIDATE)
+    labelled = sum((refs.get(it["asset_id"]) or {}).get("status") == "ok" for it in items)
+    return (colour.labelled_rows(items, colour.rows_for(items, frame_rows), refs, gem), (labelled, len(items)),
+            frame_rows, gem)
+
+
+def _colour_tune(args) -> int:
+    from shoebox.evals import colour
+
+    cfg = _cfg()
+    try:
+        gate = _mono_gate(args.gates)
+        rows, (_lab, n_items), frame_rows, gem = _colour_rows(args, cfg, "dev")
+        n_audit = 0
+        if args.with_audit:
+            recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
+            extra = colour.audit_rows(recs, frows, gem)
+            n_audit, rows = len(extra), rows + extra
+        if not rows:
+            raise ValueError(f"no dev rows with a trusted {colour.REFERENCE_CANDIDATE} colour_class yet")
+        tuned = colour.tune(rows, gate, args.min_pred)
+        doc = colour.freeze(args.frozen, tuned, {"dev_items": n_items, "with_audit_sample": args.with_audit,
+                                                 "audit_rows": n_audit, "grid": tuned["grid"],
+                                                 "combination": tuned["combination"]})
+    except (ValueError, FileNotFoundError, KeyError) as e:
+        print(f"shoebox eval colour-tune: {e}", file=sys.stderr)
+        return 2
+    for g in tuned["grid"]:
+        print(f"mono_c95 {g['mono_c95']}: feasible {g['feasible']}, precision {g['precision']}, "
+              f"recall {g['recall']}, predicted {g['predicted']}, strata {g['strata']}")
+    print(f"froze {args.frozen}: mono_c95 {doc['thresholds']['mono_c95']}, hash {doc['hash']}, {len(rows)} dev rows"
+          f"{f' incl. {n_audit} audit-sample rows' if args.with_audit else ''}; strata {doc['dev_strata']}")
+    return 0
+
+
+def _colour_test(args) -> int:
+    from datetime import date
+
+    from shoebox.evals import colour
+
+    cfg = _cfg()
+    day = args.date or date.today().isoformat()
+    try:
+        gate = _mono_gate(args.gates)
+        _t, doc = colour.load_frozen(args.frozen)
+        rows, cov, frame_rows, _gem = _colour_rows(args, cfg, "test")
+        try:
+            recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
+            audit = colour.audit(recs, frows)
+        except (ValueError, FileNotFoundError) as e:
+            audit = {"unavailable": str(e)[:200]}
+        cj = args.caption_audit_json or max(args.out_dir.glob("*_eval-1k-caption-audit.json"),
+                                            default=args.out_dir / "missing.json")
+        dev = {k: doc.get(k) for k in ("grid", "dev_strata", "dev_n", "with_audit_sample", "audit_rows",
+                                        "combination")}
+        rep = colour.test_report(rows, args.frozen, args.out_dir, day, gate, args.min_pred, args.force_rescore,
+                                 audit, dev, colour.comparisons(cj), cov)
+    except (colour.AlreadyScored, colour.NotReady) as e:
+        print(f"shoebox eval colour-test: {e}", file=sys.stderr)
+        return 1
+    except (ValueError, FileNotFoundError, KeyError) as e:
+        print(f"shoebox eval colour-test: {e}", file=sys.stderr)
+        return 2
+    for s in colour.STRATA:
+        m = rep["strata"][s]
+        print(f"test {s}: {_fmt_mono(m)}, {m['status']}, filter {rep['filter'][s]}")
+    print(f"wrote {args.out_dir / rep['report']}.md/.json (frozen hash {rep['frozen_hash']})")
+    return 0
 
 
 def _register_review(esub, sets: Path) -> None:
