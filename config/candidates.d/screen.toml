@@ -12,7 +12,7 @@ model_id = "nsfw-coreml-v1"   # store dir: results/screen/nsfw-coreml-v1/<params
 model = "opennsfw2-v1"
 package = "opennsfw2-v1-float32.mlpackage"
 package_sha256 = "6b935854cc5a3e8c1153377c2020bdf6b46127846dd5386859192f3994bc2d70"
-threshold = 0.2               # sensitive when nsfw score >= threshold
+threshold = 0.7               # sensitive when nsfw score >= threshold. Owner 2026-10-11: 0.2 flagged 48 of ~2,200, all false positives (incl. b&w landscapes)
 compute_units = "ALL"
 preprocess = "yahoo-v1"       # 256x256 bilinear, JPEG q75 re-encode, centre 224, BGR minus VGG means
 runner = "screen-v1"

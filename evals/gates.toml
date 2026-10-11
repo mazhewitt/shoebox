@@ -67,3 +67,10 @@ order = [
 library_images = 71600
 price_basis = "gemini-medium-v2 measured USD per image on eval-1k; batch = 50% of standard (to be re-checked on the pricing page on the day)"
 local_basis = "img/h measured on the M5 Max laptop for each local arm on eval-1k"
+
+[screen_nsfw]
+# Local nudity screen (add-pipeline-foundations, design D2): candidate nsfw-coreml-v1, sensitive when score >= threshold.
+candidate = "nsfw-coreml-v1"
+threshold = 0.7
+set_on = "2026-10-11"
+basis = "owner review of the first 48 flags at 0.2: all 48 false positives (incl. b&w landscapes); owner chose 0.7. Misses are checked by the seeded 200 unflagged sample in the full-library review (9.4)."

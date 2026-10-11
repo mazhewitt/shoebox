@@ -18,9 +18,9 @@ MEANS_BGR = np.array([104.0, 117.0, 123.0])
 # asset id -> (RGB colour of its synthetic derived JPEG, the stub's nsfw score for that colour)
 ASSETS = {
     "a" * 64: ((230, 20, 20), 0.05),     # well below
-    "b" * 64: ((20, 30, 230), 0.1999),   # just below 0.2
-    "c" * 64: ((20, 220, 30), 0.2),      # exactly the threshold
-    "d" * 64: ((240, 240, 30), 0.2001),  # just above
+    "b" * 64: ((20, 30, 230), 0.6999),   # just below 0.7
+    "c" * 64: ((20, 220, 30), 0.7),      # exactly the threshold
+    "d" * 64: ((240, 240, 30), 0.7001),  # just above
     "e" * 64: ((30, 220, 220), 0.95),    # far above
 }
 
@@ -66,7 +66,7 @@ def no_network(monkeypatch):
 def test_candidate_resolves_with_hashed_threshold():
     res = runners.resolve("nsfw-coreml-v1")
     assert res.cand["runtime"] == "screen" and res.kind == "screen"
-    assert res.params["threshold"] == 0.2 and res.params["compute_units"] == "ALL"
+    assert res.params["threshold"] == 0.7 and res.params["compute_units"] == "ALL"
     assert res.params["package_sha256"] == "6b935854cc5a3e8c1153377c2020bdf6b46127846dd5386859192f3994bc2d70"
     assert res.params["profile"]["name"] == "infer-v1"
     assert res.store_dir(Config(shoebox_root=Path("/x"), sources={})) == Path(
@@ -87,7 +87,7 @@ def test_threshold_boundary_and_boolean_only_records(world, monkeypatch):
         assert set(r) == {"asset_id", "model_id", "params_hash", "status", "sensitive"}
         assert r["status"] == "ok"
     raw = "".join(p.read_text() for p in res.store_dir(world).glob("*"))
-    assert "0.2001" not in raw and "0.95" not in raw and "score" not in raw
+    assert "0.7001" not in raw and "0.95" not in raw and "score" not in raw
 
 
 def test_flags_once_and_rerun_is_a_cache_hit(world):
@@ -113,7 +113,7 @@ def test_rerun_never_loads_the_model(world, monkeypatch):
 def test_threshold_change_rescreens_under_new_key(world):
     res = runners.resolve("nsfw-coreml-v1")
     screen.screen_items(res, items(), world, model=StubModel())
-    cand = {k: v for k, v in res.cand.items() if k not in ("name", "model_id", "params_hash")} | {"threshold": 0.5}
+    cand = {k: v for k, v in res.cand.items() if k not in ("name", "model_id", "params_hash")} | {"threshold": 0.9}
     res2 = runners._resolve_cand("nsfw-coreml-v1", cand, runners.CONFIG_DIR)
     assert res2.params_hash != res.params_hash
     model = StubModel()
