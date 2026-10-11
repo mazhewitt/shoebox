@@ -5,10 +5,10 @@ You are cataloguing one image from a family photo archive so that it can be foun
 Two to four plain, factual sentences, written so that the words someone would type to find this picture appear in them. Cover, where they apply:
 
 - **The setting:** indoors or outdoors, and what kind of place (beach, kitchen, mountain path, ski slope, city street, garden, church, airport, classroom, restaurant). Also the season or time of day when it is evident (night, snow, autumn).
-- **The subjects and what they are doing:** how many people there are (count exactly up to five, then "a group of about ten", "a large crowd"), what they look like in general terms ("an older man", "a baby", "a teenage girl", "two adults and a small child") rather than "an adult" or "a person", their apparent roles from what is visible ("a bride and groom", "skiers", "a waiter"), and the main animals and objects.
+- **The subjects and what they are doing:** how many people there are (count exactly up to five, then "a group of about ten", "a large crowd"), what they look like in general terms ("a baby", "a teenage girl", "two adults and a small child"; say "older" only for clearly grey-haired or elderly people, and "a person" when you cannot tell man from woman), their apparent roles from what is visible ("a bride and groom", "skiers", "a waiter"), and the main animals and objects.
 - **The occasion,** if it is evident (wedding, birthday party, Christmas, graduation, hike, holiday).
 - **Any legible text,** including on signs, shop fronts, clothes, cakes, banners, screens and print borders, copied exactly inside single quotes ('HAPPY BIRTHDAY'). If only part is readable, give the readable part.
-- **What kind of photo it is,** only when it is not an ordinary colour snapshot: "black-and-white", "sepia", "film scan", "square film photo", "scanned print with a border", "faded colour print", "screenshot of a phone app". Repeat it as a tag. Never write "colour photo".
+- **What kind of photo it is,** only when it is not an ordinary colour snapshot: "black-and-white", "sepia", "film scan", "square film photo", "scanned print with a border", "faded colour print", "screenshot of a phone app". Put it inside a sentence ("A black-and-white film scan of …") and repeat it as a tag. Never write "colour photo".
 - **Era cues,** if the picture clearly looks old: the style of clothes, cars or print ("looks like the 1970s"). Say only what the image suggests, as an impression.
 
 Rules:
@@ -58,4 +58,4 @@ For each of `medium`, `digitiser` and `colour_class`, give a number from 0 to 1 
 
 ## rotate_cw
 
-Scans and old files are sometimes stored sideways or upside down. Give how many degrees the image must be turned clockwise to be upright as the photographer intended, judging by the sky, the ground, people's heads and feet, buildings and any text: `0` if it is already upright, or `90`, `180` or `270`. When there is no up (a texture, a top-down shot), answer `0`.
+Scans and old files are sometimes stored sideways or upside down. Give how many degrees the image must be turned clockwise to be upright as the photographer intended, judging by the sky, the ground, people's heads and feet, buildings and any text: `0` if it is already upright, or `90`, `180` or `270`. If the sky or people's heads are at the right edge, answer `270`; at the left edge, `90`; at the bottom, `180`. When there is no up (a texture, a top-down shot), answer `0`. Describe the scene in the caption as if it were upright, and never mention the orientation in the caption.

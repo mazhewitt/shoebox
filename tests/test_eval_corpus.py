@@ -179,3 +179,12 @@ def test_too_few_candidates_refused(env, tmp_path):
     _cfg, _sets, items = env
     with pytest.raises(ValueError, match="only"):
         run(env, n=23, screen=screen_all(tmp_path / "s.jsonl", items))
+
+
+def test_order_is_stable_when_items_are_removed():
+    from shoebox.evals import corpus
+    ids = [f"{i:064x}" for i in range(200)]
+    full = corpus.order(ids, 7)
+    removed = set(full[3:6]) | {full[50]}
+    assert corpus.order([a for a in ids if a not in removed], 7) == [a for a in full if a not in removed]
+    assert corpus.order(ids, 8) != full

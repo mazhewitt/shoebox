@@ -6,12 +6,11 @@ item must pass the privacy rules for both hosted providers, and a model/owner sc
 `exclude` verdicts are substituted by the next eligible candidate. Same inputs give byte-identical outputs.
 """
 
+import hashlib
 import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import numpy as np
 
 from shoebox import privacy, store
 from shoebox.config import Config, check_write_location
@@ -70,8 +69,10 @@ def rule_reasons(items: list[dict], cfg: Config, others: list[dict], never) -> d
 
 
 def order(asset_ids: list[str], seed: int) -> list[str]:
-    ids = sorted(asset_ids)
-    return [ids[int(i)] for i in np.random.default_rng(seed).permutation(len(ids))]
+    """Seeded order by sha256(seed:asset_id). An item's place doesn't depend on which other items are present,
+    so adding a never-send entry or a held-back folder removes items without reshuffling the rest (and the
+    screen verdicts already given still cover the front of the order)."""
+    return sorted(asset_ids, key=lambda a: (hashlib.sha256(f"{seed}:{a}".encode()).hexdigest(), a))
 
 
 def _jsonl(rows: list[dict]) -> str:
@@ -161,9 +162,20 @@ def draw_corpus(cfg: Config, base_dir: Path, out_dir: Path, labels: dict[str, di
     queue = out_dir / QUEUE_FILE
 
     if stopped_at is not None or unscreened_targets:
-        rest = [a for a in walk[stopped_at:] if not group_out(a) and a not in screen] if stopped_at is not None else []
-        want = needed - len(taken) + buffer
-        q_ids = [*unscreened_targets, *rest[:want]]
+        # Queue only what is unscreened, walking on past screened items: screened-ok ones further on still count
+        # towards `needed`, so a gap in the verdicts doesn't send the whole remainder back for screening.
+        want, ok_ahead, rest = needed - len(taken) + buffer, 0, []
+        for a in walk[stopped_at:] if stopped_at is not None else []:
+            if ok_ahead + len(rest) >= want:
+                break
+            if group_out(a):
+                continue
+            v = screen.get(a)
+            if v is None:
+                rest.append(a)
+            elif v["verdict"] == "ok":
+                ok_ahead += 1
+        q_ids = [*unscreened_targets, *rest]
         rows = [{k: base[a].get(k) for k in QUEUE_KEYS[:-1]} | {"role": "target" if a in targets else "corpus"}
                 for a in q_ids]
         _write(queue, _jsonl(rows))
