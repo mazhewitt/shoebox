@@ -2,7 +2,8 @@
 
 `evals/quarantine.jsonl`, append-only, the latest row per asset_id wins. A row is `asset_id`, `screen`
 (`nudity` | `document`), `flagged_at`, `verdict` (`pending` when flagged), and once reviewed `verdict_by`
-and `verdict_at`. Asset hashes only, never paths or images.
+and `verdict_at`; a row a same-pixel copy inherited from an already-ruled member (`flag(..., groups=)`) also
+names that member in `inherited_from`. Asset hashes only, never paths or images.
 
 A verdict applies to the asset's group: the same asset_id (byte copies, in any source), assets with the
 same pixel hash, and any further grouping a caller supplies. The most restrictive verdict in the group wins.
@@ -62,21 +63,43 @@ def _append(path: Path, rows: list[dict]) -> None:
         os.fsync(f.fileno())
 
 
-def flag(asset_ids: Iterable[str], screen: str, path: Path | None = None, now: str | None = None) -> int:
+def _members_fn(groups: "Groups | None") -> Callable[[str], Iterable[str]]:
+    return (lambda a: ()) if groups is None else groups if callable(groups) else (lambda a: groups.get(a, ()))
+
+
+def flag(asset_ids: Iterable[str], screen: str, path: Path | None = None, now: str | None = None,
+         groups: "Groups | None" = None) -> int:
     """Queue assets as `pending`. An asset that already has a row (any verdict) is not re-queued.
-    Returns the number of rows appended."""
+
+    `groups` (asset_id -> its same-pixel copies, at least) lets a new asset inherit its group's ruling: if any
+    member already has an owner verdict (`include`, `private`, `exclude`), the asset gets the most restrictive
+    of those, with `inherited_from` naming that member, and is not queued for review (the same pixels were
+    already ruled; spec: "Exclude never re-flags", "Include releases the asset").
+    Returns the number of `pending` rows appended (assets queued for review)."""
     if screen not in SCREENS:
         raise ValueError(f"unknown screen {screen!r}; expected one of {SCREENS}")
     path, now = _path(path), now or _now()
-    seen = set(load(path))
-    rows = []
+    existing = load(path)
+    members = _members_fn(groups)
+    seen = set(existing)
+    rows, queued = [], 0
     for a in asset_ids:
-        if a not in seen:
-            seen.add(a)
+        if a in seen:
+            continue
+        seen.add(a)
+        ruled = [existing[m] for m in sorted(set(members(a)) - {a})
+                 if m in existing and existing[m].get("verdict") in ("include", "private", "exclude")]
+        if ruled:
+            src = max(ruled, key=lambda r: RESTRICTIVENESS[r["verdict"]])
+            rows.append({"asset_id": a, "screen": screen, "flagged_at": now, "verdict": src["verdict"],
+                         "verdict_by": src.get("verdict_by"), "verdict_at": now,
+                         "inherited_from": src["asset_id"]})
+        else:
             rows.append({"asset_id": a, "screen": screen, "flagged_at": now, "verdict": "pending"})
+            queued += 1
     if rows:
         _append(path, rows)
-    return len(rows)
+    return queued
 
 
 def record_verdict(asset_id: str, verdict: str, by: str, path: Path | None = None, now: str | None = None) -> dict:
@@ -108,9 +131,7 @@ class Checker:
     _members: Callable[[str], Iterable[str]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
-        g = self.groups
-        fn = (lambda a: ()) if g is None else g if callable(g) else (lambda a: g.get(a, ()))
-        object.__setattr__(self, "_members", fn)
+        object.__setattr__(self, "_members", _members_fn(self.groups))
 
     @classmethod
     def load(cls, path: Path | None = None, groups: Groups | None = None) -> "Checker":

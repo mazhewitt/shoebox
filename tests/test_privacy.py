@@ -399,8 +399,25 @@ def test_cli_items_report_matches_runner_rules(tmp_path, capsys, monkeypatch):
     )
     out = capsys.readouterr().out
     assert "items: 1 allowed, 1 skipped (1 copy_restricted)" in out
-    assert f"skip  {'1' * 64} importantfiles Pictures/a.jpg: copy_restricted" in out
-    assert "WARN  never-send entry 'Kyra/**' matched no item" in out
+    assert "refused copy_restricted: 1" in out and "refused by source kyra: 1" in out
+    assert "WARN  1 never-send entry matched no item" in out
+    # counts only: no asset id, relpath or never-send entry is printed
+    for needle in ("1" * 64, "2" * 64, "Pictures", "a.jpg", "Kyra/**", "skip "):
+        assert needle not in out
+
+
+def test_cli_items_privacy_error_exits_1_cleanly(tmp_path, capsys, monkeypatch):
+    from shoebox import copies
+
+    monkeypatch.setattr(privacy, "SETS_DIR", tmp_path / "nosets")
+    monkeypatch.setattr(privacy, "NEVER_SEND_PATH", tmp_path / "none.txt")
+    monkeypatch.setattr(config, "load", lambda *a, **k: cfg_held(tmp_path))
+    monkeypatch.setattr(privacy, "default_copy_index", lambda c: copies.CopyIndex.build([], {}, ("newsrc",)))
+    items = _write(tmp_path / "items.jsonl", json.dumps(item()) + "\n")
+    path = write_checklist(tmp_path / "c.toml")
+    assert main(["privacy", "check", "--checklist", str(path), "--items", str(items)]) == 1
+    cap = capsys.readouterr()
+    assert "newsrc" in cap.err and AID not in cap.out + cap.err and "Pictures" not in cap.out + cap.err
 
 
 # ---------- held-back paths and per-provider consent (design D14) ----------
@@ -581,6 +598,94 @@ def test_default_copy_index_loads_frames_and_fails_closed(tmp_path, monkeypatch)
     cfg = cfg_sources(tmp_path)  # no frames written under shoebox_root
     with pytest.raises(privacy.PrivacyError, match="importantfiles, jude"):
         privacy.filter_items([item()], cfg, privacy.NeverSend())
+
+
+def _frame(cfg, day, rows):
+    """A real frame under shoebox_root: (source, relpath, asset_id) image rows."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    d = cfg.shoebox_root / "frame"
+    d.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table({"source": [r[0] for r in rows], "relpath": [r[1] for r in rows],
+                             "asset_id": [r[2] for r in rows], "kind": ["image"] * len(rows)}),
+                   d / f"frame-{day}.parquet")
+
+
+def _pixels(cfg, recs):
+    from shoebox import store
+
+    for a, h in recs.items():
+        store.append(cfg, {"asset_id": a, "model_id": "pixelhash-v1", "params_hash": "p1", "status": "ok",
+                           "pixel_hash": h}, kind="pixelhash")
+
+
+@pytest.mark.real_copy_index
+def test_default_copy_index_from_real_frame_refuses_copy_in_non_consented_source(tmp_path, monkeypatch):
+    from shoebox import quarantine
+
+    monkeypatch.setattr(quarantine, "QUARANTINE_PATH", tmp_path / "q.jsonl")
+    cfg = cfg_sources(tmp_path)
+    _frame(cfg, "2026-10-10", [("importantfiles", "Pictures/a.jpg", AID), ("jude", "Camera/a.jpg", AID),
+                               ("importantfiles", "Pictures/b.jpg", B64)])
+    _pixels(cfg, {AID: "px-a", B64: "px-b"})
+    elig = privacy.filter_items([item(), item(B64, relpath="Pictures/b.jpg")], cfg, privacy.NeverSend())
+    assert [i["asset_id"] for i in elig.allowed] == [B64]
+    [s] = elig.skipped
+    assert (s.asset_id, s.reason, s.restricting_source) == (AID, "copy_restricted", "jude")
+
+
+def test_unhashed_image_at_restricted_location_fails_closed(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    unhashed = (("jude", "Camera/x.jpg", B64), ("jude", "Camera/y.jpg", C64),
+                ("importantfiles", "Pictures/held/z.jpg", "d" * 64))
+    idx = copies_build([("importantfiles", "Pictures/a.jpg", AID)], unhashed=unhashed,
+                       undecodable=(("jude", "Camera/bad.tif", "e" * 64),))
+    with pytest.raises(privacy.PrivacyError) as e:
+        privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=idx)
+    msg = str(e.value)
+    assert "2 in jude" in msg and "1 in importantfiles" in msg and "1 undecodable" in msg
+    assert "Camera" not in msg and B64 not in msg
+
+
+def test_unhashed_image_at_consented_location_does_not_block(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    idx = copies_build([("importantfiles", "Pictures/a.jpg", AID)],
+                       unhashed=(("importantfiles", "Pictures/b.jpg", B64),),
+                       undecodable=(("jude", "Camera/bad.tif", "e" * 64),))  # undecodable: can't be compared
+    assert privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=idx).allowed == [item()]
+
+
+def test_unhashed_never_send_location_fails_closed(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    never = privacy.load_never_send(_write(tmp_path / "ns.txt", "Scans/**\n"))
+    idx = copies_build([], unhashed=(("importantfiles", "Scans/b.jpg", B64),))
+    with pytest.raises(privacy.PrivacyError, match="1 in importantfiles"):
+        privacy.filter_items([item()], cfg, never, copies=idx)
+
+
+def test_pending_sibling_in_others_quarantines_the_canonical(tmp_path):
+    """Capture: JPEG canonical sent, RAW sibling passed in `others` with the same group_id; RAW pending."""
+    cfg = cfg_sources(tmp_path)
+    jpeg = item(AID, relpath="Pictures/a.jpg", group_id="cap1")
+    raw = item(B64, relpath="Pictures/a.CR2", group_id="cap1")
+    chk = qcheck(tmp_path, pending=[B64])
+    [s] = privacy.filter_items([jpeg], cfg, privacy.NeverSend(), others=[raw], copies=index([]),
+                               quarantine=chk).skipped
+    assert (s.asset_id, s.reason) == (AID, "quarantined")
+    # and through the sibling's same-pixel copy
+    (tmp_path / "x").mkdir()
+    chk2 = qcheck(tmp_path / "x", pending=[C64])
+    idx = index([], pixels={B64: "px", C64: "px"})
+    [s] = privacy.filter_items([jpeg], cfg, privacy.NeverSend(), others=[raw], copies=idx,
+                               quarantine=chk2).skipped
+    assert s.reason == "quarantined"
+
+
+def copies_build(locs, unhashed=(), undecodable=()):
+    from shoebox import copies
+
+    return copies.CopyIndex.build(locs, {}, (), unhashed=unhashed, undecodable=undecodable)
 
 
 def test_same_pixel_copy_of_pending_asset_is_quarantined(tmp_path):

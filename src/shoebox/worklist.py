@@ -8,10 +8,12 @@ Queue per capture, in this order:
   `exclude`, incl. via a same-pixel copy). Local captioning refuses these too, so they wait for a verdict.
 - `not_derived`: the canonical asset has no `ok` record in the derive index of the profile (videos
   included): nothing to caption yet. Counted, never sent.
+- `unscreened`: the canonical asset has no final `ok` screen record (spec content-screen). Neither hosted
+  nor local captioning may take it until `shoebox screen run` has screened it. Counted, never sent.
 - `local`: some member or linked asset is refused for the provider (`privacy.filter_items`, which
   applies the copy index and the quarantine): the capture goes to the local 12B queue.
 - `hosted`: every member and linked asset is eligible and the canonical image is derived.
-`eligible` is the privacy verdict alone, so a not_derived capture can still be `eligible: true`.
+`eligible` is the privacy verdict alone, so a not_derived or unscreened capture can still be `eligible: true`.
 """
 
 import json
@@ -24,7 +26,7 @@ from pathlib import Path
 from shoebox import config, copies, dedup, privacy, quarantine
 from shoebox.dedup.groups import media_rows
 
-QUEUES = ("hosted", "local", "held", "not_derived")
+QUEUES = ("hosted", "local", "held", "not_derived", "unscreened")
 DEFAULT_BATCH_DISCOUNT = 0.5
 
 
@@ -70,8 +72,10 @@ def frame_refusals(cfg: config.Config, provider: str = "gemini") -> dict:
     """Counts only: every frame row with an asset id, run through `privacy.filter_items` for `provider`."""
     rows = load_inputs(cfg).rows
     items = _items(rows)
-    elig = privacy.filter_items(items, cfg, privacy.load_never_send(), provider=provider,
-                                copies=copies.load(cfg), quarantine=quarantine.Checker.load())
+    never, index = privacy.load_never_send(), copies.load(cfg)
+    cov = privacy.coverage(index, cfg, never, provider)
+    elig = privacy.filter_items(items, cfg, never, provider=provider, copies=index,
+                                quarantine=quarantine.Checker.load(), check_coverage=False)
     return {
         "items": len(items),
         "assets": len({it["asset_id"] for it in items}),
@@ -80,6 +84,8 @@ def frame_refusals(cfg: config.Config, provider: str = "gemini") -> dict:
         "by_reason": dict(sorted(Counter(s.reason for s in elig.skipped).items())),
         "by_source": dict(sorted(Counter(_by_source(s) for s in elig.skipped).items(),
                                  key=lambda kv: str(kv[0]))),
+        "uncovered": cov.uncovered,  # restricted image rows with no pixel hash: hosted sends refused
+        "undecodable": cov.undecodable,
     }
 
 
@@ -98,16 +104,19 @@ def build(cfg: config.Config, provider: str = "gemini", profile: str = "infer-v1
     index = copies.load(cfg)
     never = privacy.load_never_send()
     checker = quarantine.Checker.load()
+    gate = privacy.default_screen_index(cfg)
 
     def consented(source: str, relpath: str) -> bool:
         return privacy._own_restriction({"source": source, "relpath": relpath}, cfg, never, provider) is None
 
     caps = dedup.captures(inp.rows, inp.pixels, consented)
     media = media_rows(inp.rows)
-    elig = privacy.filter_items(_items(media), cfg, never, provider=provider, copies=index, quarantine=checker)
+    elig = privacy.filter_items(_items(media), cfg, never, provider=provider, copies=index, quarantine=checker,
+                                screened=gate)
     refused: dict[str, privacy.Skip] = {}
     for s in elig.skipped:
-        refused.setdefault(s.asset_id, s)
+        if s.reason != "unscreened":  # checked last in filter_items: the asset is otherwise eligible
+            refused.setdefault(s.asset_id, s)
     derived = {a for a, r in derive.load_index(cfg, profile).items() if r.get("status") == "ok"}
     kind = {r["asset_id"]: r.get("kind") for r in media}
 
@@ -124,6 +133,8 @@ def build(cfg: config.Config, provider: str = "gemini", profile: str = "infer-v1
             queue = "held"
         elif kind.get(canon) != "image" or canon not in derived:
             queue = "not_derived"
+        elif not gate.screened(canon):
+            queue = "unscreened"
         elif skips:
             queue = "local"
         else:
@@ -209,6 +220,11 @@ def batch_usd(cand: dict, n: int) -> tuple[float, str | None]:
 def summary_md(wl: Worklist, name: str, candidate: str, cand: dict) -> str:
     """Counts and USD only: no paths, no asset or capture ids."""
     n, h = wl.counts, wl.header
+    try:
+        privacy.require_current_price(cand)
+        expired = None
+    except privacy.PrivacyError as e:
+        expired = str(e)
     usd, note = batch_usd(cand, n["hosted"])
     discount = cand.get("price_batch_discount", DEFAULT_BATCH_DISCOUNT)
     lines = [
@@ -222,13 +238,16 @@ def summary_md(wl: Worklist, name: str, candidate: str, cand: dict) -> str:
         "",
         f"files {n['files']} → assets {n['assets']} → captures {n['captures']} → eligible {n['eligible']}",
         "",
-        f"queues: hosted {n['hosted']}, local {n['local']}, held {n['held']}, not_derived {n['not_derived']}",
+        (f"queues: hosted {n['hosted']}, local {n['local']}, held {n['held']}, not_derived {n['not_derived']}, "
+         f"unscreened {n['unscreened']}"),
         "",
         "refusals by reason: " + (", ".join(f"{k} {v}" for k, v in n["refused_by_reason"].items()) or "none"),
         "",
         "## Cost",
         "",
-        (f"${usd:.4f} for {n['hosted']} hosted capture(s) with {candidate} at batch price "
+        (f"No quote for {n['hosted']} hosted capture(s) with {candidate}: price expired or unknown ({expired})."
+         if expired else
+         f"${usd:.4f} for {n['hosted']} hosted capture(s) with {candidate} at batch price "
          f"(discount {discount}; price_date {cand.get('price_date')})."),
     ]
     if note:

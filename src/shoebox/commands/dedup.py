@@ -26,7 +26,8 @@ def register(sub) -> None:
     w = dsub.add_parser("worklist", help="one row per capture -> <shoebox_root>/worklists/<name>.jsonl, "
                         "summary -> evals/runs/<date>_worklist-<name>.md")
     w.add_argument("--provider", choices=("gemini", "claude"), default="gemini")
-    w.add_argument("--candidate", default="gemini-medium-v2", help="candidate whose prices re-quote the cost")
+    w.add_argument("--candidate", default="gemini-batch-v2",
+                   help="candidate whose prices (incl. price_batch_discount) re-quote the cost")
     w.add_argument("--name", default=None, help="default: <date>_<provider>")
     w.add_argument("--profile", default="infer-v1", help="derive profile (pixel hashes, derived images)")
     w.add_argument("--runs-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
@@ -81,6 +82,6 @@ def cmd_worklist(args) -> int:
     md.write_text(worklist.summary_md(wl, name, args.candidate, cand))
     n = wl.counts
     print(f"{n['captures']} capture(s): hosted {n['hosted']}, local {n['local']}, held {n['held']}, "
-          f"not_derived {n['not_derived']} -> {path}")
+          f"not_derived {n['not_derived']}, unscreened {n['unscreened']} -> {path}")
     print(f"summary -> {md}")
     return 0

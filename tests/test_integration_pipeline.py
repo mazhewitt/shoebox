@@ -107,6 +107,15 @@ def test_pipeline_end_to_end(world):
         assert ids.bytes_id((cfg.shoebox_root / rec["path"]).read_bytes()) == rec["derived_blake3"]
         assert max(rec["width"], rec["height"]) <= 2048
 
+    # screen: the Core ML package isn't here, so write the ok records `shoebox screen run` would; the screen
+    # gate refuses every later stage for an unscreened asset
+    from shoebox import runners, screened
+
+    sres = runners.resolve(screened.SCREEN_CANDIDATE)
+    for aid in ok_ids:
+        store.append(cfg, {"asset_id": aid, "model_id": sres.model_id, "params_hash": sres.params_hash,
+                           "status": "ok", "sensitive": False}, sres.kind)
+
     # label run: rules-v1 fills the keyed store; the item without a derived image is skipped, not an error
     run = shoebox(w, "label", "run", "--candidate", "rules-v1", "--items", w["items_path"])
     assert "ok 3" in run.stdout and "skipped 1" in run.stdout, run.stdout

@@ -45,7 +45,8 @@ def _ingest(args) -> int:
         print(f"shoebox screen ingest: {e}", file=sys.stderr)
         return 2
     parts = ", ".join(f"{n} {v}" for v, n in sorted(res.counts.items()))
-    print(f"recorded owner verdicts: {parts or 'none'}; {res.group_members} further group members ruled")
+    print(f"recorded owner verdicts: {parts or 'none'}; {res.group_members} further group members ruled; "
+          f"{res.kept_stricter} kept their more restrictive verdict")
     if res.thumbnails_deleted:
         print("review thumbnails deleted")
     else:

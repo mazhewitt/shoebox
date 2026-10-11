@@ -360,12 +360,25 @@ def test_build_data_leaves_out_quarantined_and_counts_them(tmp_path):
     quarantine.flag([AID1], "nudity")
     data = build_data(cfg, items, labels)
     assert [r["asset_id"] for r in data["items"]] == [AID2]
-    assert data["left_out"] == {"quarantined": 1}
+    assert data["left_out"] == {"quarantined": 1, "unscreened": 0}
     quarantine.record_verdict(AID1, "private", "owner")  # Claude may look at the sheet: private stays out
-    assert build_data(cfg, items, labels)["left_out"] == {"quarantined": 1}
+    assert build_data(cfg, items, labels)["left_out"] == {"quarantined": 1, "unscreened": 0}
     quarantine.record_verdict(AID1, "include", "owner")
     data = build_data(cfg, items, labels)
-    assert len(data["items"]) == 2 and data["left_out"] == {"quarantined": 0}
+    assert len(data["items"]) == 2 and data["left_out"] == {"quarantined": 0, "unscreened": 0}
+
+
+def test_build_data_leaves_out_asset_whose_same_pixel_copy_is_flagged(tmp_path, monkeypatch):
+    from shoebox import copies, privacy, quarantine
+
+    cfg, items, labels = setup(tmp_path)
+    other = "f" * 64  # not in the set; same pixels as AID1
+    monkeypatch.setattr(privacy, "default_copy_index",
+                        lambda c: copies.CopyIndex.build([], {AID1: "px", other: "px"}))
+    quarantine.flag([other], "nudity")
+    data = build_data(cfg, items, labels)
+    assert [r["asset_id"] for r in data["items"]] == [AID2]
+    assert data["left_out"]["quarantined"] == 1
 
 
 def test_sheet_command_reports_count_left_out(tmp_path, monkeypatch, capsys):

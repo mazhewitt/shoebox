@@ -14,6 +14,7 @@ from pathlib import Path
 
 from shoebox import config, copies
 from shoebox import quarantine as quarantine_mod
+from shoebox import screened as screened_mod
 
 EVALS_DIR = config.REPO_ROOT / "evals"
 CHECKLIST_PATH = EVALS_DIR / "privacy-checklist.toml"
@@ -272,7 +273,7 @@ class Skip:
     source: str | None
     relpath: str | None
     # never_send | unknown_source | no_consent (incl. provider not in hosted_models) | no_relpath
-    # | held_back | copy_restricted | quarantined
+    # | held_back | copy_restricted | quarantined | unscreened
     reason: str
     restricting_source: str | None = None  # copy_restricted: the source of the restricted copy
 
@@ -330,6 +331,41 @@ def default_copy_index(cfg: config.Config) -> "copies.CopyIndex":
     return copies.load(cfg)
 
 
+@dataclass(frozen=True)
+class Coverage:
+    """Image rows at restricted locations with no pixel hash, per source (`uncovered`), and those excluded
+    because their derive record is `error` (`undecodable`: can't be compared)."""
+    uncovered: dict[str, int]
+    undecodable: dict[str, int]
+
+    def message(self) -> str:
+        per = ", ".join(f"{n} in {s}" for s, n in sorted(self.uncovered.items()))
+        und = sum(self.undecodable.values())
+        return (f"{sum(self.uncovered.values())} image(s) at restricted locations have no pixel hash ({per}), so "
+                f"their same-pixel copies can't be seen; {und} undecodable (derive error) excluded from this "
+                "count. Run `shoebox derive` for them first; every hosted send is refused until then.")
+
+
+def coverage(index: "copies.CopyIndex", cfg: config.Config, never: NeverSend,
+             provider: str = "gemini") -> Coverage:
+    """Restricted (non-consented for `provider`, held back, never-send, unknown source) image rows of the copy
+    index that have no pixel hash. Restricted copies are found by pixel hash, so these are invisible."""
+
+    def per_source(locs) -> dict[str, int]:
+        out: Counter = Counter()
+        for s, r, a in locs:
+            if _own_restriction({"asset_id": a, "source": s, "relpath": r}, cfg, never, provider):
+                out[s] += 1
+        return dict(sorted(out.items()))
+
+    return Coverage(per_source(index.unhashed), per_source(index.undecodable))
+
+
+def default_screen_index(cfg: config.Config) -> "screened_mod.ScreenIndex":
+    """The screen gate `filter_items` (and the local stages) use when none is passed: the screen store."""
+    return screened_mod.load(cfg)
+
+
 def filter_items(
     items: list[dict],
     cfg: config.Config,
@@ -338,6 +374,8 @@ def filter_items(
     provider: str = "gemini",
     copies: "copies.CopyIndex | None" = None,
     quarantine: "quarantine_mod.Checker | None" = None,
+    screened: "screened_mod.ScreenIndex | None" = None,
+    check_coverage: bool = True,
 ) -> Eligibility:
     """Split items into allowed and skipped. A restriction on any copy (same asset_id) or sibling
     (same group_id, e.g. a raw/JPEG pair) restricts them all: eligible only if none is restricted.
@@ -347,9 +385,14 @@ def filter_items(
     `copies` is the cross-source copy index (design D5; default `default_copy_index(cfg)`, from the frames):
     a byte or same-pixel copy anywhere in any configured source that is itself restricted makes the item
     `copy_restricted`, naming that copy's source. If the index lists a configured source with no current
-    frame, this raises PrivacyError naming it (fail closed: no inventory must not pass as "no copies").
+    frame, this raises PrivacyError naming it (fail closed: no inventory must not pass as "no copies"). It
+    raises too if any image row at a restricted location has no pixel hash (`coverage`; rows that failed to
+    derive are excluded and counted), unless `check_coverage` is False (the frame-wide report counts them).
     `quarantine` (default: `evals/quarantine.jsonl`) refuses `pending`/`private`/`exclude` assets and
-    their same-pixel copies as `quarantined`."""
+    their same-pixel copies as `quarantined`. `screened` (default `default_screen_index(cfg)`) is the screen
+    gate (spec content-screen): an otherwise eligible asset without a final `ok` screen record under the
+    configured screen candidate is `unscreened`. It is checked last, so `unscreened` means "eligible once
+    screened"."""
     never = never if never is not None else load_never_send()
     index = copies if copies is not None else default_copy_index(cfg)
     if index.missing:
@@ -358,7 +401,12 @@ def filter_items(
             "(need a frame dated on or after the source's `added` date). Run `shoebox inventory` for "
             "them first; every hosted send is refused until then."
         )
+    if check_coverage:
+        cov = coverage(index, cfg, never, provider)
+        if cov.uncovered:
+            raise PrivacyError(cov.message())
     quarantine = quarantine if quarantine is not None else quarantine_mod.Checker.load()
+    screen_index = screened if screened is not None else default_screen_index(cfg)
     own = [_own_restriction(it, cfg, never, provider) for it in items]
     every = [
         *zip(items, own),
@@ -370,6 +418,13 @@ def filter_items(
             bad_ids.setdefault(it["asset_id"], it.get("source"))
         if r and it.get("group_id"):
             bad_groups.setdefault(it["group_id"], it.get("source"))
+    # A capture member refused by the quarantine (itself or a same-pixel copy) refuses its whole group,
+    # including when it is only in `others` (e.g. a pending RAW sibling of the JPEG being sent).
+    held_groups = {
+        it["group_id"] for it, _ in every
+        if it.get("group_id") and it.get("asset_id")
+        and quarantine.refused(it["asset_id"], "hosted", index.pixel_group(it["asset_id"]))
+    }
     restricted_copy: dict[tuple, str | None] = {}
 
     def copy_restriction(aid: str) -> str | None:
@@ -388,6 +443,8 @@ def filter_items(
         aid, by = it.get("asset_id"), None
         if reason is None and aid and quarantine.refused(aid, "hosted", index.pixel_group(aid)):
             reason = "quarantined"
+        if reason is None and (it.get("group_id") or None) in held_groups:
+            reason = "quarantined"
         if reason is None and aid in bad_ids:
             reason, by = "copy_restricted", bad_ids[aid]
         if reason is None and (it.get("group_id") or None) in bad_groups:
@@ -395,6 +452,8 @@ def filter_items(
         if reason is None and aid:
             by = copy_restriction(aid)
             reason = "copy_restricted" if by else None
+        if reason is None and not screen_index.screened(aid):
+            reason = "unscreened"
         if reason is None:
             allowed.append(it)
         else:
