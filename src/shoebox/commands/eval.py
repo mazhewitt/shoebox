@@ -77,6 +77,7 @@ def register(sub) -> None:
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
     r.set_defaults(func=_report)
     _register_search(esub)
+    _register_judge(esub)
 
 
 def _register_search(esub) -> None:
@@ -196,6 +197,115 @@ def _register_search(esub) -> None:
     r.add_argument("--date", default=None, help="run date YYYY-MM-DD (default today)")
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
     r.set_defaults(func=_search_report)
+
+
+def _register_judge(esub) -> None:
+    from shoebox.evals import judge
+
+    jp = esub.add_parser("judge-pool",
+                         help="pool every route's top-k per query plus its targets into evals/sets/<set>/pool-v1.jsonl")
+    jp.add_argument("--set", required=True, dest="set_name")
+    jp.add_argument("--queries", default="queries-v1.jsonl", help="query file in the set dir")
+    jp.add_argument("--k", type=int, default=10)
+    jp.add_argument("--split", choices=("dev", "test"), default=None)
+    jp.add_argument("--out", default=judge.POOL_FILE)
+    jp.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    jp.set_defaults(func=_judge_pool)
+
+    j = esub.add_parser("judge", help="grade pooled (query, photo) pairs 0/1/2 with the Gemini grid judge")
+    j.add_argument("--set", required=True, dest="set_name")
+    j.add_argument("--pool", default=judge.POOL_FILE, help="pool file in the set dir")
+    j.add_argument("--split", choices=("dev", "test"), default=None)
+    j.add_argument("--limit-queries", type=int, default=None)
+    j.add_argument("--max-usd", type=float, default=judge.DEFAULT_MAX_USD)
+    j.add_argument("--dry-run", action="store_true", help="print grids, images and estimated cost; call nothing")
+    j.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    j.set_defaults(func=_judge)
+
+    jq = esub.add_parser("judgments", help="export the judge's ok grades to evals/sets/<set>/judgments-v1.jsonl")
+    jq.add_argument("--set", required=True, dest="set_name")
+    jq.add_argument("--out", default=judge.JUDGMENTS_FILE)
+    jq.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    jq.set_defaults(func=_judgments)
+
+
+def _judge_cand(max_usd: float):
+    from shoebox import runners
+    from shoebox.evals import judge
+
+    return judge.judge_candidate(runners.load_candidates()[judge.BASE_CANDIDATE], max_usd)
+
+
+def _judge_pool(args) -> int:
+    from shoebox.evals import judge, search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        queries = search.read_jsonl(set_dir / args.queries)
+        rankings = judge.load_rankings(_cfg(), args.set_name, args.queries)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval judge-pool: {e}", file=sys.stderr)
+        return 2
+    rows = judge.build_pool(queries, rankings, args.k, args.split)
+    judge.write_jsonl(set_dir / args.out, rows)
+    s = judge.pool_summary(rows)
+    print(f"wrote {set_dir / args.out}: {s['queries']} queries, {s['pairs']} pairs from {len(rankings)} routes; "
+          f"pool size min {s['min']} median {s['median']} mean {s['mean']} max {s['max']}")
+    if s["queries_with_missing_routes"]:
+        print(f"  {s['queries_with_missing_routes']} queries lack rankings from some route", file=sys.stderr)
+    return 0
+
+
+def _judge(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import judge, search
+    from shoebox.runners import gemini
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        pool = search.read_jsonl(set_dir / args.pool)
+        items = search.read_jsonl(set_dir / "items.jsonl")
+        cand = _judge_cand(args.max_usd)
+    except (FileNotFoundError, KeyError) as e:
+        print(f"shoebox eval judge: {e}", file=sys.stderr)
+        return 2
+    if args.split:
+        pool = [r for r in pool if r.get("split") == args.split]
+    if args.limit_queries is not None:
+        pool = pool[: args.limit_queries]
+    cfg = _cfg()
+    if args.dry_run:
+        p = judge.plan(cfg, pool, cand, items, privacy.known_items())
+        est = judge.estimate(cand, p)
+        print(f"dry run [{judge.JUDGE_NAME} {judge.params_hash(cand)}]: {len(pool)} queries, {len(p.grids)} grids, "
+              f"{p.images} images, {p.cached} cached, {len(p.skipped)} skipped; estimated "
+              f"{est.input_tokens} input + {est.output_tokens} output tokens = ${est.usd:.4f}")
+        for s in p.skipped:
+            print(f"  skipped {s['asset_id']} for {s['query_id']}: {s['reason']}")
+        return 0
+    try:
+        res = judge.run(cfg, pool, cand, items, privacy.known_items())
+    except (privacy.PrivacyError, gemini.GeminiError) as e:
+        print(f"shoebox eval judge: {e}", file=sys.stderr)
+        return 2
+    print(f"judged {sum(res.status.values())} pairs in {res.calls} calls (${res.usd:.4f}): {res.status}; "
+          f"{res.plan.cached} cached, {len(res.plan.skipped)} skipped")
+    if res.stopped:
+        print(f"shoebox eval judge: stopped: {res.stopped}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _judgments(args) -> int:
+    from shoebox.evals import judge
+
+    cand = _judge_cand(judge.DEFAULT_MAX_USD)
+    rows = judge.qrels(_cfg(), cand)
+    out = args.sets_dir / args.set_name / args.out
+    judge.write_jsonl(out, rows)
+    print(f"wrote {out}: {len(rows)} judgments ({len({r['query_id'] for r in rows})} queries), "
+          f"params {judge.params_hash(cand)}")
+    return 0
 
 
 def _cfg():

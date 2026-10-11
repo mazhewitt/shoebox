@@ -8,7 +8,7 @@ final (a cache hit, never overwritten); an `error` record may be retried by appe
 import hashlib
 import json
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 from shoebox.config import Config, check_write_location
@@ -67,12 +67,14 @@ def iter_records(cfg: Config, model_id: str, params_hash: str, kind: str = "labe
     return iter_dir(store_dir(cfg, model_id, params_hash, kind))
 
 
-def index_records(records: Iterable[dict]) -> dict[str, dict]:
-    """`{asset_id: record}`: the first final record per asset, else its latest error record."""
+def index_records(records: Iterable[dict], key: Callable[[dict], str] | None = None) -> dict[str, dict]:
+    """`{asset_id: record}`: the first final record per asset, else its latest error record.
+    `key` replaces asset_id as the index key, e.g. `(query_id, asset_id)` for judgments."""
     out: dict[str, dict] = {}
     for r in records:
-        if not is_final(out.get(r["asset_id"])):
-            out[r["asset_id"]] = r
+        k = r["asset_id"] if key is None else key(r)
+        if not is_final(out.get(k)):
+            out[k] = r
     return out
 
 
