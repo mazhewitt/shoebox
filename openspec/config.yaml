@@ -23,14 +23,18 @@ context: |
   - Open-source code and models. No proprietary component may lock the archive
     into a format or service.
   - Hosted models are allowed only as owner-approved exceptions. Today that
-    means Gemini on the owner's individual paid Gemini API account:
-    - Uses: eval pre-labelling, an eval candidate, and the bulk pass only if
-      it wins the eval.
+    means Gemini on the owner's individual paid Gemini API account, and
+    Claude (Opus 5.5 via Claude Code) since 2026-10-11:
+    - Uses: Gemini for eval reference captions, relevance judging, an eval
+      candidate, and the bulk pass only if it wins the eval. Claude for
+      writing eval queries and auditing references and judgments.
+    - Consent is per library: the owner's library may be sent, including
+      photos of family and friends (owner, 2026-10-11).
     - Terms: the paid-tier no-training terms apply, and the 55-day abuse log
       is accepted.
     - Inputs: derived images only, with metadata stripped.
-    - Never faces/identity, the never-send list, or a library whose owner
-      hasn't consented.
+    - Never face recognition/identification, the never-send list, ID/medical
+      documents, or a library whose owner hasn't consented.
     - The privacy checklist must be confirmed before each run.
     - Every run has a spend cap; hosted inference budget is USD 150.
     Everything else stays local.

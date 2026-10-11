@@ -27,6 +27,12 @@ Input formats SHALL include JPEG, PNG, HEIC/HEIF, WebP, 8/16-bit TIFF (colour an
 - **WHEN** an original can't be decoded
 - **THEN** no derived image is written, and the asset is listed with the decode error rather than skipped silently
 
+### Requirement: Orientation of untagged scans
+Scans with no EXIF orientation SHALL get an orientation pass. Its rotation SHALL be recorded per asset in the derive index. Images derived with the pass SHALL belong to a new profile version, so outputs from the old and new images never mix under one key.
+
+#### Scenario: Sideways film scan
+- **WHEN** a film-scan TIFF with no orientation tag is stored rotated 90°
+- **THEN** the derived image under the new profile is upright, the derive index records the rotation and the method, and the old profile's image is left unchanged
 ### Requirement: Named, versioned image profiles
 Every derived image SHALL belong to a named profile that fixes format, maximum long edge, quality and conversion settings. A profile change SHALL create a new profile name. Model outputs SHALL record the profile they were run on.
 

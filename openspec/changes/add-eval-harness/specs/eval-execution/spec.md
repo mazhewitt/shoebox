@@ -64,8 +64,8 @@ The eval layer SHALL run with telemetry disabled. Any LLM-judge grader SHALL use
 - **THEN** spec generation or lint fails before any call is made
 
 ### Requirement: Captions judged against the image
-Caption quality SHALL be scored by a judge that sees the image and the caption together, or by the owner's blind side-by-side rating. A text-only judge is limited to criteria that don't need the image.
+Caption quality SHALL be scored by a judge that sees the image and the caption together (Claude Opus as the reference auditor), with an owner spot-check. Candidates' captions SHALL be shown without model names and in random order. A text-only judge is limited to criteria that don't need the image.
 
-#### Scenario: Blind side-by-side rating
-- **WHEN** the owner rates captions for an image
-- **THEN** the candidates' captions are shown in random order without model names, and the ratings are stored as ground truth with provenance
+#### Scenario: Blind caption audit
+- **WHEN** Opus or the owner rates captions for an image
+- **THEN** the candidates' captions are shown in random order without model names, and each rating records the wrong or invented facts and the missing searchable facts, with provenance

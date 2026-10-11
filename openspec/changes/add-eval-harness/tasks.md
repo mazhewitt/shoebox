@@ -1,72 +1,85 @@
 # Tasks
 
-## 1. Owner prerequisites and scaffolding
+Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built under the first plan. Sections 1–8 are the replan. Section 9 is deferred to before the bulk run.
 
-- [x] 1.1 Owner (DSM): create a non-synced `shoebox` shared folder and a `shoebox` NAS user with read-only access to `ImportantFiles` and read-write access to `shoebox`. Make sure the `shoebox` share isn't in any Cloud Sync task, and is in Hyper Backup except `derived/`. Verify in DSM, and record the setup in `docs/machines.md`.
-- [ ] 1.1b Owner (DSM): give the `shoebox` user **read-only** access to `Home Folders`, `Backup` and `Volume2`, and check that the Preview shows Read only for each. Verify in DSM, and update `docs/machines.md`.
-- [ ] 1.2 Mount on the laptop as the `shoebox` user: `ImportantFiles`, `Home Folders`, `Backup` and `Volume2` with `mount_smbfs -o rdonly` at dedicated mount points, and the `shoebox` share read-write. Record in `config/sources.toml`, per source: root, person, synced flag and consent. Verify that a write to every source mount fails, a write to `shoebox` succeeds, and the mount commands are in `docs/machines.md`.
-- [ ] 1.3 Owner: request a Google Takeout of the owner's Photos library, land it in `shoebox/staging/takeout/<date>/`, extract it to `shoebox/originals/takeout/<date>/` and make that read-only for the `shoebox` user. Verify by file count/bytes reconciling against the export's archive listing.
-- [ ] 1.4 Scaffold the `shoebox` Python package with uv (`shoebox` CLI entry point, pytest, ruff) and the repo layout `evals/{sets,vocab,runs,vally}`, `frame/`, `config/`. Verify `uv run shoebox --help` and `uv run pytest` pass on an empty test.
-- [ ] 1.5 Owner: fill `evals/privacy-checklist.toml`: billing project ID, AI Studio logging off, retention 7 days, no datasets or feedback, confirmation date. Fill `evals/never-send.txt`, and record consent status for Jude, Kyra and Toren (default: no). Verify the file parses with `shoebox privacy check` (added in 4.5).
+## 0. Built under the first plan (kept)
 
-## 2. Sampling frame (`eval-ground-truth`: Sampling frame)
+- [x] 0.1 NAS `shoebox` share and user, `ImportantFiles` mounted read-only at `~/mnt/importantfiles-ro` (old 1.1, part of 1.2).
+- [x] 0.2 `shoebox` package scaffold: uv, CLI, pytest, ruff (old 1.4; `c21d888`).
+- [x] 0.3 Pilot pipeline: pick, `derive --profile infer-v1`, Ollama/Gemini/rules runners, the EG2 embedder, keyed result store, `privacy check`, never-send, spend log, and the Vally layer with executor and graders (old 3.2, 4.1–4.5, 6.1–6.4 in pilot form; `9547882`, `a593ea1`).
+- [x] 0.4 pilot-v0: 45 photos through rules, E4B (bf16/q4), 12B, 31B, Gemini (low/medium) and EG2; owner blind labels; re-grade without inference (`8d65ef8`, `ad8e117`).
+- [x] 0.5 Known-item search eval: routes, ties, bootstrap, report, Vally `eval:search` (`7f2f85d`).
+- [x] 0.6 `shoebox inventory` over `ImportantFiles`, with a resumable checkpoint, the untouched check, content sniffing and the frame README (old 2.1, 2.2, and 2.4 for this source; `d7709b3`, `bdf427f`, `e3afe91`, `b1c5d57`).
+- [x] 0.7 Distractor pool `pilot-v0-pool5k`, near-dup review and exclusions, image routes and E4B caption routes (`c5f6f91`, `746b6b6`).
 
-- [ ] 2.1 Implement `shoebox inventory`: walk the configured sources, BLAKE3 each file, run batched ExifTool JSON, read dimensions and bit depth, pick the best date with its kind (EXIF, sidecar, filename, mtime, scan date), and compute 256 px chroma stats with libvips. Write `frame/frame-<date>.parquet`. Skip the recycle, sync-temp and Lightroom-preview folders, with counts. Form capture groups by same-folder base name across RAW/JPG/TIFF/PSD and record the rule. Refuse writable synced roots. Verify with unit tests on fixture files: JPEG with EXIF, HEIC, 16-bit grey TIFF, RGB TIFF, NEF, DNG+JPG pair, layered PSD, PNG screenshot, a file with a Takeout sidecar, and a writable "synced" root that must be refused.
-- [ ] 2.2 Add a sources-untouched check: snapshot mtime/size/hash of a 200-file sample and the directory listing of each touched folder, before and after `inventory`. Verify nothing changed and no file was created, and that the check is part of the inventory test suite.
-- [ ] 2.3 Implement the rule baseline for medium × digitiser and colour class (`label-runners`: Rule-based baseline), with explicit `unknown`. Verify with unit tests, including "no EXIF, no origin signal → digitiser unknown".
-- [ ] 2.4 Run the inventory over all configured sources, including the Takeout export. Write `frame/README.md` with:
-  - counts per source, top-level folder, era, baseline medium/digitiser and colour class;
-  - capture-group counts by rule;
-  - exact-hash overlap between the `Google Photos` tree and Takeout;
-  - cross-source duplicate counts and bytes per pair of sources;
-  - decode failures.
+**Dropped by the replan:**
+- old 5.2–5.6: Label Studio, `capture-colour-v1`, the scene vocabulary, `scene-v1`/`captions-v1`;
+- old 5.7: 50 owner queries;
+- old 8.2: owner pooled judging;
+- the 12B/31B pool runs.
 
-  Verify every file appears once per path, and that failures and skips are listed rather than missing.
+## 1. Fixes before more model runs
 
-## 3. Inference images (`inference-images`)
+- [ ] 1.1 Tags: lowercase tags in the runner before validation, and keep the schema pattern. Re-validate the stored invalid records as a replay. Verify with a test that a tag "Helsinki" is stored as "helsinki", and that the normalisation is part of the hashed runner version, so normalised and raw outputs never share a key.
+- [ ] 1.2 Truncation: mark outputs that hit `num_predict` as `invalid` with reason `truncated`, then retry once at `num_predict = 300` with a repeat penalty, under a new params_hash. Run it over the 57 E4B and the 17 12B invalids. Verify with a test feeding a capped output, and report how many retries recovered.
+- [ ] 1.3 Orientation (D6a): build `infer-v2` with an orientation pass for untagged scans. Compare the three methods on 50 scans with Opus as the reference, record the result in `docs/profiles.md`, and choose one. Re-derive the scan items of `eval-1k` and the 45 targets, then re-embed. Verify with tests: the rotation is recorded, `infer-v1` images are unchanged, and a rotated fixture comes out upright.
+- [ ] 1.4 Search report: add a paired bootstrap (one resample index for both routes) on the RR and nDCG deltas with 95% CIs, and the minimum detectable difference. Verify with a synthetic test where a known delta is recovered.
+- [ ] 1.5 Re-run pool5k image routes on `infer-v2` for the 45 targets, and report how much of the 0.98→0.65 drop came from orientation.
 
-- [ ] 3.1 Confirm the pixel ceiling per image-token budget from the Gemma 4 and EmbeddingGemma 2 processor configs and Gemini's `media_resolution` docs. Freeze profile `infer-v1` (long edge, quality, conversion) in `config/profiles.toml`. Verify by citing the config values in `docs/profiles.md`.
-- [ ] 3.2 Implement `shoebox derive --profile infer-v1`: libvips decode, orientation, ICC → sRGB, 16→8-bit mapping, metadata strip, writing `derived/infer-v1/ab/<asset_id>.jpg` with a recorded content hash. Raws are rendered via rawpy at fixed recorded settings, and PSDs are flattened from their composite. Verify with tests: 16-bit grey TIFF output is 8-bit sRGB within tolerance; NEF and DNG render; a PSD without a composite is listed as an error; no EXIF/GPS/XMP in output; regenerating gives an identical hash. Also compare raw renderings with camera JPEG siblings on 30 pairs, and record the result in `docs/profiles.md`.
+## 2. Eval corpus `eval-1k`
 
-## 4. Label runners (`label-runners`)
+- [ ] 2.1 Config: add `held_back` path globs (`Pictures/toren phone/**`, `Pictures/Jude Profile/**`, `documents/**`), and record Claude as an approved hosted model. Update `privacy check` to report both. Verify with tests: a held-back path is skipped and reported.
+- [ ] 2.2 Draw `eval-1k`: the 45 targets plus 955 of the 1,966 12B-processed non-target pool items, by a seeded draw. Run the hosted-eligibility screen: never-send, held-back paths, consent, and an Opus pre-screen for medical, ID and financial images. Swap exclusions from the rest of the pool. Write the README. Verify the draw is reproducible and every substitution is listed.
 
-- [ ] 4.1 Implement the runner framework: JSONL in/out, params hashing over prompt, schema, profile, budget, thinking, quantisation and runtime version, and the append-only bundle store at `results/labels/<model_id>/<params_hash>/` with cache hits on existing keys. Verify with tests: re-run is a cache hit with no model call; a param change gives a new key; a killed run resumes from the first missing key.
-- [ ] 4.2 Write the label output JSON schema v1 (caption, vocab tags, free tags, medium, digitiser, colour class, per-field confidence/abstain) in `config/schemas/label-v1.json`. Implement storing invalid output as `status=invalid` with the raw text. Verify with a test feeding malformed JSON.
-- [ ] 4.3 Implement the local VLM runner on mlx-vlm for Gemma 4 E4B and 12B (bf16, `max_soft_tokens`, thinking off, schema-constrained output). Verify on 5 fixture images per model that outputs validate and record tokens, latency, machine and runtime version.
-- [ ] 4.4 Implement the EmbeddingGemma 2 runner (bf16 or fp32 only; refuses fp16; image and caption-text embeddings; 768 d stored, MRL truncation at query time). Verify: an fp16 config refuses to run; cosine ≥ 0.999 against the sentence-transformers fp32 reference on 20 images.
-- [ ] 4.5 Implement the Gemini runner: `generateContent` and Batch API, `media_resolution`, thinking level, schema output, no grounding, no Interactions storage. Add `shoebox privacy check`, the pre-flight, the never-send/consent filter, the per-run USD cap with pre-flight estimate, spend logging to `evals/spend.jsonl`, 429 backoff, and deletion of batch jobs and uploads after storing. Verify with tests on a mocked API: missing or old checklist refuses to start; never-send assets are skipped and reported; an estimate over cap refuses; deletion calls are made. Then do one live 5-image call, with cost recorded.
-- [ ] 4.6 Throughput benchmark: draw a 300-image sample from the frame (all strata). Run the rules baseline, E4B and 12B (280/560), EG2 and Gemini (sync and batch). Write `evals/runs/<date>_throughput.json` with images/hour, USD/1k and full-frame projections. Verify the report exists and is committed. Decide whether the 12B 8-bit arm is needed.
+## 3. Captions
 
-## 5. Ground truth (`eval-ground-truth`)
+- [ ] 3.1 Write `config/prompts/label-v2.md` and the schema (D7). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
+- [ ] 3.2 Run Gemini 3.8 Flash `label-v2` (`medium`, thinking `low`) on `eval-1k` with a $5 cap. Verify the spend is logged and the skipped items are reported.
+- [ ] 3.3 Run E4B `label-v2` (about 1 h) and 12B `label-v2` (about 2 h) on `eval-1k`, and top up E4B and 12B `label-v1` where they are missing. Caption-embed all of them with EG2. Verify every arm covers all 1,000 photos or lists its invalids.
 
-- [ ] 5.1 Implement `shoebox sample`: stratified 5× oversample per cell, derive + EG2-embed the oversample, k-means pick within cell, hard-case additions with flags, a group-aware 40/60 dev/test split from a seed, and a set README with cell counts. Verify with tests: minimum per cell met; duplicate/capture-group members share a split; same seed gives the same set.
-- [ ] 5.2 Set up Label Studio locally with configs for capture/colour classification (pre-annotations shown or hidden per task), vocab multi-label tags, shuffled caption ranking and binary relevance. Implement export to Shoebox JSONL with provenance (`labelled_by`, `method`, pre-label model_id/params_hash). Verify a round trip on 5 items, and that a "confirmed" label without a source is rejected.
-- [ ] 5.3 Draw `capture-colour-v1` (600 + 100 hard) and run Gemini pre-labels (high, thinking medium, batch) on non-blind items only. Verify the blind slice is ≥ 10%, chosen before pre-labelling, and that spend is logged.
-- [ ] 5.4 Owner labels `capture-colour-v1`. Compute anchoring (agreement on shown vs blind) and flag if over the margin. Freeze the set and commit. Verify the README shows labels done vs budget and the anchoring figures.
-- [ ] 5.5 Draft the scene vocabulary `evals/vocab/scene-v1.toml` (facets: setting, place type, event, subject) with 10 worked example images agreed with the owner. Verify the owner signs off in the vocab README.
-- [ ] 5.6 Draw `scene-v1`/`captions-v1` (200), pre-label tags, owner labels tags, freeze and commit. Verify the anchoring report and README.
-- [ ] 5.7 Owner writes 50 search queries for `search-v1`, including combined facet queries. Build the corpus (all set assets + 5k random frame assets) and commit both. Verify the query file and corpus manifest are committed.
+## 4. Queries (Opus)
 
-## 6. Vally execution layer (`eval-execution`)
+- [ ] 4.1 Write `config/prompts/query-writer-v1.md` with the style mix (D9). Opus subagents write about 200 known-item queries from a stratified draw of `eval-1k`, and about 80 category queries from the corpus summary. Store them keyed in the results store, and write `evals/sets/eval-1k/queries-v1.jsonl` with kind, style, source and provenance. Add the 39 owner notes as subset `owner_notes`.
+- [ ] 4.2 Split dev/test about 1:2 by source capture group, from a seed. Verify there is no capture group in both splits.
+- [ ] 4.3 Owner realism check on 30 random queries, using the local review page. Record it in the set README.
 
-- [ ] 6.1 Add `evals/vally/package.json` pinning `@microsoft/vally-cli` and `@microsoft/vally` exactly (0.18.0 or newer if re-verified), with `VALLY_TELEMETRY_OPTOUT=1` set in the npm scripts. Verify `npx vally --version` matches the pin.
-- [ ] 6.2 Implement `shoebox eval gen <set>`: generate `eval.yaml` per set version (stimulus name = asset ID, attachment = derived image, tags = strata/split/hard, expected values in grader config, a "do not edit" header). Verify with tests and with `vally lint` passing on the generated specs.
-- [ ] 6.3 Implement the `shoebox-vlm` executor plugin: replay reads the bundle store and errors on a missing key; live calls the Python runner and writes through. It emits `token_usage` and a `custom` event with asset_id, model_id, params_hash, USD and latency. Verify: replay on a missing key errors; live then replay returns identical output.
-- [ ] 6.4 Implement the `field-match` (with abstain), `set-match` (per-tag TP/FP/FN) and `retrieval` (ranked IDs, nDCG@k, recall@k) graders, writing predicted/expected into metadata. Verify with Vally runs over fixture specs, and that `vally grade` after a label fix changes the verdict with no model call.
-- [ ] 6.5 Add a lint rule or gen check that any `prompt` judge grader has an explicit `judge_provider`. Verify a spec without one fails before any call.
-- [ ] 6.6 Write `docs/evals.md`: how to generate, run (`--model a,b,c`, `--tag split=dev`), re-grade, serve the dashboard, and the replay-vs-live rule. Verify each documented command runs as written on the fixture set.
+## 5. Search routes
 
-## 7. Reporting and gates (`eval-gates`)
+- [ ] 5.1 Metadata route: FTS over path, folder and filename tokens, plus EXIF date and year. Also attribute filters (mono/colour, film-scan bucket, year range) taken from the labels.
+- [ ] 5.2 Query expansion: a small local model (E4B text-only) rewrites a query into keywords and synonyms for FTS and a second embedding query. The prompt is versioned and expansions are cached per query.
+- [ ] 5.3 Run every route over `eval-1k`, for each captioner arm and with no captioner: image@768, caption, FTS, hybrid, blend, metadata, expansion variants and filters. Verify the rankings are written and indexed per route, and that the params_hash covers the expansion prompt and the filters.
 
-- [ ] 7.1 Implement `shoebox eval report`: read `results.jsonl`, compute per-field precision/recall/coverage and confusion matrices, overall and per stratum with a size floor, plus the frame-weighted estimate. Write `evals/runs/<date>_<eval>_<config-hash>.json`. Verify with unit tests on synthetic results with known answers.
-- [ ] 7.2 Add retrieval aggregation (recall@k, nDCG@k, pool coverage) and the guard rule (a field winner that drops nDCG beyond tolerance is not recommended). Verify with synthetic tests.
-- [ ] 7.3 Add cost/throughput columns and full-frame projections with price date, McNemar paired comparisons with tie handling, and the mixed-model seam report (agreement + mixed-index nDCG). Verify with synthetic tests.
-- [ ] 7.4 Add gates: read `evals/gates.toml`, record its hash, invalidate if it changed after run start, and apply the per-stratum precision rule with the dev-frozen abstain cut-off. Exit non-zero on failure. Verify with tests: one weak stratum fails; an edited gates file invalidates.
+## 6. Judging
 
-## 8. Head-to-head and recommendation
+- [ ] 6.1 Gemini grid judge: query plus up to 10 numbered thumbnails, returning grades 0/1/2 as JSON, keyed `(query_id, asset_id, …)`, with a USD cap. Verify on a 5-query dry run with a mocked API, then live on 10 dev queries.
+- [ ] 6.2 Pool the top-10 of every route per query, plus the targets, and judge them all ($25 cap). Verify pool coverage is 1.0 for every route.
+- [ ] 6.3 Opus audit: a stratified 10% plus all target disagreements. Compute weighted kappa overall and per route, and re-judge the test pool with Opus if kappa < 0.6.
+- [ ] 6.4 Local review page (static HTML on the laptop, derived JPEGs): the owner judges 100 audited items and rates 30 caption sets blind. Store the results with provenance.
+- [ ] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements.
 
-- [ ] 8.1 Run all candidates (D7 matrix) over the dev splits of `capture-colour-v1` and `scene-v1`, and generate captions for the `search-v1` corpus with each VLM candidate. Tune abstain cut-offs and search blend weights on dev. Verify the run records are committed and spend is within budget.
-- [ ] 8.2 Owner does pooled relevance judgments (top-20 per route per query) and blind side-by-side caption ranking for `captions-v1`. Verify pool coverage ≥ the configured level for every route, and that rankings are committed with provenance.
-- [ ] 8.3 Write and commit `evals/gates.toml` (D11 proposals, adjusted on dev evidence) **before** any test-split run. Verify the commit precedes the test-run records in git history.
-- [ ] 8.4 Run the test-split gate runs (replay mode) for all candidates and the search eval. Verify the reports are produced, gate results are recorded, and the gates hash matches the committed file.
-- [ ] 8.5 Write `evals/RECOMMENDATION.md`: bulk labeller and settings, search route, per-stratum results, cost and wall-clock projection for the full frame (with price date), the mixed-model seam if bulk ≠ incremental, privacy notes, and what failed and why. Verify the owner reviews it and records the decision in the change before archive.
+## 7. Decision rule and reports
+
+- [ ] 7.1 Tune on dev only: blend weight, expansion prompt, filters. Freeze them.
+- [ ] 7.2 Write and commit `evals/gates.toml` (D11) before any test-split scoring. Verify the commit precedes the test run records.
+- [ ] 7.3 Score test: graded nDCG@20 and paired-bootstrap deltas against the reference, per kind, style and the owner-notes subset; caption error rates; structured-field precision per stratum. Add cost and time projections for 71.6k images (USD at the stated price date, local hours on the M5 Max).
+- [ ] 7.4 Confirm the chosen pipeline on `pilot-v0-pool5k` (owner notes plus the subset of queries whose source photos are in it). Report any change in route order.
+
+## 8. Recommendation
+
+- [ ] 8.1 Write `evals/RECOMMENDATION.md` covering:
+  - captioner, prompt and search method;
+  - per-kind results and the reference's own audited error rate;
+  - the cost and time projection;
+  - the seam if bulk ≠ incremental;
+  - privacy notes;
+  - what failed.
+
+  The owner records the decision.
+
+## 9. Deferred to before the bulk run
+
+- [ ] 9.1 Owner (DSM): read-only access for the `shoebox` user to `Home Folders`, `Backup` and `Volume2`; mount them read-only (old 1.1b, 1.2).
+- [ ] 9.2 Owner: land a Google Takeout (old 1.3), then run the inventory over all sources (old 2.4 remainder).
+- [ ] 9.3 Inventory skip rule for Android `DCIM/.thumbnails` caches.
+- [ ] 9.4 Re-measure throughput on the M5 Ultra Mac Studio when it arrives, and re-project.
+- [ ] 9.5 Older open issues: Ollama listening on all interfaces; the agreement matrix counting unknown–unknown as agreement; g31b enum leakage into tags.

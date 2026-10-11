@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Runs each candidate labeller or embedder over a list of assets and stores keyed outputs that both evals and the later bulk job consume, with safeguards on hosted calls.
+Runs each candidate captioner, embedder, judge or query writer over a list of assets or queries and stores keyed outputs that both evals and the later bulk job consume, with safeguards on hosted calls.
 
 ## ADDED Requirements
 
@@ -10,7 +10,11 @@ Runs each candidate labeller or embedder over a list of assets and stores keyed 
 Every candidate SHALL run as a batch process. It SHALL read asset requests as JSONL and emit one JSONL result per asset. The candidates are:
 - the VLM labeller (hosted or local);
 - the embedder;
-- the rule-based baseline.
+- the rule-based baseline;
+- the relevance judge;
+- the query writer.
+
+Claude Opus, run through Claude Code subagents, counts as a runner. Its outputs SHALL be stored under the same keys and JSONL format.
 
 The same runner and parameters SHALL serve eval runs and bulk runs.
 
@@ -19,7 +23,7 @@ The same runner and parameters SHALL serve eval runs and bulk runs.
 - **THEN** it uses the stored output rather than re-running, and the output equals what the eval scored
 
 ### Requirement: Keyed, immutable outputs
-Every output SHALL be stored keyed by `(asset_id, model_id, params_hash)`. The params hash SHALL cover:
+Every output SHALL be stored keyed by `(asset_id, model_id, params_hash)`, or `(query_id, asset_id, model_id, params_hash)` for judgments. The params hash SHALL cover:
 - the prompt;
 - the output schema;
 - the image profile;
@@ -41,19 +45,21 @@ An existing key SHALL NOT be overwritten.
 ### Requirement: Structured label output
 The VLM labeller SHALL return JSON valid against a versioned schema. The schema covers:
 - caption;
-- scene tags from the controlled vocabulary;
-- free-form tags;
+- free-form tags, lowercased by the runner (a proper noun is normalised, not rejected);
 - capture medium;
 - digitiser;
 - colour class (`colour`, `mono`, `toned`);
 - a per-field confidence or abstain value.
 
-Output that fails the schema SHALL be stored as a failure, never coerced.
+Output that fails the schema SHALL be stored as a failure, never coerced beyond the documented normalisations (lowercasing tags). Output cut off at the token cap SHALL be stored as `status=invalid` with reason `truncated`, and retried once with a lower cap and a repeat penalty before counting as a failure.
 
 #### Scenario: Invalid JSON
 - **WHEN** a model returns output that fails the schema
 - **THEN** the result is stored with `status=invalid` and the raw text, and it counts as wrong, not missing, in evals
 
+#### Scenario: Truncated output retried
+- **WHEN** a local model's output hits the token cap and fails to parse
+- **THEN** the record is stored as invalid with reason `truncated`, and one retry runs under a new params_hash with the lower cap; the eval uses the retry if it is valid
 ### Requirement: Embedding output
 The embedder SHALL store, per asset, an image embedding and, when a caption exists, a caption-text embedding in the same space. Each SHALL record its dimension and the model's precision. Query embeddings SHALL use the same model and precision.
 
@@ -110,7 +116,7 @@ A rule-based labeller SHALL produce capture medium, digitiser and colour class f
 - **THEN** the baseline outputs `unknown` for the digitiser, and does not guess `scan`
 
 ### Requirement: Never-send list and consent
-Every source SHALL name the person it belongs to. Hosted calls SHALL skip any asset on the never-send list, and any asset from a source whose person has not consented to hosted processing. Consent defaults to "no" for everyone except the owner. Skipped assets SHALL be reported, not silently dropped.
+Every source SHALL name the person it belongs to. Consent is per library (source): the owner consented on 2026-10-11 to their library, including photos of family and friends, being sent to Gemini and Claude. Hosted calls SHALL skip any asset that is on the never-send list, or under a configured held-back path, or from a source whose person has not consented to hosted processing. Consent defaults to "no" for everyone except the owner. Skipped assets SHALL be reported, not silently dropped.
 
 #### Scenario: Source without consent
 - **WHEN** a hosted run includes assets from Jude's, Kyra's or Toren's folders and that person's consent is not recorded

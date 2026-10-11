@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Turns per-item eval results into per-stratum metrics, compares candidates, and decides pass/fail against thresholds fixed before the run, leaving a durable record of every run.
+Turns per-item eval results into metrics, compares candidates with paired statistics, and applies a decision rule fixed before the test split is scored, leaving a durable record of every run.
 
 ## ADDED Requirements
 
@@ -32,11 +32,22 @@ Reports SHALL give per-field precision, recall, coverage and confusion matrices,
 - **THEN** it shows both the raw sample metric and the frame-weighted estimate, with the weights used
 
 ### Requirement: Search metrics
-Search evals SHALL report recall@k and nDCG@k per query and overall, plus pool coverage. Search is the guard eval: a candidate that wins a field eval but lowers search nDCG beyond the configured tolerance SHALL NOT be recommended.
+Search evals SHALL report nDCG@k with graded relevance (primary: nDCG@20), plus recall@k, MRR and hit@k for known-item queries, and pool coverage. Results SHALL be shown per query kind and style. Search is the guard eval: a captioner that wins on a field but lowers search nDCG beyond the configured tolerance SHALL NOT be recommended.
 
 #### Scenario: Field winner hurts search
-- **WHEN** a candidate beats the baseline on tag precision but lowers search nDCG@20 beyond tolerance
+- **WHEN** a candidate beats the reference on tag precision but lowers search nDCG@20 beyond tolerance
 - **THEN** the comparison marks it not recommended, and gives both deltas
+
+### Requirement: Pre-registered decision rule
+`evals/gates.toml` SHALL hold the decision rule: the reference pipeline, the candidate set, the non-inferiority margin for search, the caption error-rate margin, the structured-field precision floors, and the cost tie-break. It SHALL be committed before the test split is scored. The report SHALL name the cheapest passing candidate, with its projected full-library hosted cost and local hours. If no local candidate passes, it SHALL say so.
+
+#### Scenario: Cheapest non-inferior candidate chosen
+- **WHEN** E4B with `label-v2` and the blend route has a lower 95% bound on (candidate − reference) test nDCG@20 above −0.03, and its audited caption error rate is within margin
+- **THEN** it passes, and it is recommended over a passing 12B arm because its projected library time is lower
+
+#### Scenario: "No captioner" is a candidate
+- **WHEN** the image-plus-metadata routes without captions pass the search rule
+- **THEN** the report shows them as a passing candidate with zero captioning cost, and the recommendation weighs that against the catalogue's need for descriptions
 
 ### Requirement: Cost and throughput in every comparison
 Comparisons SHALL show, per candidate:
@@ -49,7 +60,7 @@ Comparisons SHALL show, per candidate:
 - **THEN** it projects each candidate's cost and time over the frame's image count at current prices, and states the price date
 
 ### Requirement: Head-to-head significance
-Pairwise comparisons on the same items SHALL use a paired test, and SHALL say when a difference isn't significant at the sample size.
+Pairwise comparisons on the same items or queries SHALL use a paired test: a paired bootstrap on the metric delta, with one resample index for both candidates, for search; McNemar for classification fields. Reports SHALL give the minimum detectable difference at the sample size, and SHALL say when a difference isn't significant.
 
 #### Scenario: Tie
 - **WHEN** two candidates differ by less than the paired test can resolve

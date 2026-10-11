@@ -2,96 +2,92 @@
 
 ## Why
 
-The MVP is to sort, catalogue and describe every photo for search. Faces come later. "Evals before scale" means no labelling model runs over the archive until it has passed a gate on frozen ground truth. So the first thing to build is the harness that measures the candidates and picks the bulk labeller, not the bulk pipeline itself.
+The MVP is to sort, catalogue and describe every photo for search. Faces come later. "Evals before scale" means no labelling model runs over the archive until it has passed a gate. So the first thing to build is the harness that measures the candidates and picks the bulk captioner and the search method, not the bulk pipeline itself.
 
-The candidates are now concrete and different in kind:
-- **Gemini 3.8 Flash:** hosted, paid per token.
-- **Gemma 4 E4B and 12B:** run locally on the M5 Max.
-- **EmbeddingGemma 2:** a local multimodal embedding route for search.
+**Replanned on 2026-10-11.** The first plan scored models against owner-written ground truth: about 700 owner labels, a scene vocabulary and 50 owner-written queries. The pilots showed that this is slow and a weak baseline.
+- The owner's 39 search notes were written while looking at each photo. They are short and generic ("Portrait", "rose"), and only the noted photo counted as relevant. On a 5,042-photo corpus, image-only MRR fell from 0.98 to 0.65, mostly because other photos also fit the notes.
+- With 39 queries, the minimum detectable MRR difference is about 0.13–0.15. Captioners differed by 0.01–0.05, so the planned 1.5-day, three-captioner run could not separate them.
+- The owner doesn't yet know what they will search for beyond black-and-white and scene descriptions.
 
-Only a like-for-like eval can say which wins, or which combination. The owner also wants to learn Microsoft's **Vally**, so the harness uses it where it fits.
+So the yardstick moves to frontier models, with the owner spot-checking:
+- Claude Opus 5.5 writes the test searches and is the source of truth for audits.
+- Gemini 3.8 Flash writes the reference captions and does the bulk relevance judging.
+- Cheap captioners and search methods are measured against that yardstick.
 
-Background: `research/mvp-models.md`, `research/vally.md`, `research/hosted-gemma.md`, `handoff-supplement.md`.
+The goal is the most cost- and time-effective way to caption the library at close to frontier quality.
+
+Background: `research/mvp-models.md`, `research/vally.md`, `research/hosted-gemma.md`, `handoff-supplement.md`, `docs/pilot.md`, and the run records in `evals/runs/`.
 
 ## What Changes
 
-- **Sampling frame.** A read-only inventory keyed by BLAKE3. It covers **all** the NAS photo shares and the first Takeout export. The shares are `ImportantFiles`, `Home Folders`, `Backup` and `Volume2`, about 880 GB of images and video. Duplicates across them are expected; they are grouped by hash, never deleted, and cleaned up later from a dedup report. `ImportantFiles` is the Drive-synced share: about 605 GB of film-scan TIFFs, Nikon NEF and Leica DNG raws, JPEGs and PSDs, including an old `Google Photos` year tree for 2004–2019. The frame records:
-  - the cheap strata: era, file origin, file type/bit depth, EXIF camera/scanner, computed colour statistics;
-  - sibling groups: RAW+JPEG, scan TIFF + exported JPG, PSD edits.
+**Already built (kept):**
+- the sampling frame over `ImportantFiles` (`shoebox inventory`);
+- inference images (`shoebox derive`, profile `infer-v1`);
+- keyed label runners: Ollama Gemma 4, Gemini and rules, the EG2 embedder, and the hosted-call safeguards;
+- the Vally execution layer;
+- the known-item search eval with its distractor pool;
+- run reports.
 
-  Ground truth is sampled from it.
-- **Ground-truth sets** for the MVP fields:
-  - capture medium × digitiser and colour/mono, with deliberate hard cases;
-  - scene tags from a controlled vocabulary;
-  - caption quality;
-  - a search query set with pooled relevance judgments.
-- **Labelling protocol.** Sets are stratified with diversity sampling and frozen dev/test splits, inside a staged labelling budget. Gemini 3.8 Flash pre-labels, the owner confirms, and a ~10% blind slice measures anchoring. Every label records its provenance.
-- **Inference images.** Derived JPEG copies of originals: converted from TIFF/HEIC, camera raws (NEF/DNG) and layered PSDs, colour-managed, 8-bit, resized to the largest image-token budget under test. Stored on a dedicated `shoebox` NAS share, never on `ImportantFiles`. Originals are never touched.
-- **Label runners.** Python batch runners with one interface (JSONL in/out) that write outputs keyed by `(asset_id, model_id, params_hash)`:
-  - a VLM labeller for Gemini 3.8 Flash and for Gemma 4 E4B/12B via mlx-vlm;
-  - an EmbeddingGemma 2 embedder;
-  - a rule-based baseline for capture source and colour/mono.
+**New in the replan:**
+- **Hosted models.** Claude (Opus 5.5) joins Gemini as an approved hosted model. Consent is per library: the owner's library may be sent to both, including photos of family and friends. Other people's own libraries are not sent until their consent is recorded.
+- **Eval corpus `eval-1k`:** 1,000 photos from the 5k pool, including the 45 pilot targets, screened for hosted eligibility. The 5k pool stays for confirming the winner.
+- **Reference captions.** Gemini 3.8 Flash captions `eval-1k` with a new search-oriented prompt (`label-v2`). Opus audits a sample of captions for errors and invented details.
+- **Candidate captioners.** Gemma 4 E4B and 12B, run locally with the `label-v1` and `label-v2` prompts.
+- **Synthetic queries.** Opus writes about 300 queries:
+  - known-item queries in mixed styles, from each photo plus its date and folder;
+  - broad "category" queries with many right answers.
+  - The owner's 39 notes stay as an owner-voice check.
+- **Search methods compared:**
+  - EG2 image vectors;
+  - caption vectors;
+  - FTS over captions;
+  - hybrid and blend;
+  - query expansion by a small local model;
+  - metadata search (folder, filename, date);
+  - attribute filters (black-and-white, film scan, year).
+- **Pooled, graded relevance judging.** Gemini judges the pooled top-10 of every route for every query, shown as image grids. Opus audits about 10%, and the owner spot-checks about 100 judgements. This replaces "only the noted photo is relevant".
+- **Structured fields** (colour/mono, medium, digitiser) are scored against a reference: metadata rules where they are unambiguous, otherwise Gemini. Opus audits it and the owner checks the residue. This replaces 700 owner labels.
+- **Pre-registered decision rule.** Queries are split dev/test, and the decision rule is committed in `evals/gates.toml` before the test split is scored. The rule: pick the cheapest captioner + prompt + search method that is non-inferior to the Gemini-reference pipeline on test nDCG@20 (paired bootstrap), with an audited error rate no worse than Gemini's.
+- **Fixes first:**
+  - rotate sideways film scans;
+  - salvage or retry captions truncated at the output cap;
+  - lowercase tags instead of rejecting proper nouns;
+  - add a paired bootstrap to the search report.
 
-  The bulk job will reuse the same runners later.
-- **Per-person consent.** Every source names its person (owner, Jude, Kyra, Toren). Only the owner's sources may be sent to Gemini until another person's consent is recorded.
-- **Hosted-call safeguards.** Gemini runs only through the billing-linked project, with the privacy checklist enforced: no logging, no stored interactions, no grounding, uploads and batch jobs deleted after use. There is a per-run USD cap, and everything runs within the $150 hosted budget.
-- **Vally execution layer:**
-  - Generated `eval.yaml` per set (one stimulus per asset, strata as tags).
-  - A thin TypeScript `shoebox-vlm` executor that replays outputs from the keyed store (gate runs) or calls models live (dev exploration).
-  - Field, tag-set and retrieval graders.
-  - The Vally version is pinned and its telemetry is off.
-- **Python reporting and gates:**
-  - per-stratum precision/recall and confusion matrices;
-  - coverage at an abstain threshold;
-  - retrieval recall@k/nDCG;
-  - cost and throughput;
-  - McNemar head-to-heads;
-  - a check against thresholds fixed in `evals/gates.toml` before the test-split run.
+**Dropped from the first plan:**
+- Label Studio and owner pre-label confirmation with an anchoring check;
+- the 700-item `capture-colour-v1`, the `scene-v1` vocabulary and tag set, and owner caption rankings;
+- the 50 owner-written queries;
+- the 12B/31B runs over the whole 5k pool.
 
-  Each run writes a record under `evals/runs/`.
-- **Head-to-head and throughput benchmark** on the same sample:
-  - rules vs E4B vs 12B vs Gemini for structured fields;
-  - captions and tags;
-  - image budgets 280 vs 560 (1120 where it pays);
-  - EmbeddingGemma 2 image-only vs image+caption search.
-
-  The result is a written recommendation for the bulk labeller, with images/hour and projected cost.
-
-Out of scope:
-- faces;
+**Out of scope:**
+- faces and identity: no hosted model names people from their faces;
 - the catalogue DB schema, API and UI;
 - the bulk run itself;
-- dedup (its eval comes with the dedup change);
-- full Takeout acquisition and scheduling, beyond landing one export for the sampling frame;
-- importing the 13 Lightroom catalogues (keywords, ratings, collections) as an owner-authored metadata source. That is a follow-up change.
+- dedup;
+- Takeout acquisition and the other NAS shares. Those are deferred to before the bulk run and aren't needed for the captioner decision.
+- importing the Lightroom catalogues.
 
 ## Capabilities
 
 ### New Capabilities
-- `eval-ground-truth`: the sampling frame, stratified and diversity sampling, frozen dev/test splits, the labelling protocol (pre-label + confirm + blind slice), label provenance, and storage/backup of ground truth.
-- `inference-images`: derived model-input images (format conversion, colour management, resizing, layout on the NAS), regenerable and never written over originals.
-- `label-runners`: candidate labelling and embedding runners with one JSONL interface; keyed, re-usable outputs; hosted-call privacy and budget safeguards.
-- `eval-execution`: running candidates over ground-truth sets with Vally (spec generation, replay/live executor, graders, re-grading).
-- `eval-gates`: metrics, per-stratum reporting, gate thresholds in `evals/gates.toml`, run records, and model comparison.
+- `eval-ground-truth`: the sampling frame, eval corpora, frozen dev/test splits, the frontier-model reference (captions, structured fields, synthetic queries, pooled judgments) with owner and Opus audits, and provenance.
+- `inference-images`: derived model-input images, including orientation correction for scans, regenerable and never written over originals.
+- `label-runners`: captioning, embedding, judging and query-writing runners with one JSONL interface, keyed outputs, and hosted-call privacy and budget safeguards.
+- `eval-execution`: running candidates over eval sets with Vally (spec generation, replay/live executor, graders, re-grading).
+- `eval-gates`: metrics, the pre-registered decision rule, paired comparisons, cost/time projections, and durable run records.
 
 ### Modified Capabilities
 
-None. There are no existing specs.
+None. There are no archived specs yet.
 
 ## Impact
 
-- **New code:**
-  - `shoebox` Python package (uv) with `inventory`, `derive`, `label` runners and `eval gen` / `eval report` commands;
-  - `evals/vally/` TypeScript plugins (Node ≥ 22.14, pinned `@microsoft/vally*`);
-  - `evals/sets/`, `evals/gates.toml`, `evals/runs/` in git.
+- **Code:** the `shoebox` Python package (uv), `evals/vally/` TypeScript plugins, and `evals/sets/`, `evals/gates.toml` and `evals/runs/` in git.
 - **Systems:**
-  - NAS shares mounted on the M5 Max: `ImportantFiles` read-only (it syncs to Google Drive, so Shoebox must never write to it), plus a new `shoebox` share for staging, Takeout originals, `derived/` and `results/`;
-  - Ollama/mlx-vlm on the laptop;
-  - Gemini API on the owner's individual billed project.
-- **Constraint amendments:** `openspec/config.yaml` was updated on 2026-10-10 to match the owner's decisions:
-  - hosted Gemini under conditions;
-  - the laptop, then the M5 Ultra Studio, as the model host;
-  - TypeScript Vally plugins;
-  - the never-write rule for synced sources.
-- **Cost:** hosted spend for pre-labelling and the head-to-head is estimated at well under $30 of the $150 budget (see design).
-- **Owner time:** labelling about 1,000–1,500 items in this change, from the ~3,000 total budget.
+  - NAS shares: `ImportantFiles` read-only, and the `shoebox` share for `derived/`, `results/` and `frame/`;
+  - Ollama on the laptop;
+  - the Gemini API on the owner's billed project;
+  - Claude Opus 5.5 through Claude Code subagents viewing derived JPEGs. There is no API key; outputs are stored keyed like any runner.
+- **Cost:** about $35–45 of the $150 hosted budget ($0.18 spent so far). That leaves room for a Gemini bulk pass if it wins.
+- **Time:** about 2–3 days to a decision, mostly build time. Owner time is about 45 minutes of spot-checks, down from about 8 hours of labelling.

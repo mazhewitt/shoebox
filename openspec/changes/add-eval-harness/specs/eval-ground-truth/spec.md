@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provides the frozen, representative, human-confirmed ground truth that every labelling and search model is scored against, plus the sampling frame it is drawn from.
+Provides the sampling frame, the eval corpora drawn from it, and the frozen reference that every captioning and search candidate is scored against. The reference is frontier-model-authored (captions, structured fields, queries, relevance judgments), audited by Claude Opus and spot-checked by the owner.
 
 ## ADDED Requirements
 
@@ -35,19 +35,32 @@ Sources synced to a cloud service, such as the Drive-synced `ImportantFiles` sha
 - **WHEN** a Shoebox command is pointed at a source root that is writable by the current process
 - **THEN** it refuses to run and names the root, unless the source is explicitly marked as not synced
 
-### Requirement: Stratified, diverse sampling
-Ground-truth sets SHALL be drawn from the sampling frame stratified by era, capture medium/digitiser guess and colour/mono guess, with a minimum per cell. Within a cell, the draw SHALL spread across visual-embedding clusters. Hard cases SHALL be added deliberately and flagged.
+### Requirement: Eval corpora drawn from the frame
+Eval corpora SHALL be drawn from the sampling frame by a recorded, reproducible rule (seed or deterministic id order). Each corpus SHALL have a README recording the rule, the size, the bucket and era counts, and every substitution. Previously used targets MAY be included and SHALL be flagged.
 
-#### Scenario: Small strata are represented
-- **WHEN** a set is drawn
-- **THEN** every non-empty stratum cell holds at least the configured minimum (or all of its members, if fewer), and the set's README records the cell counts and the frame size per cell
+#### Scenario: Reproducible draw
+- **WHEN** a corpus is rebuilt from the same frame and rule
+- **THEN** it has the same members
 
-#### Scenario: Hard cases flagged
-- **WHEN** a hard case (toned or sepia print, faded colour print, screenshot, messaging-app image, unprocessed raw scan) is added outside the stratified draw
-- **THEN** it carries a `hard` flag naming its kind, and reports can include or exclude it
+#### Scenario: Substitution recorded
+- **WHEN** a drawn photo is replaced (e.g. by the hosted-eligibility screen)
+- **THEN** the README lists the removed and added asset ids and the reason
+
+### Requirement: Hosted-eligibility screen
+Before any photo in an eval corpus is sent to a hosted model, the corpus SHALL be screened. Photos SHALL be excluded if they:
+- are on the never-send list;
+- have a copy in a non-consented source;
+- are under paths configured as held back (e.g. folders that look like another person's library);
+- are flagged by a pre-screen as medical, identity or financial documents.
+
+The screen's results SHALL be recorded.
+
+#### Scenario: ID document in the owner's share
+- **WHEN** a corpus draw includes a passport scan under `documents/`
+- **THEN** it is excluded before any hosted call, replaced, and listed in the README
 
 ### Requirement: Frozen dev/test splits
-Every set SHALL be split into dev and test at creation, by asset and deterministically from a recorded seed. Members of one duplicate or capture group SHALL land in the same split. Once a set version is frozen, its membership and labels SHALL NOT change; corrections produce a new version.
+Every set SHALL be split into dev and test at creation, deterministically from a recorded seed: query sets by query (grouped by source photo's capture group), item sets by asset. Members of one duplicate or capture group SHALL land in the same split. Once a set version is frozen, its membership and labels SHALL NOT change; corrections produce a new version.
 
 #### Scenario: No leakage across splits
 - **WHEN** two files share a capture or exact-duplicate group
@@ -57,45 +70,61 @@ Every set SHALL be split into dev and test at creation, by asset and determinist
 - **WHEN** a label in a frozen set is corrected
 - **THEN** a new set version is written, the old version stays readable, and run records name the version they used
 
-### Requirement: Labelling with pre-labels and an anchoring check
-Pre-labels from a hosted model MAY be shown to the owner for confirmation, but only for capture medium/digitiser, colour/mono, scene tags and caption quality. A blind slice of at least 10% of each set SHALL be labelled without the pre-label, so anchoring can be measured.
+### Requirement: Frontier-model reference with audits
+Reference captions and structured fields SHALL come from a named reference model and prompt (model_id and params_hash), or, for structured fields, from metadata rules where those are unambiguous. A stratified sample of the reference SHALL be audited by Claude Opus, and the owner SHALL check a smaller sample drawn from the audited set. The reports SHALL state the audit error rates, and the error rates SHALL feed the decision rule.
 
-#### Scenario: Blind slice
-- **WHEN** a set is labelled with pre-labels
-- **THEN** at least 10% of its items, chosen at random before labelling, are labelled with no pre-label visible, and the report states the agreement rate between pre-labels and blind labels
+#### Scenario: Reference error rate known
+- **WHEN** a report scores candidates against the reference
+- **THEN** it shows the Opus-audited error rate of the reference itself and the owner–Opus agreement on the owner's sample
 
-#### Scenario: Anchoring too high
-- **WHEN** the owner's agreement with pre-labels on the shown items exceeds agreement on the blind slice by more than the configured margin
-- **THEN** that set is flagged, and its remaining items are labelled blind
+#### Scenario: Never identify people
+- **WHEN** any hosted model writes a caption, query or judgment
+- **THEN** it is not asked to recognise or name people from faces; names may appear only when taken from folder or file names
 
-#### Scenario: Never pre-label identity
-- **WHEN** a set concerns faces or identity
-- **THEN** no hosted pre-label is requested
+### Requirement: Synthetic query set
+The search eval SHALL use a fixed, versioned query set written by a model that is not a candidate captioner (Claude Opus). The set SHALL include:
+- known-item queries, written from a photo plus its metadata in a recorded style mix;
+- category queries, written without viewing any photo.
 
-### Requirement: Label provenance
-Every ground-truth label SHALL record who set it, when, and how: blind, confirmed from a pre-label (naming the pre-label's model_id and params_hash), or edited from a pre-label. A confirmed label with no named source SHALL be rejected.
+Each query SHALL record its kind, style, source photo (if any) and the writer's model_id and params_hash. The owner's own notes MAY be included as a separately reported subset. The owner SHALL review a sample for realism, and the result SHALL be recorded.
 
-#### Scenario: Confirmed label
-- **WHEN** the owner accepts a Gemini pre-label unchanged
-- **THEN** the stored label records `labelled_by=owner`, `method=confirmed`, and the pre-label's model_id and params_hash
+#### Scenario: Results per style
+- **WHEN** a search report is produced
+- **THEN** metrics are shown overall, per query kind and per style, and the owner-notes subset separately
 
-### Requirement: Search query set with pooled judgments
-The search eval SHALL use a fixed set of natural-language queries, including combined facet queries. Relevance SHALL be judged by the owner over a pool built from the top-k results of every candidate system. Unjudged results SHALL be counted as non-relevant and reported as a pool-coverage figure.
+### Requirement: Pooled, graded relevance judgments
+Relevance SHALL be judged over a pool of every candidate route's top-k results per query, on a graded scale (0, 1, 2). A judge model SHALL see the query and the images only, never captions. A stratified sample SHALL be re-judged by Claude Opus, and a smaller sample by the owner. Unjudged results SHALL count as non-relevant and be reported as pool coverage.
 
-#### Scenario: New candidate after judging
-- **WHEN** a candidate added after judging returns unjudged images in its top-k
-- **THEN** the report shows its unjudged fraction, and those images are queued for judgment before that candidate can pass a gate
+#### Scenario: Judge disagreement too high
+- **WHEN** the weighted kappa between the judge model and Opus on the audit sample is below the configured floor
+- **THEN** the test pool is re-judged by Opus before any gate is scored
+
+#### Scenario: New route after judging
+- **WHEN** a route added after judging returns unjudged images in its top-k
+- **THEN** the report shows its unjudged fraction, and those images are queued for judgment before that route can pass a gate
+
+### Requirement: Provenance of every reference item
+Every reference item (caption, structured label, query or judgment) SHALL record who or what produced it and how:
+- a model, with its model_id and params_hash;
+- a metadata rule, with the rule name;
+- an owner or Opus audit, with the item it audited.
+
+An audit SHALL never overwrite the item it audited. Corrections SHALL produce a new set version.
+
+#### Scenario: Owner corrects a judgment
+- **WHEN** the owner disagrees with a Gemini judgment in their spot-check
+- **THEN** the owner's judgment is stored alongside, with `labelled_by=owner`, and the next set version uses it
 
 ### Requirement: Ground truth is versioned and backed up
-Ground-truth sets, queries, judgments and the vocabulary SHALL live in git with the code. They SHALL NOT contain image bytes. They SHALL reach the off-site backup with the next push.
+Reference sets, queries, judgments and audits SHALL live in git with the code. They SHALL NOT contain image bytes. They SHALL reach the off-site backup with the next push.
 
 #### Scenario: Labels survive loss of the laptop
 - **WHEN** the laptop is lost after labels were committed and pushed
 - **THEN** every set version can be restored from the git remote, keyed by asset ID
 
-### Requirement: Labelling budget
-The sets in this change SHALL fit a planned owner-labelling budget, recorded per set, and SHALL report labels spent against it. The total across the project SHALL stay within about 3,000 items unless the owner raises it.
+### Requirement: Owner time budget
+The owner's part in this change SHALL be limited to spot-checks: about 100 judgments, 30 captions, a realism review of 30 queries, and the residue of structured-field disagreements. The planned and actual counts SHALL be recorded in the set READMEs.
 
 #### Scenario: Budget report
-- **WHEN** a set's labelling session ends
-- **THEN** the set's README shows labels done vs planned, and the project total
+- **WHEN** a spot-check session ends
+- **THEN** the set README shows items checked against the plan
