@@ -122,8 +122,8 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
   - a new byte-identical copy costs nothing;
   - a merge keeps the canonical's label;
   - the summary counts reused captures.
-- [ ] 8.3 Extend `label_source`/`source_index` to an ordered source list. Each resolved record keeps its own `model_id`/`params_hash`. Verify with tests for ordering, `~retry` substitution inside the list, and unchanged single-source behaviour (existing tests pass).
-- [ ] 8.4 Implement `runners/gemini_batch.py` and candidate `gemini-batch-v2`.
+- [x] 8.3 Extend `label_source`/`source_index` to an ordered source list. Each resolved record keeps its own `model_id`/`params_hash`. Verify with tests for ordering, `~retry` substitution inside the list, and unchanged single-source behaviour (existing tests pass).
+- [x] 8.4 Implement `runners/gemini_batch.py` and candidate `gemini-batch-v2`.
   - Reuse the sync runner's build/parse/normalise/price functions.
   - Job ledger in `results/batch-jobs/`.
   - Pre-flight at the batch price (`price_batch_discount = 0.5`, not hashed).
@@ -133,7 +133,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
     - each guard refuses: checklist, never-send, `held_back`, quarantine, over-cap, expired price;
     - crash mid-poll â†’ no resubmit;
     - parse parity with sync on canned responses.
-- [ ] 8.5 Re-check the batch price and discount on the Gemini pricing page, and update `price_date` in the candidate. Verify `require_current_price` passes.
+- [x] 8.5 Re-check the batch price and discount on the Gemini pricing page, and update `price_date` in the candidate. Verify `require_current_price` passes.
 - [ ] 8.6 **Owner approval required (about $0.03).** Run the live smoke batch: 20 eval-1k images through `gemini-batch-v2`. Verify every label validates, spend is logged, and a field-by-field comparison with `gemini-medium-v2` on the same ids is in `evals/runs/`.
 - [ ] 8.7 Implement `shoebox label fallback`. It runs `g12b-q4-v2` on final `refused` or retry-failed `truncated` records of the primary chain, and is idempotent.
   - Verify with tests for the reason filter and the idempotence.
