@@ -1,16 +1,17 @@
+# ruff: noqa: F811 - the `env` fixture is imported from test_derive and requested by name
 """Pixel hashes from the derive decode (design D1, spec asset-dedup). All images are synthetic."""
 
 import io
 import shutil
 
 import numpy as np
-import pyvips
 import pytest
+import pyvips
 from PIL import Image
+from test_derive import PROFILE, _item, _write_items, env  # noqa: F401 - fixture
 
 from shoebox import derive, store
 from shoebox.cli import main
-from test_derive import PROFILE, _item, _write_items, env  # noqa: F401 - fixture
 
 INFER_V1_SETTINGS_HASH = "99b6818993fdd293"  # the hash of the 5,045 derived pool5k images
 
