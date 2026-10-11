@@ -79,6 +79,7 @@ def register(sub) -> None:
     _register_search(esub)
     _register_judge(esub)
     _register_audit(esub)
+    _register_caption_audit(esub)
 
 
 def _register_search(esub) -> None:
@@ -270,6 +271,130 @@ def _register_audit(esub) -> None:
     r.add_argument("--sets-dir", type=Path, default=sets)
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
     r.set_defaults(func=_audit_report)
+
+
+def _register_caption_audit(esub) -> None:
+    from shoebox.evals import caption_audit as ca
+
+    sets = REPO_ROOT / "evals" / "sets"
+    s = esub.add_parser("caption-sample", help="stratified photos for the Opus caption audit (task 6.5)")
+    s.add_argument("--set", required=True, dest="set_name")
+    s.add_argument("--n", type=int, default=ca.DEFAULT_N)
+    s.add_argument("--seed", type=int, default=ca.DEFAULT_SEED)
+    s.add_argument("--queries", default="queries-v1.jsonl", help="query file whose dev groups are excluded")
+    s.add_argument("--frame", type=Path, default=None)
+    s.add_argument("--sets-dir", type=Path, default=sets)
+    s.set_defaults(func=_caption_sample)
+
+    p = esub.add_parser("caption-packets", help="thumbnails and blind caption sets A-E for Opus subagents")
+    p.add_argument("--set", required=True, dest="set_name")
+    p.add_argument("--out", required=True, type=Path, help="scratch dir (never under evals/)")
+    p.add_argument("--per-batch", type=int, default=20)
+    p.add_argument("--seed", type=int, default=ca.DEFAULT_SEED)
+    p.add_argument("--arms", default=",".join(ca.ARMS))
+    p.add_argument("--sets-dir", type=Path, default=sets)
+    p.set_defaults(func=_caption_packets)
+
+    i = esub.add_parser("caption-ingest", help="validate, un-blind and store the subagents' audit-*.jsonl")
+    i.add_argument("--set", required=True, dest="set_name")
+    i.add_argument("--dir", required=True, type=Path)
+    i.add_argument("--model-id", default=ca.MODEL_ID)
+    i.add_argument("--sets-dir", type=Path, default=sets)
+    i.set_defaults(func=_caption_ingest)
+
+    r = esub.add_parser("caption-report", help="per-arm caption audit -> evals/runs/<date>_<set>-caption-audit")
+    r.add_argument("--set", required=True, dest="set_name")
+    r.add_argument("--model-id", default=ca.MODEL_ID)
+    r.add_argument("--params-hash", default=None)
+    r.add_argument("--date", default=None)
+    r.add_argument("--bootstrap", type=int, default=ca.BOOTSTRAP)
+    r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
+    r.set_defaults(func=_caption_report)
+
+
+def _caption_sample(args) -> int:
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import judge, queries, search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        items = search.read_jsonl(set_dir / "items.jsonl")
+        qs = search.read_jsonl(set_dir / args.queries)
+        frows = queries.frame_rows_for(items, _frame(_cfg(), args.frame))
+        rows, meta = ca.draw(items, frows, qs, args.n, args.seed)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval caption-sample: {e}", file=sys.stderr)
+        return 2
+    judge.write_jsonl(set_dir / ca.SAMPLE_FILE, rows)
+    (set_dir / ca.SAMPLE_META).write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"wrote {set_dir / ca.SAMPLE_FILE}: {meta['n']} photos from {meta['candidates']} capture groups "
+          f"({meta['excluded_dev_groups']} dev groups excluded) over {len(meta['strata'])} strata")
+    return 0
+
+
+def _caption_packets(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import search
+
+    set_dir = args.sets_dir / args.set_name
+    cfg = _cfg()
+    try:
+        ca.check_out_dir(args.out)
+        rows = search.read_jsonl(set_dir / ca.SAMPLE_FILE)
+        items = search.read_jsonl(set_dir / "items.jsonl")
+        labels, sources = ca.load_arms(cfg, _split(args.arms))
+        res = ca.packets(cfg, rows, items, labels, args.out, args.per_batch, args.seed, privacy.known_items(),
+                         sources)
+    except (ValueError, FileNotFoundError, KeyError) as e:
+        print(f"shoebox eval caption-packets: {e}", file=sys.stderr)
+        return 2
+    for s in res.skipped:
+        print(f"  skipped {s['key']}: {s['reason']}", file=sys.stderr)
+    for m in res.missing:
+        print(f"  {m['key']}: no caption from {m['arm']}", file=sys.stderr)
+    print(f"wrote {len(res.photos)} photos in {len(res.batches)} batches to {args.out}; {len(res.skipped)} skipped, "
+          f"{len(res.missing)} missing caption sets")
+    return 0
+
+
+def _caption_ingest(args) -> int:
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import search
+
+    try:
+        rows = search.read_jsonl(args.sets_dir / args.set_name / ca.SAMPLE_FILE)
+        res = ca.ingest(_cfg(), args.dir, rows, ca.instructions_text(), args.model_id)
+    except (ca.IngestError, FileNotFoundError) as e:
+        print(f"shoebox eval caption-ingest: {e}", file=sys.stderr)
+        return 1
+    print(f"stored {res.stored} caption audits ({res.already} already stored) as {args.model_id} {res.params_hash}")
+    if res.conflicts:
+        print(f"shoebox eval caption-ingest: {len(res.conflicts)} photos already stored differently "
+              f"(kept the stored one): {res.conflicts[:10]}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _caption_report(args) -> int:
+    from datetime import date
+
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import search
+
+    try:
+        ph, recs = ca.audit_records(_cfg(), args.model_id, args.params_hash)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval caption-report: {e}", file=sys.stderr)
+        return 2
+    meta = {"set": args.set_name, "date": args.date or date.today().isoformat(), "opus_model_id": args.model_id,
+            "opus_params_hash": ph}
+    rep = ca.build_report(recs, meta, args.bootstrap)
+    stem = args.out_dir / f"{meta['date']}_{args.set_name}-caption-audit"
+    search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
+    search._atomic_write(stem.with_suffix(".md"), ca.render_md(rep))
+    print(f"wrote {stem}.md/.json: {rep['photos']} photos, {len(rep['arms'])} arms")
+    return 0
 
 
 def _audit_sample(args) -> int:
