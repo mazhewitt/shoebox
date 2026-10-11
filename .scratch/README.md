@@ -65,7 +65,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 
 **Owner actions** (`ready-for-human` / `needs-info`):
 - **DSM:** read-only access to the other shares (`sources/01`).
-- **Takeout:** request both accounts' exports (`sources/02`), then set up scheduled Takeout (`ingest/03`).
+- **Takeout (most urgent: it is the long pole before the price deadline):** check backup quality, request both accounts' exports and ask Jude about consent (`sources/07`), then set up scheduled Takeout (`ingest/03`).
 - **Backups:** private git remote (`ops/01`); check the NAS backup job's scope (`ops/03`).
 - **Ollama:** confirm what uses each Ollama on the LAN before binding it to localhost (`ops/04`).
 - **Filenames:** examples of your scan-naming conventions (`catalogue/04`).
@@ -81,13 +81,14 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 - Colour-filter source (`bulk-captioning/05`).
 - Document-screen method (`bulk-captioning/08`).
 - Mixed Gemini/12B captions in one index (`search/06`).
+- Whether to caption once every source is deduped, or in stages by source (`dedup/06`; recommends staging unless the Takeout lands by about mid-November).
 - Enum leakage, likely wontfix (`eval-followups/03`).
 
 ## Found while filing (these change the plan)
 
 - **Price deadline.** Gemini's introductory price is valid only until **2026-12-31** (`config/candidates.d/gemini.toml`). After that the batch bulk run is about $196, which is over budget. The bulk run should finish in 2026, or be re-quoted.
-- **The $98 quote is too high for ImportantFiles.** It assumed 71.6k images, but there are only 52,481 unique asset_ids (27% are byte-identical copies). Capture dedup will cut it further; Takeout and the other shares will add to it. Re-quote from `dedup/04`'s worklist.
-- **`Pictures/Google Photos` (27,559 images) is not a Takeout:** there are no JSON sidecars. Its overlap with the real Takeout shows up only after both are inventoried (`sources/02`).
+- **The $98 quote is too high for ImportantFiles.** It assumed 71.6k images, but there are only 52,481 unique asset_ids (27% are byte-identical copies). Capture dedup will cut it further; Takeout and the other shares will add to it. Re-quote from `dedup/04`'s worklist. `dedup/06` makes every caption run go through dedup first.
+- **`Pictures/Google Photos` (27,559 images) is not a Takeout:** there are no JSON sidecars. Its overlap with the real Takeout shows up only after both are inventoried (`sources/07`).
 - **Only eval-1k has had the document screen.** That screen found about 1% sensitive, i.e. roughly 500 images in the bulk set. Now `bulk-captioning/08`.
 - **No issue owned the library-wide EG2 image-vector pass.** Now `catalogue/12`.
 - **The inventory's date order contradicts decision 27.** It ranks the scan date above a filename date (`catalogue/05`).

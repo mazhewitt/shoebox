@@ -14,6 +14,7 @@ This is the MVP's core deliverable: every photo described for search (decisions 
 
 - [ ] `sources/` complete: every share mounted read-only, Takeout landed and inventoried, skip rules applied (`.thumbnails`).
 - [ ] Per-source consent recorded. `hosted_models` and `held_back` in `config/shoebox.toml` match the owner's latest word.
+- [ ] `dedup/06` guard in place: the run reads only a full-source worklist and reuses existing labels.
 - [ ] `dedup/04` worklist built: captures, not files. Eligibility uses "no copy in a non-consented source".
 - [ ] `shoebox privacy check --provider gemini --allowed-out` passes on the worklist. never-send is up to date (including the eval-1k screen additions).
 - [ ] **Screen for documents** (`08`). Run the consent screen (`config/prompts/screen-v1.md`, Opus contact sheets) over everything not yet screened, to catch ID, medical and financial documents. For about 70k images this is a large Opus job: plan its subscription cost, or a rules + Gemini-free pre-filter first.

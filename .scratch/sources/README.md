@@ -20,6 +20,7 @@ Each source names its person and their hosted-processing consent. Skip rules kee
 | 03 | [Drive scans: one mirror](03-drive-scans-single-mirror.md) | owner decision recorded; a single configured source for scans |
 | 04 | [Per-source consent and hosted eligibility](04-per-source-consent-and-hosted-eligibility.md) | tests: an asset with any copy in a non-consented source is refused for every provider |
 | 05 | [Inventory skip rules](05-inventory-skip-rules.md) | skip counts and examples reported in the frame README; no media lost (diff against the old frame) |
+| 07 | [Google Photos Takeout, end to end](07-google-photos-takeout.md) | both libraries verified, inventoried and sidecar-matched; overlap with ImportantFiles reported; Jude's consent recorded |
 | 06 | [Inventory over all sources (Gate A)](06-inventory-all-sources-gate-a.md) | Gate A, below |
 
 ## Sequencing
@@ -28,6 +29,7 @@ Each source names its person and their hosted-processing consent. Skip rules kee
 - **Agent work in parallel.** 04 and 05 are agent work that can start now against ImportantFiles.
 - **04 needs exact-hash groups.** It needs them across sources, and those exist in the frame today (`dup_n`). It doesn't wait for `dedup/`'s perceptual groups.
 - **03 is a decision**, needed before 06 can count the Drive scans once and only once.
+- **07 is the Takeout end to end.** It strings together 02, 05, 06, `catalogue/03` and `dedup/`, plus the Takeout quirks. Its owner steps (quality check, export request, Jude's consent) are the most urgent items in the backlog.
 - **06 runs last** and is the phase gate.
 
 ## Gate A (completeness, no ML)

@@ -17,6 +17,7 @@ The pipeline today:
 | 02 | [Capture grouping](02-capture-grouping.md) | Each rule has fixtures; per-rule counts and a 50-group spot check on ImportantFiles, with no false merges |
 | 03 | [Near-duplicate detection](03-near-duplicate-perceptual.md) | **Gate C:** precision ≥ 0.99 on labelled pairs at the chosen threshold, recall reported |
 | 04 | [Canonical member and caption-once worklist](04-canonical-member-and-caption-once.md) | Deterministic canonical choice; the worklist count re-quotes the bulk cost |
+| 06 | [Dedup before captioning](06-dedup-before-captioning.md) | caption runners refuse anything but a full-source worklist; existing labels are reused, never re-sent |
 | 05 | [Dedup report for the owner](05-dedup-report-for-owner.md) | The owner can read it and act on it; Shoebox deletes nothing |
 
 ## Sequencing
@@ -26,6 +27,7 @@ The pipeline today:
 3. **03** needs labelled pairs and a gate, so it is the slow one.
 4. **04** can ship on 01 + 02 alone. Near-duplicates only lower the count further, so a first worklist without 03 is allowed: it errs toward captioning too much, never too little.
 5. **05** reads whatever groups exist.
+6. **06** is the guard on captioning. It lands with 04 and before `bulk-captioning/02`: every caption run reads a worklist and reuses existing labels. It also settles whether to caption once all sources are deduped, or by stages.
 
 Full value needs `sources/` complete, because cross-library duplicates only show up once every share and the Takeout are inventoried. The code can be built and tested now on ImportantFiles.
 
