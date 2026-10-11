@@ -81,6 +81,7 @@ def register(sub) -> None:
     _register_audit(esub)
     _register_caption_audit(esub)
     _register_opus_pool(esub)
+    _register_graded(esub)
 
 
 def _register_search(esub) -> None:
@@ -797,6 +798,116 @@ def _judgments(args) -> int:
     judge.write_jsonl(out, rows)
     print(f"wrote {out}: {len(rows)} judgments ({len({r['query_id'] for r in rows})} queries), "
           f"params {judge.params_hash(cand)}")
+    return 0
+
+
+def _register_graded(esub) -> None:
+    from shoebox.evals import graded
+
+    sets = REPO_ROOT / "evals" / "sets"
+    for name, helptext in (("graded-dev", "dev nDCG@20 per route; freeze one route per captioner (task 7.1)"),
+                           ("graded-test", "score the frozen routes on test and apply gates.toml (task 7.3)")):
+        p = esub.add_parser(name, help=helptext)
+        p.add_argument("--set", required=True, dest="set_name")
+        p.add_argument("--qrels", required=True, help="qrels file in the set dir ({query_id, asset_id, grade})")
+        p.add_argument("--queries", default="queries-v1.jsonl", help="query file in the set dir")
+        p.add_argument("--index", type=Path, default=None,
+                       help="rankings index (default <shoebox_root>/results/search/<set>/index.json)")
+        p.add_argument("--date", default=None, help="run date YYYY-MM-DD (default today)")
+        p.add_argument("--sets-dir", type=Path, default=sets)
+        p.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
+        p.add_argument("--gates", type=Path, default=graded.GATES_PATH)
+        if name == "graded-dev":
+            p.add_argument("--force", action="store_true", help="overwrite an existing frozen-routes.json")
+            p.set_defaults(func=_graded_dev)
+        else:
+            p.add_argument("--secondary", default="judgments-v1.jsonl", help="secondary qrels in the set dir")
+            p.add_argument("--audit-dir", type=Path, default=REPO_ROOT / "evals" / "runs",
+                           help="where the caption audit JSONs are")
+            p.add_argument("--opus-tokens-per-1000", type=float, default=graded.OPUS_TOKENS_PER_1000)
+            p.add_argument("--spend", type=Path, default=None, help="spend log (default evals/spend.jsonl)")
+            p.set_defaults(func=_graded_test)
+
+
+def _graded_inputs(args):
+    from datetime import date
+
+    from shoebox.evals import graded, search
+
+    set_dir = args.sets_dir / args.set_name
+    qpath, rpath = set_dir / args.queries, set_dir / args.qrels
+    for f in (qpath, rpath):
+        if not f.exists():
+            raise FileNotFoundError(f"{f} not found")
+    index = args.index or search.search_dir(_cfg(), args.set_name) / "index.json"
+    routes, hashes = graded.load_routes(index, args.queries)
+    meta = {"set": args.set_name, "date": args.date or date.today().isoformat(), "queries_file": args.queries,
+            "qrels": args.qrels, "qrels_sha256": search.file_sha256(rpath)}
+    return set_dir, search.read_jsonl(qpath), graded.load_qrels(rpath), routes, hashes, meta
+
+
+def _graded_dev(args) -> int:
+    from shoebox.evals import graded, search
+
+    try:
+        set_dir, queries, qrels, routes, hashes, meta = _graded_inputs(args)
+        rep = graded.dev_report(queries, routes, qrels, meta)
+        graded.write_freeze(set_dir / graded.FREEZE_FILE, rep, hashes, args.force)
+    except (FileNotFoundError, FileExistsError, ValueError) as e:
+        print(f"shoebox eval graded-dev: {e}", file=sys.stderr)
+        return 2
+    stem = args.out_dir / f"{meta['date']}_{args.set_name}-dev"
+    search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
+    search._atomic_write(stem.with_suffix(".md"), graded.render_dev_md(rep))
+    print(f"wrote {stem}.md/.json and {set_dir / graded.FREEZE_FILE}: {len(rep['routes'])} routes, "
+          f"{rep['queries']} dev queries ({rep['queries_without_qrels']} without qrels, "
+          f"{len(rep['excluded_no_positive_grade'])} excluded)")
+    for c, f in rep["frozen"].items():
+        print(f"  {c}: {f['route']} {f['dev_ndcg']:.4f}")
+    return 0
+
+
+def _graded_test(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import graded, search
+
+    try:
+        set_dir = args.sets_dir / args.set_name
+        fpath = set_dir / graded.FREEZE_FILE
+        if not fpath.exists():
+            raise FileNotFoundError(f"{fpath} not found: run `shoebox eval graded-dev` to freeze the dev choice first")
+        frozen = json.loads(fpath.read_text())
+        set_dir, queries, primary, routes, _, meta = _graded_inputs(args)
+        secondary = None
+        if args.secondary:
+            spath = set_dir / args.secondary
+            if not spath.exists():
+                raise FileNotFoundError(f"{spath} not found")
+            secondary = graded.load_qrels(spath)
+            meta["secondary_qrels"] = args.secondary
+        gates = graded.load_gates(args.gates)
+        meta |= {"frozen_file": graded.FREEZE_FILE, "frozen_qrels": frozen.get("qrels"),
+                 "gates_version": gates.get("version"), "margin": float(gates["search"]["non_inferiority_margin"])}
+        rep = graded.score_test(queries, routes, frozen, primary, secondary, meta, gates)
+        caps = sorted(frozen["routes"])
+        rules = graded.caption_rules(args.audit_dir, args.set_name, caps, gates)
+        costs = graded.measure_costs(graded.load_config(), caps)
+        proj = graded.projections(costs, caps, int(gates["projection"]["library_images"]), args.opus_tokens_per_1000)
+    except (FileNotFoundError, ValueError, KeyError) as e:
+        print(f"shoebox eval graded-test: {e}", file=sys.stderr)
+        return 2
+    spent = privacy.spent_total(args.spend)
+    budget = privacy.limits().max_total_usd
+    cands = {c: proj[c] | {"search_ni": True if v["paired"] is None else v["paired"]["non_inferior"],
+                           "caption_pass": rules[c]["pass"], "mono_ok": rules[c]["mono_ok"], "caption": rules[c]}
+             for c, v in rep["frozen"].items()}
+    dec = graded.decide(cands, budget - spent, gates["reference"]["captioner"])
+    rep["decision"] = dec | {"candidates": cands, "spent_usd": spent, "budget_usd": budget}
+    stem = args.out_dir / f"{meta['date']}_{args.set_name}-test"
+    search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
+    search._atomic_write(stem.with_suffix(".md"), graded.render_test_md(rep))
+    print(f"wrote {stem}.md/.json: recommendation {dec['recommendation']['captioner']} "
+          f"(rule {dec['recommendation']['rule']})")
     return 0
 
 

@@ -1,0 +1,64 @@
+{
+ "chosen_on": "dev",
+ "date": "2026-10-11",
+ "params": {
+  "gains": "linear 0/1/2",
+  "kinds": [
+   "known_item",
+   "category"
+  ],
+  "metric": "ndcg@20",
+  "n_dev_queries_scored": {
+   "e4b-bf16": 94,
+   "e4b-bf16-v2": 94,
+   "g12b-q4": 94,
+   "g12b-q4-v2": 94,
+   "gemini-medium-v2": 94,
+   "none": 94,
+   "opus-v2": 94
+  },
+  "queries_file": "queries-v1.jsonl",
+  "tie_break": "fewer +exp/+filt suffixes, then route name",
+  "unjudged": "grade 0"
+ },
+ "qrels": "judgments-v1.jsonl",
+ "qrels_sha256": "947dd011d0b49d74d8a3813baa5d3358882fb4086f9187054898dc9cb86ab47a",
+ "routes": {
+  "e4b-bf16": {
+   "dev_ndcg": 0.7926599281875616,
+   "params_hash": "d4b89a9417ad3409",
+   "route": "eg2-blend:e4b-bf16"
+  },
+  "e4b-bf16-v2": {
+   "dev_ndcg": 0.7972477699154532,
+   "params_hash": "e2b49e1a947f13a2",
+   "route": "eg2-blend:e4b-bf16-v2"
+  },
+  "g12b-q4": {
+   "dev_ndcg": 0.8141625515510333,
+   "params_hash": "900fe3c1605f0fd2",
+   "route": "eg2-blend:g12b-q4"
+  },
+  "g12b-q4-v2": {
+   "dev_ndcg": 0.8196476904867709,
+   "params_hash": "4cf9c56031e02ea8",
+   "route": "eg2-blend:g12b-q4-v2"
+  },
+  "gemini-medium-v2": {
+   "dev_ndcg": 0.8330703033219942,
+   "params_hash": "6e9c45a5d15aa472",
+   "route": "eg2-blend:gemini-medium-v2"
+  },
+  "none": {
+   "dev_ndcg": 0.7920360024655333,
+   "params_hash": "a576337d37d8335e",
+   "route": "eg2-image@768"
+  },
+  "opus-v2": {
+   "dev_ndcg": 0.8332408472211211,
+   "params_hash": "d9ab2c9c89160158",
+   "route": "eg2-blend:opus-v2"
+  }
+ },
+ "set": "eval-1k"
+}
