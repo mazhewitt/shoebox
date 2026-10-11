@@ -226,7 +226,8 @@ def cmd_bulk(args: argparse.Namespace) -> int:
         missing = bulk.check_sources(header, cfg, args.partial_sources)
         names = bulk.chain_names(res, args.label_sources)
         plan = bulk.plan(caps, queue, bulk.chain_index(cfg, names, runners.resolve))
-    except (bulk.Refused, OSError, KeyError) as e:
+        plan = bulk.route_tiny(plan, res, cfg)
+    except (bulk.Refused, OSError, KeyError, ValueError) as e:
         _err(f"refused: {e}")
         return 2
     if missing:
@@ -235,7 +236,7 @@ def cmd_bulk(args: argparse.Namespace) -> int:
     if args.dry_run:
         return 0
     send = plan.to_send[: args.limit] if args.limit else plan.to_send
-    items, unlocated = bulk.items_for(send, cfg)
+    items, others, unlocated = bulk.items_for(send, cfg)
     for aid in unlocated:
         _err(f"skipped {aid}: canonical asset not in the current frames (stale worklist?)")
     record = {"started": _now(), "candidate": res.name, "model_id": res.model_id, "params_hash": res.params_hash,
@@ -246,13 +247,24 @@ def cmd_bulk(args: argparse.Namespace) -> int:
               "state": "started"}
     rec_path = bulk.write_run_record(cfg, res.name, record)
     tally_doc: dict = {}
+    if items and queue == "hosted":
+        try:  # eligibility now, over every member and linked asset: the worklist may be stale
+            elig = bulk.recheck_hosted(items, others, cfg)
+        except privacy.PrivacyError as e:
+            _err(f"refused: {e}")
+            bulk.write_run_record(cfg, res.name, {**record, "state": "refused", "error": str(e)}, rec_path)
+            return 2
+        for s in elig.skipped:
+            _err(f"skipped {s.asset_id}: {s.reason}")
+        items = elig.allowed
+        record["counts"].update(recheck_skipped=len(elig.skipped), sent=len(items))
     if items and res.cand["runtime"] == "gemini-batch":
         from shoebox.runners import gemini_batch
 
         try:
             t = gemini_batch.run_batch(res, items, cfg, bulk.batch_transport(),
-                                       max_poll_rounds=args.max_poll_rounds)
-        except privacy.PrivacyError as e:
+                                       max_poll_rounds=args.max_poll_rounds, others=others)
+        except (privacy.PrivacyError, gemini_batch.LedgerError) as e:
             _err(f"refused: {e}")
             bulk.write_run_record(cfg, res.name, {**record, "state": "refused", "error": str(e)}, rec_path)
             return 2

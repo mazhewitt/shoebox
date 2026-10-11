@@ -32,7 +32,11 @@ CONFIG_DIR = REPO_ROOT / "config"
 # gets its own params_hash (see `resolve`).
 # `label_sources` is the ordered label-source chain a bulk run reuses labels from (design D8): where to look,
 # not how to label.
-_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry", "label_sources"}
+# `tiny_max_side` / `tiny_action` are the tiny-image rule (task 9.2, `tiny_rule`): which images a candidate
+# routes elsewhere or marks, not how it labels them.
+_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry", "label_sources",
+               "tiny_max_side", "tiny_action"}
+TINY_ACTIONS = ("route_hosted_else_mark",)
 _NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
 # Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
 # Vally executor read; embedding vectors are not label-v1 records and go under `embeddings`.
@@ -186,8 +190,39 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def run_and_store(res: Resolved, item: dict, image: Path, cfg: Config) -> dict:
-    """Call the runner for one item and append its record. Runner exceptions become `error` records."""
+def tiny_rule(res: Resolved) -> dict | None:
+    """The candidate's tiny-image rule `{tiny_rule, tiny_max_side}`, or None if it has none (task 9.2,
+    evals/runs/2026-10-11_tiny-images.md). `route_hosted_else_mark`: a hosted-eligible tiny capture is left
+    for the hosted candidate (`shoebox label bulk`); any tiny image this candidate does caption is marked."""
+    n, action = res.cand.get("tiny_max_side"), res.cand.get("tiny_action")
+    if n is None and action is None:
+        return None
+    if not isinstance(n, int) or n <= 0 or action not in TINY_ACTIONS:
+        raise ValueError(f"candidate {res.name}: tiny_max_side must be a positive int and tiny_action one of "
+                         f"{', '.join(TINY_ACTIONS)}; got {n!r}, {action!r}")
+    return {"tiny_rule": action, "tiny_max_side": n}
+
+
+def is_tiny(drec: dict | None, max_side: int) -> bool:
+    """The source long side (derive index `src_width`/`src_height`) is under `max_side`. Unknown dims: no."""
+    w, h = (drec or {}).get("src_width"), (drec or {}).get("src_height")
+    return isinstance(w, int) and isinstance(h, int) and max(w, h) < max_side
+
+
+def tiny_assets(res: Resolved, cfg: Config, asset_ids) -> set[str]:
+    """Of `asset_ids`, those the candidate's tiny rule applies to (empty if it has no rule)."""
+    rule = tiny_rule(res)
+    if rule is None:
+        return set()
+    from shoebox import derive
+
+    derived = derive.load_index(cfg, res.cand.get("profile", "infer-v1"))
+    return {a for a in asset_ids if is_tiny(derived.get(a), rule["tiny_max_side"])}
+
+
+def run_and_store(res: Resolved, item: dict, image: Path, cfg: Config, mark: dict | None = None) -> dict:
+    """Call the runner for one item and append its record (plus `mark`, e.g. the tiny-image rule's fields).
+    Runner exceptions become `error` records."""
     t0 = time.monotonic()
     try:
         out = res.runner.run_one(res.cand, item, image, cfg)
@@ -208,6 +243,8 @@ def run_and_store(res: Resolved, item: dict, image: Path, cfg: Config) -> dict:
     }
     if out.get("reason"):
         rec["reason"] = out["reason"]
+    if mark:
+        rec.update(mark)
     store.append(cfg, rec, res.kind)
     return rec
 
@@ -316,8 +353,10 @@ def run_items(res: Resolved, items: list[dict], cfg: Config,
     if pending:
         store.write_params(cfg, res.model_id, res.params_hash, _params_doc(res), res.kind)
     tally.started = time.monotonic()
+    tiny = tiny_assets(res, cfg, [it["asset_id"] for it, _ in pending]) if pending else set()
+    mark = {"tiny": True, **(tiny_rule(res) or {})}
     for it, image in pending:
-        rec = run_and_store(res, it, image, cfg)
+        rec = run_and_store(res, it, image, cfg, mark if it["asset_id"] in tiny else None)
         setattr(tally, rec["status"], getattr(tally, rec["status"]) + 1)
         if progress:
             progress(tally, it, rec)

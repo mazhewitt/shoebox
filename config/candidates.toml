@@ -102,3 +102,8 @@ num_ctx = 8192
 num_predict = 1024
 image_budget = "auto"
 retry = { num_predict = 450, repeat_penalty = 1.1 }
+# Tiny-image rule (task 9.2, evals/runs/2026-10-11_tiny-images.md): an image whose source long side is under
+# 256 px goes to the hosted candidate when its capture is hosted-eligible; otherwise 12B captions it and the
+# record is marked `tiny`. Not hashed (routing and marking, not the model's output).
+tiny_max_side = 256
+tiny_action = "route_hosted_else_mark"

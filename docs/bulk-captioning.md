@@ -79,15 +79,19 @@ The chain is an ordered list of candidates, resolved with `runners.source_index`
 3. the built-in default: `gemini-batch-v2` → `gemini-batch-v2, gemini-medium-v2`;
 4. the candidate alone.
 
-The candidate itself is always first. A refused or truncated-and-unrecovered record is not a usable label.
+The candidate itself is always first. A refused or truncated-and-unrecovered record is not a usable label,
+and for a hosted candidate it is not sent again either: Gemini would refuse it again, and each refusal is
+paid for. Such a capture is counted as `fallback` and left to `shoebox label fallback` (section 5).
 
 The summary line reconciles the counts:
 
 ```
-gemini-batch-v2: assets A -> captures C -> eligible E -> hosted H -> reused R -> to send S  (queues: ...)
+gemini-batch-v2: assets A -> captures C -> eligible E -> hosted H -> reused R -> fallback F -> to send S  (queues: ...)
+g12b-q4-v2: assets A -> captures C -> eligible E -> local L -> reused R -> fallback 0 -> tiny routed T -> to send S  (queues: ...)
 ```
 
-`R + S = H`, and the queues sum to `C`. File counts (before byte dedup) are in the worklist's summary in
+`R + F + S = H` (`R + F + T + S = L` for a candidate with a tiny-image rule, section 6), and the queues sum
+to `C`. File counts (before byte dedup) are in the worklist's summary in
 `evals/runs/`.
 
 ## 4. Batch jobs
@@ -97,12 +101,24 @@ gemini-batch-v2: assets A -> captures C -> eligible E -> hosted H -> reused R ->
 eligibility (`privacy.filter_items`, re-applied per item), derived-image checks, current price, per-run cap
 and project budget, each job pre-flighted at the batch price.
 
+Eligibility is checked again at send time over the **whole capture**, whatever the worklist said: the
+canonical item carries the capture id as its group, and every member and linked asset (at every location in
+the copy index) is passed as a sibling. A member put on the never-send list, or quarantined, after the
+worklist was built blocks the capture (`skipped <id>: copy_restricted` / `quarantined`). A configured source
+without a current inventory frame refuses the run, naming the source, before anything is submitted.
+
 ```sh
 shoebox label bulk --worklist all-sources --candidate gemini-batch-v2
 ```
 
-- **Ledger.** Each submitted job is recorded at `results/batch-jobs/gemini-batch-v2/<job_id>.json` with
-  its items and state, before anything else happens.
+- **Ledger.** Before a job is submitted, an intent (its items, a unique `display_name`, state
+  `submitting`) is written to `results/batch-jobs/gemini-batch-v2/intent_<display_name>.json`; once the
+  provider returns the job id it becomes `<job_id>.json`. A rerun settles every intent first: it looks the
+  job up by `display_name` and adopts it if it exists (no resubmit, no double spend), or marks it `failed`
+  (its items are pending again) if the lookup finds none. If the lookup itself fails, the run refuses to
+  submit anything.
+- **Params.** An open or downloaded job made under another `params_hash` than the candidate's current one
+  is refused, naming the job and both hashes: its results are never stored under the new key.
 - **Spend.** A job's actual cost is appended to `evals/spend.jsonl` when its results are downloaded,
   before its labels are stored, once per job.
 - **Resume.** Re-run the same command. Open jobs are polled, downloaded jobs are finished, and no item in an
@@ -141,3 +157,23 @@ shoebox label fallback --candidate g12b-q4-v2 --primary gemini-batch-v2,gemini-m
 Search then resolves labels through `[gemini-batch-v2, gemini-medium-v2, g12b-q4-v2]`: a refused primary
 record falls through to the 12B label, which names its own model, and `fell_through` lists the sources
 passed over.
+
+## 6. Tiny images
+
+Measured in `evals/runs/2026-10-11_tiny-images.md` (task 9.1): Gemini is fine on tiny images, 12B is not.
+The rule is a candidate rule on `g12b-q4-v2` (not hashed: it routes and marks, it does not change the
+model's output):
+
+```toml
+tiny_max_side = 256
+tiny_action = "route_hosted_else_mark"
+```
+
+An image is tiny when its **source** long side (`src_width`/`src_height` in the derive index) is under
+256 px; unknown dimensions are not tiny.
+
+- In `shoebox label bulk` with the 12B candidate, a tiny capture that is hosted-eligible is not captioned
+  locally: it is counted as `tiny routed` and left for the hosted candidate.
+- Any tiny image 12B does caption (local-only captures, fallbacks, eval runs) gets `tiny: true`,
+  `tiny_rule: "route_hosted_else_mark"` and `tiny_max_side: 256` in its record, so search can weigh it lower.
+- Gemini candidates have no rule.
