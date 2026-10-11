@@ -513,3 +513,13 @@ def test_fallback_refuses_a_hosted_candidate(wb, capsys):
     assert main(["label", "fallback", "--candidate", "gemini-medium-v2", "--primary", "gemini-batch-v2"]) == 2
     assert "local" in capsys.readouterr().err
 
+
+
+def test_plan_counts_unscreened_queue(wb, capsys):
+    """The worklist's `unscreened` queue (screen pending or errored) is counted, never sent, never a crash."""
+    caps = [capture(AIDS[0]), capture(AIDS[1], queue="unscreened")]
+    plan = bulk.plan(caps, "hosted", {})
+    assert (plan.counts["unscreened"], plan.counts["to_send"]) == (1, 1)
+    p = write_worklist(wb.cfg, "u", caps)
+    assert main(bulk_args(p, "--dry-run")) == 0
+    assert "not_derived 0, unscreened 1" in capsys.readouterr().out

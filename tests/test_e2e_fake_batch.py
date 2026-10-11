@@ -1,7 +1,6 @@
 """tools/e2e_fake_batch.py (task 10.1) on a synthetic five-asset library. Fake transport only."""
 
 import importlib.util
-import json
 from pathlib import Path
 
 import pytest
@@ -142,10 +141,10 @@ def test_reconcile_catches_a_mismatch():
     assert probs and any("requests sent 2" in p for p in probs)
 
 
-def test_unscreened_queue_row_is_reported_not_crashed(lib):
-    """bulk.plan does not know the worklist's `unscreened` queue: the harness reports it as a problem."""
+def test_unscreened_queue_row_is_counted_and_not_sent(lib):
+    """The worklist's `unscreened` queue reconciles and none of its captures is sent."""
     caps = [capture(AIDS[2]), {**capture(AIDS[3]), "queue": "unscreened", "eligible": True}]
     lib.wl = write_worklist(lib.cfg, "e2e-u", caps)
     r = run(lib)
-    assert r.rc == 1 and any("assertion" in p for p in r.problems)
-    assert json.loads(json.dumps(r.table)) == {}
+    assert r.rc == 0, r.problems
+    assert r.table["unscreened"] == 1 and r.table["requests_sent"] == 1, r.table

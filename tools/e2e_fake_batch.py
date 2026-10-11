@@ -309,7 +309,8 @@ def reconcile(files: int, counts: dict, tally: dict, n_requests: int, limit: int
     if tally.get("submitted") is not None and tally["submitted"] != n_requests:
         probs.append("batch tally `submitted` != requests the transport received")
     table = {"files": files, "assets": c["assets"], "captures": c["captures"], "eligible": c["eligible"],
-             "hosted": c["hosted"], "reused": c["reused"], "fallback": c["fallback"], "tiny_routed": tiny,
+             "hosted": c["hosted"], **{q: c.get(q, 0) for q in ("local", "held", "not_derived", "unscreened")},
+             "reused": c["reused"], "fallback": c["fallback"], "tiny_routed": tiny,
              "to_send": c["to_send"], "limit": limit, "to_send_this_run": sliced, **drops,
              "not_submitted": not_submitted, "requests_sent": n_requests}
     return table, probs

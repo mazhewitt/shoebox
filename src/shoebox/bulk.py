@@ -135,7 +135,7 @@ def plan(captures: list[dict], queue: str, index: dict[str, dict]) -> Plan:
                 and any(_falls_through(index.get(a)) for a in capture_assets(c))]
     rset |= {id(c) for c in fallback}
     to_send = [c for c in mine if id(c) not in rset]
-    by_queue = {q: sum(c.get("queue") == q for c in captures) for q in ("hosted", "local", "held", "not_derived")}
+    by_queue = {q: sum(c.get("queue") == q for c in captures) for q in ("hosted", "local", "held", "not_derived", "unscreened")}
     counts = {
         "assets": sum(len(c.get("members", ())) + len(c.get("linked", ())) for c in captures),
         "captures": len(captures),
@@ -174,7 +174,7 @@ def summary_line(n: dict) -> str:
             f"{n['for_candidate']} -> reused {n['reused']} -> fallback {n['fallback']}{tiny} -> "
             f"to send {n['to_send']}  "
             f"(queues: hosted {n['hosted']}, local {n['local']}, held {n['held']}, "
-            f"not_derived {n['not_derived']})")
+            f"not_derived {n['not_derived']}, unscreened {n['unscreened']})")
 
 
 def items_for(captures: list[dict], cfg: config.Config) -> tuple[list[dict], list[dict], list[str]]:
