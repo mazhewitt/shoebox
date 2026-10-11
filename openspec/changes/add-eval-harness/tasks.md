@@ -64,18 +64,23 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 
 - [x] 6.1 Gemini grid judge: query plus up to 10 numbered thumbnails, returning grades 0/1/2 as JSON, keyed `(query_id, asset_id, …)`, with a USD cap. Verify on a 5-query dry run with a mocked API, then live on 10 dev queries.
   Done 2026-10-11: judge-v2 (photos + capture date/folder notes, after judge-v1 failed date queries on the 10-query dry run).
-- [ ] 6.2 Pool the top-10 of every route per query, plus the targets, and judge them all ($25 cap). Verify pool coverage is 1.0 for every route.
-- [ ] 6.3 Opus audit: a stratified 10% plus all target disagreements. Compute weighted kappa overall and per route, and re-judge the test pool with Opus if kappa < 0.6.
-- [ ] 6.4 Local review page (static HTML on the laptop, derived JPEGs): the owner judges 100 audited items and rates 30 caption sets blind. Store the results with provenance.
+- [x] 6.2 Pool the top-10 of every route per query, plus the targets, and judge them all ($25 cap). Verify pool coverage is 1.0 for every route.
+  Done 2026-10-11: pool-v3 (75 routes, 18,921 pairs) fully judged by Gemini ($10.04 total hosted spend so far).
+- [x] 6.3 Opus audit: a stratified 10% plus all target disagreements. Compute weighted kappa overall and per route, and re-judge the test pool with Opus if kappa < 0.6.
+  Done 2026-10-11: Opus judged the WHOLE test pool (11,207 pairs) instead of a 10% sample; Gemini–Opus linear kappa 0.71 (category 0.79, known-item 0.62), even across routes. Opus qrels are primary on test (gates v2).
+- [x] 6.4 Local review page (static HTML on the laptop, derived JPEGs): the owner judges 100 audited items and rates 30 caption sets blind. Store the results with provenance.
+  Done 2026-10-11: owner rated 30 photos × 6 arms blind and did the 30-query realism check (29/30 realistic).
 - [x] 6.5 Opus caption audit: 200 photos, every arm's captions shown blind, counting wrong or invented facts and missing searchable facts. Structured-field reference: metadata rules where unambiguous, otherwise Gemini; Opus audits 200, and the owner checks the disagreements. Score every arm's `rotate_cw` on the `eval-1k` scans against Opus (precision on upright scans, recall on mis-oriented ones).
   Done 2026-10-11 (caption part): `evals/runs/2026-10-11_eval-1k-caption-audit.md`. Owner check of disagreements pending (6.4).
 
 ## 7. Decision rule and reports
 
-- [ ] 7.1 Tune on dev only: blend weight, expansion prompt, filters. Freeze them.
+- [x] 7.1 Tune on dev only: blend weight, expansion prompt, filters. Freeze them.
+  Done 2026-10-11: plain eg2-blend wins for every captioner on dev; +exp and +filt don't help overall (+filt helps category queries). Frozen in frozen-routes.json.
 - [x] 7.2 Write and commit `evals/gates.toml` (D11) before any test-split scoring. Verify the commit precedes the test run records.
   Done 2026-10-11 (542640b), before any test-split search scoring.
-- [ ] 7.3 Score test: graded nDCG@20 and paired-bootstrap deltas against the reference, per kind, style and the owner-notes subset; caption error rates; structured-field precision per stratum. Add cost and time projections for 71.6k images (USD at the stated price date, local hours on the M5 Max).
+- [x] 7.3 Score test: graded nDCG@20 and paired-bootstrap deltas against the reference, per kind, style and the owner-notes subset; caption error rates; structured-field precision per stratum. Add cost and time projections for 71.6k images (USD at the stated price date, local hours on the M5 Max).
+  Done 2026-10-11: evals/runs/2026-10-11_eval-1k-test.md. Rule recommends gemini-medium-v2 at batch price (~$98, fits); opus-v2 also survives (best search, owner-preferred) at ~229M subscription tokens.
 - [ ] 7.4 Confirm the chosen pipeline on `pilot-v0-pool5k` (owner notes plus the subset of queries whose source photos are in it). Report any change in route order.
 
 ## 8. Recommendation
