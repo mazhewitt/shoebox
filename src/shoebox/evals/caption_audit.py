@@ -32,7 +32,10 @@ from shoebox.evals.audit import check_out_dir
 
 ARMS = ("e4b-bf16", "g12b-q4", "e4b-bf16-v2", "g12b-q4-v2", "gemini-medium-v2")
 REFERENCE_ARM = "gemini-medium-v2"
-LABELS = "ABCDE"
+OPUS_ARM = "opus-v2"  # Claude Opus captions: a sixth arm option (`--arms`), not in the default five
+ARM_OPTIONS = (*ARMS, OPUS_ARM)
+LABELS = "ABCDEF"  # five arms use A-E exactly as before; a sixth gets F
+SELF_AUDIT_NOTE = "self-audit — not used for the rule"
 SAMPLE_FILE = "caption-audit-sample.jsonl"
 SAMPLE_META = "caption-audit-sample.json"
 DEFAULT_N = 200
@@ -420,9 +423,11 @@ def _structured(rows: list[tuple[dict, dict]]) -> dict:
 
 def build_report(records: list[dict], meta: dict, b: int = BOOTSTRAP, seed: int = DEFAULT_SEED,
                  reference: str = REFERENCE_ARM, rescore: list[dict] | None = None,
-                 owner: list[dict] | None = None) -> dict:
+                 owner: list[dict] | None = None, self_audit_arm: str | None = None) -> dict:
     """Per-arm audit numbers. Reads counts and enums only; no caption, description or note text is copied.
-    With `rescore` (caption_usefulness records) adds `usefulness` (rubric scores, owner review if `owner`)."""
+    With `rescore` (caption_usefulness records) adds `usefulness` (rubric scores, owner review if `owner`).
+    `self_audit_arm`: the arm written by the auditor's own model; its cells are marked and its D11 rule
+    result is not used (`self_audit` in the report, `self_audit: true` on its paired row)."""
     arms = sorted({arm for r in records for arm in r["sets"]})
     per_arm, structured, by_arm = {}, {}, {}
     for arm in arms:
@@ -461,12 +466,16 @@ def build_report(records: list[dict], meta: dict, b: int = BOOTSTRAP, seed: int 
                       "ci95": _pct([sum(d[i] for i in ix) / n for ix in idx]) if n else None}
         diff = out["error_rate"]["diff"]
         out["d11_error_rate_pass"] = None if diff is None else diff <= ERROR_RATE_MARGIN + 1e-12
+        if arm == self_audit_arm:
+            out["self_audit"] = True
         paired[arm] = out
     extra = {}
     if rescore:
         from shoebox.evals import review
 
         extra["usefulness"] = review.usefulness_report(records, rescore, owner, b, seed, reference)
+    if self_audit_arm is not None:
+        extra["self_audit"] = {self_audit_arm: SELF_AUDIT_NOTE}
     return {**meta, **extra, "photos": len(records), "reference_arm": reference, "bootstrap": b, "arms": per_arm,
             "paired_vs_reference": paired, "structured": structured,
             "rules": {"error_rate": "share of photos with >= 1 wrong or invented fact, or no caption at all "
@@ -487,9 +496,16 @@ def _ci(c) -> str:
     return "n/a" if not c else f"{_f(c[0])}–{_f(c[1])}"
 
 
+def _self(rep: dict, arm: str) -> str:
+    return f" ({SELF_AUDIT_NOTE})" if arm in (rep.get("self_audit") or {}) else ""
+
+
 def render_md(rep: dict) -> str:
-    lines = [f"# Caption audit: {rep.get('set', '')} (Opus vs every arm, blind)", "",
-             f"- Opus: `{rep.get('opus_model_id')}` `{rep.get('opus_params_hash')}`",
+    who = rep.get("auditor", "Opus")
+    mid = rep.get("auditor_model_id", rep.get("opus_model_id"))
+    ph = rep.get("auditor_params_hash", rep.get("opus_params_hash"))
+    lines = [f"# Caption audit: {rep.get('set', '')} ({who} vs every arm, blind)", "",
+             f"- {who}: `{mid}` `{ph}`",
              (f"- Photos audited: {rep['photos']}; reference arm `{rep['reference_arm']}`; "
               f"bootstrap {rep['bootstrap']} resamples over photos"), "",
              "## Per arm (mean per photo, 95% CI)", "",
@@ -498,17 +514,18 @@ def render_md(rep: dict) -> str:
     for arm, a in rep["arms"].items():
         cells = [f"{_f(a[m]['mean'])} ({_ci(a[m]['ci95'])})"
                  for m in ("wrong", "invented", "missing", "error_rate", "useful")]
-        lines.append(f"| {arm} | {a['n']} | {a['no_caption']} | {' | '.join(cells)} |")
+        lines.append(f"| {arm}{_self(rep, arm)} | {a['n']} | {a['no_caption']} | {' | '.join(cells)} |")
     lines += ["", f"## Paired differences vs `{rep['reference_arm']}` (candidate minus reference)", "",
               "| arm | n | error rate | wrong | invented | missing | useful | D11 error rule |",
               "|---|---|---|---|---|---|---|---|"]
     for arm, p in rep["paired_vs_reference"].items():
         cells = [f"{_f(p[m]['diff'])} ({_ci(p[m]['ci95'])})"
                  for m in ("error_rate", "wrong", "invented", "missing", "useful")]
-        lines.append(f"| {arm} | {p['n']} | {' | '.join(cells)} | {p['d11_error_rate_pass']} |")
+        rule = SELF_AUDIT_NOTE if p.get("self_audit") else p["d11_error_rate_pass"]
+        lines.append(f"| {arm} | {p['n']} | {' | '.join(cells)} | {rule} |")
     head = [("| {} | medium | digitiser | colour_class | mono precision | mono recall | mono gate | rotate rotated | "
              "rotate upright |"), "|---|---|---|---|---|---|---|---|---|"]
-    lines += ["", "## Structured fields vs the Opus reference (high/medium confidence)", "", head[0].format("arm"),
+    lines += ["", f"## Structured fields vs the {who} reference (high/medium confidence)", "", head[0].format("arm"),
               head[1]]
 
     def row(name, s):

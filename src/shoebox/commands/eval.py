@@ -292,7 +292,8 @@ def _register_caption_audit(esub) -> None:
     p.add_argument("--out", required=True, type=Path, help="scratch dir (never under evals/)")
     p.add_argument("--per-batch", type=int, default=20)
     p.add_argument("--seed", type=int, default=ca.DEFAULT_SEED)
-    p.add_argument("--arms", default=",".join(ca.ARMS))
+    p.add_argument("--arms", default=",".join(ca.ARMS),
+                   help=f"comma-separated arms, up to {len(ca.LABELS)} (options: {','.join(ca.ARM_OPTIONS)})")
     p.add_argument("--sets-dir", type=Path, default=sets)
     p.set_defaults(func=_caption_packets)
 
@@ -312,7 +313,21 @@ def _register_caption_audit(esub) -> None:
     r.add_argument("--rescore-params-hash", default=None, help="caption_usefulness store dir (default: the only one)")
     r.add_argument("--owner-params-hash", default=None, help="owner_reviews store dir (default: the only one)")
     r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
+    r.add_argument("--auditor", choices=("opus", "gemini", "both"), default="opus")
+    r.add_argument("--gemini-model-id", default="gemini/gemini-3.8-flash")
+    r.add_argument("--gemini-params-hash", default=None, help="Gemini caption_audits store dir (default: the only one)")
     r.set_defaults(func=_caption_report)
+
+    from shoebox.evals import caption_audit_gemini as cg
+
+    g = esub.add_parser("caption-audit-gemini", help="audit a caption-packets dir with Gemini (second auditor)")
+    g.add_argument("--set", required=True, dest="set_name")
+    g.add_argument("--packets", required=True, type=Path, help="caption-packets dir (batch-*.json, map.json)")
+    g.add_argument("--max-usd", type=float, default=cg.DEFAULT_MAX_USD)
+    g.add_argument("--limit", type=int, default=None, help="at most N photos this run")
+    g.add_argument("--dry-run", action="store_true", help="plan and estimate only: no HTTP, no spend")
+    g.add_argument("--sets-dir", type=Path, default=sets)
+    g.set_defaults(func=_caption_audit_gemini)
     _register_review(esub, sets)
 
 
@@ -474,28 +489,82 @@ def _caption_report(args) -> int:
     from datetime import date
 
     from shoebox.evals import caption_audit as ca
+    from shoebox.evals import caption_audit_gemini as cg
     from shoebox.evals import review as rv
     from shoebox.evals import search
 
     cfg = _cfg()
+    day = args.date or date.today().isoformat()
     try:
-        ph, recs = ca.audit_records(cfg, args.model_id, args.params_hash)
-        rph, rescore = rv.records(cfg, rv.RESCORE_KIND, args.model_id, args.rescore_params_hash)
-        oph, owner = rv.records(cfg, rv.OWNER_KIND, rv.OWNER_MODEL_ID, args.owner_params_hash)
+        if args.auditor in ("opus", "both"):
+            ph, recs = ca.audit_records(cfg, args.model_id, args.params_hash)
+            rph, rescore = rv.records(cfg, rv.RESCORE_KIND, args.model_id, args.rescore_params_hash)
+            oph, owner = rv.records(cfg, rv.OWNER_KIND, rv.OWNER_MODEL_ID, args.owner_params_hash)
+        if args.auditor in ("gemini", "both"):
+            gph, grecs = ca.audit_records(cfg, args.gemini_model_id, args.gemini_params_hash)
     except (ValueError, FileNotFoundError) as e:
         print(f"shoebox eval caption-report: {e}", file=sys.stderr)
         return 2
-    meta = {"set": args.set_name, "date": args.date or date.today().isoformat(), "opus_model_id": args.model_id,
-            "opus_params_hash": ph}
-    if rescore:
-        meta["rescore_params_hash"] = rph
-        if owner:
-            meta["owner_params_hash"] = oph
-    rep = ca.build_report(recs, meta, args.bootstrap, rescore=rescore or None, owner=owner or None)
-    stem = args.out_dir / f"{meta['date']}_{args.set_name}-caption-audit"
+    if args.auditor in ("opus", "both"):
+        meta = {"set": args.set_name, "date": day, "opus_model_id": args.model_id, "opus_params_hash": ph}
+        if rescore:
+            meta["rescore_params_hash"] = rph
+            if owner:
+                meta["owner_params_hash"] = oph
+        rep = ca.build_report(recs, meta, args.bootstrap, rescore=rescore or None, owner=owner or None,
+                              self_audit_arm=cg.SELF_AUDIT.get(args.model_id))
+    if args.auditor in ("gemini", "both"):
+        gmeta = {"set": args.set_name, "date": day, "auditor": "Gemini", "auditor_model_id": args.gemini_model_id,
+                 "auditor_params_hash": gph}
+        grep_ = ca.build_report(grecs, gmeta, args.bootstrap, self_audit_arm=cg.SELF_AUDIT.get(args.gemini_model_id))
+    if args.auditor == "gemini":
+        rep, suffix, md = grep_, "caption-audit-gemini", ca.render_md(grep_)
+    elif args.auditor == "both":
+        rep = cg.compare(rep, grep_, recs, grecs, {"set": args.set_name, "date": day})
+        suffix, md = "caption-audit-both", cg.render_compare_md(rep)
+    else:
+        suffix, md = "caption-audit", ca.render_md(rep)
+    stem = args.out_dir / f"{day}_{args.set_name}-{suffix}"
     search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
-    search._atomic_write(stem.with_suffix(".md"), ca.render_md(rep))
-    print(f"wrote {stem}.md/.json: {rep['photos']} photos, {len(rep['arms'])} arms")
+    search._atomic_write(stem.with_suffix(".md"), md)
+    if args.auditor == "both":
+        print(f"wrote {stem}.md/.json: Opus and Gemini auditors, {len(rep['side_by_side'])} arms")
+    else:
+        print(f"wrote {stem}.md/.json: {rep['photos']} photos, {len(rep['arms'])} arms")
+    return 0
+
+
+def _caption_audit_gemini(args) -> int:
+    from shoebox import privacy, runners
+    from shoebox.evals import caption_audit as ca
+    from shoebox.evals import caption_audit_gemini as cg
+    from shoebox.evals import search
+    from shoebox.runners import gemini
+
+    set_dir = args.sets_dir / args.set_name
+    cfg = _cfg()
+    try:
+        rows = search.read_jsonl(set_dir / ca.SAMPLE_FILE)
+        items = search.read_jsonl(set_dir / "items.jsonl")
+        cand = cg.candidate(runners.load_candidates()[cg.BASE_CANDIDATE], args.max_usd)
+        if args.dry_run:
+            p, meta, _ = cg.plan(cfg, args.packets, rows, items, cand, privacy.known_items(), args.limit)
+            est = cg.estimate(cand, p)
+            print(f"dry run [{cg.NAME} {cg.params_hash(cand, meta)}]: {len(p.tasks)} photos, {p.cached} cached, "
+                  f"{len(p.skipped)} skipped; arms {','.join(meta['arms'])}; estimated {est.input_tokens} input + "
+                  f"{est.output_tokens} output tokens = ${est.usd:.4f} (cap ${args.max_usd:.2f})")
+            for s in p.skipped:
+                print(f"  skipped {s['key']}: {s['reason']}")
+            return 0
+        res = cg.run(cfg, args.packets, rows, items, cand, privacy.known_items(), args.limit)
+    except (FileNotFoundError, KeyError, ValueError, privacy.PrivacyError, gemini.GeminiError) as e:
+        print(f"shoebox eval caption-audit-gemini: {e}", file=sys.stderr)
+        return 2
+    print(f"audited {sum(res.status.values())} photos in {res.calls} calls (${res.usd:.4f}): {res.status}; "
+          f"{res.plan.cached} cached, {len(res.plan.skipped)} skipped; {cg.NAME} {res.params_hash}")
+    if res.stopped:
+        print(f"shoebox eval caption-audit-gemini: stopped: {res.stopped}", file=sys.stderr)
+        return 1
     return 0
 
 
