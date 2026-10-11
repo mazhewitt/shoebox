@@ -351,3 +351,31 @@ def test_build_data_ignores_embedding_stores(tmp_path, monkeypatch):
                                            "params_hash": "a" * 16, "status": "ok", "output": {"image": {}}}])
     data = build_data(cfg, items, labels)
     assert {c["key"].split("/")[0] for c in data["candidates"]} == {"ollama__gemma4_e4b", "rules-v1"}
+
+
+def test_build_data_leaves_out_quarantined_and_counts_them(tmp_path):
+    from shoebox import quarantine
+
+    cfg, items, labels = setup(tmp_path)
+    quarantine.flag([AID1], "nudity")
+    data = build_data(cfg, items, labels)
+    assert [r["asset_id"] for r in data["items"]] == [AID2]
+    assert data["left_out"] == {"quarantined": 1}
+    quarantine.record_verdict(AID1, "private", "owner")  # Claude may look at the sheet: private stays out
+    assert build_data(cfg, items, labels)["left_out"] == {"quarantined": 1}
+    quarantine.record_verdict(AID1, "include", "owner")
+    data = build_data(cfg, items, labels)
+    assert len(data["items"]) == 2 and data["left_out"] == {"quarantined": 0}
+
+
+def test_sheet_command_reports_count_left_out(tmp_path, monkeypatch, capsys):
+    from shoebox import quarantine
+    from shoebox.cli import main
+    from shoebox.commands import pilot
+
+    cfg, items, labels = setup(tmp_path)
+    monkeypatch.setattr(pilot.config, "load", lambda *a, **k: cfg)
+    quarantine.flag([AID1], "nudity")
+    assert main(["pilot", "sheet", "--items", str(items), "--labels", str(labels),
+                 "--out", str(tmp_path / "o" / "sheet.html")]) == 0
+    assert "left out 1 quarantined" in capsys.readouterr().err

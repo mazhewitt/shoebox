@@ -253,12 +253,25 @@ def _derived_problem(res: Resolved, drec: dict | None, image: Path) -> str | Non
     return None
 
 
+def _quarantine_check(cfg: Config) -> Callable[[str], bool]:
+    """The local-stage quarantine rule (content-screen spec): `pending` and `exclude` assets, and their
+    same-pixel copies, are not run. Hosted runtimes refuse more in their own preflight (`privacy.filter_items`)."""
+    from shoebox import privacy, quarantine
+
+    chk = quarantine.Checker.load()
+    if not chk.rows:
+        return lambda aid: False
+    index = privacy.default_copy_index(cfg)
+    return lambda aid: chk.refused(aid, "local", index.pixel_group(aid))
+
+
 def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> list[tuple[dict, Path]]:
     from shoebox import derive
 
     done = store.index(cfg, res.model_id, res.params_hash, res.kind)
     profile = res.cand.get("profile", "infer-v1")
     derived = derive.load_index(cfg, profile)
+    held = _quarantine_check(cfg)
     seen: set[str] = set()
     pending = []
     for it in items:
@@ -268,6 +281,9 @@ def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> lis
         seen.add(aid)
         if store.is_final(done.get(aid)):
             tally.cached += 1
+            continue
+        if held(aid):
+            tally.skip(aid, "quarantined")
             continue
         image = derived_image(cfg, profile, aid)
         why = _derived_problem(res, derived.get(aid), image)

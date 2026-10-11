@@ -188,3 +188,16 @@ def test_order_is_stable_when_items_are_removed():
     removed = set(full[3:6]) | {full[50]}
     assert corpus.order([a for a in ids if a not in removed], 7) == [a for a in full if a not in removed]
     assert corpus.order(ids, 8) != full
+
+
+def test_quarantined_never_drawn(env, tmp_path):
+    from shoebox import quarantine
+
+    _cfg, sets, items = env
+    quarantine.flag([h("d0"), h("t1")], "nudity")
+    run(env, n=18, screen=screen_all(tmp_path / "s.jsonl", items))
+    ids = [x["asset_id"] for x in read(sets / "c1" / "items.jsonl")]
+    assert h("d0") not in ids and h("t1") not in ids
+    d = json.loads((sets / "c1" / "draw.json").read_text())
+    assert d["counts"]["rule_skips"]["quarantined"] == 1
+    assert {"asset_id": h("t1"), "reason": "quarantined"} in d["counts"]["targets_dropped"]

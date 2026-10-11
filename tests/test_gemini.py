@@ -640,3 +640,15 @@ def test_parse_response_lowercases_tags():
     status, output, _, err = gemini.parse_response(data, schema)
     assert status == "ok" and err is None and output["tags"] == ["eiffel tower", "paris"]
     assert "gemini-runner-2" in gemini.runtime_version({})
+
+
+@pytest.mark.parametrize("verdict", ["pending", "private", "exclude"])
+def test_preflight_refuses_quarantined(env, verdict):
+    from shoebox import quarantine
+
+    quarantine.flag([AID], "nudity")
+    if verdict != "pending":
+        quarantine.record_verdict(AID, verdict, "owner")
+    assert gemini.preflight(CAND, [env.item], env.cfg) == []
+    assert gemini.last_eligibility.counts() == {"quarantined": 1}
+    assert not env.requests
