@@ -1,0 +1,85 @@
+{
+  "seed": 20261014,
+  "n": 200,
+  "items": 1000,
+  "candidates": 927,
+  "excluded_dev_groups": 67,
+  "strata": {
+    "1990s|other|noscan": {
+      "candidates": 8,
+      "weight": 1,
+      "drawn": 1
+    },
+    "2000-09|mono|noscan": {
+      "candidates": 12,
+      "weight": 2,
+      "drawn": 4
+    },
+    "2000-09|other|noscan": {
+      "candidates": 261,
+      "weight": 1,
+      "drawn": 48
+    },
+    "2010-14|mono|noscan": {
+      "candidates": 2,
+      "weight": 2,
+      "drawn": 1
+    },
+    "2010-14|other|noscan": {
+      "candidates": 104,
+      "weight": 1,
+      "drawn": 19
+    },
+    "2015-19|mono|noscan": {
+      "candidates": 1,
+      "weight": 2,
+      "drawn": 1
+    },
+    "2015-19|other|noscan": {
+      "candidates": 263,
+      "weight": 1,
+      "drawn": 48
+    },
+    "2020+|mono|noscan": {
+      "candidates": 2,
+      "weight": 2,
+      "drawn": 1
+    },
+    "2020+|other|noscan": {
+      "candidates": 32,
+      "weight": 1,
+      "drawn": 6
+    },
+    "2020+|other|scan": {
+      "candidates": 1,
+      "weight": 2,
+      "drawn": 1
+    },
+    "unknown|mono|noscan": {
+      "candidates": 21,
+      "weight": 2,
+      "drawn": 7
+    },
+    "unknown|mono|scan": {
+      "candidates": 69,
+      "weight": 2,
+      "drawn": 25
+    },
+    "unknown|other|noscan": {
+      "candidates": 93,
+      "weight": 1,
+      "drawn": 17
+    },
+    "unknown|other|scan": {
+      "candidates": 58,
+      "weight": 2,
+      "drawn": 21
+    }
+  },
+  "rules": {
+    "stratum": "queries.stratum: era|colour|scan",
+    "groups": "one photo per capture group",
+    "dev": "photos in a capture group of a dev-split query (queries-v1) are excluded",
+    "weights": "largest remainder over stratum size x 2 when the stratum is mono or scan (x2 once, not per flag), at least 1 per stratum, capped at its size"
+  }
+}
