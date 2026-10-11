@@ -14,3 +14,4 @@ __pycache__/
 node_modules/
 evals/vally/generated/
 evals/sets/*/screen-queue.jsonl
+.claude/worktrees/
