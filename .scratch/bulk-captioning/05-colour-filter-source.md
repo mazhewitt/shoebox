@@ -10,10 +10,10 @@ The owner's one known search need, besides scene descriptions, is black-and-whit
 
 `evals/gates.toml` rule 5 (`mono_precision_min = 0.98`): a captioner whose mono precision is below the gate keeps its captions, but its `colour_class` can't drive a filter. Measured against the Opus reference on eval-1k:
 
-| Source | Mono precision | Passes? |
-|---|---|---|
-| Gemini `label-v2` (bulk captioner) | 0.974 | No |
-| 12B `label-v2` | 1.00 | Yes |
+| Source                             | Mono precision | Passes? |
+| ---------------------------------- | -------------- | ------- |
+| Gemini `label-v2` (bulk captioner) | 0.974          | No      |
+| 12B `label-v2`                     | 1.00           | Yes     |
 
 The B&W filter is a UI option, not the default ranking (+0.05 on category queries only), but it must be trustworthy when used.
 
@@ -28,6 +28,7 @@ The B&W filter is a UI option, not the default ranking (+0.05 on category querie
    - **Unmeasured** against the Opus reference. It must pass the same 0.98 gate on eval-1k first.
    - Toned and sepia prints are the known hard case.
 3. **Combined rule:** "mono" only when the heuristic and Gemini agree. That raises precision at some recall cost, and uses only data that will exist anyway.
+4. Extract a 2D histogram of the $a^*b^*$ chrominance planes or calculate spatial color divergence metrics, then feed those into an XGBoost or SVM classifier. This often matches CNN accuracy on aged scans at a fraction of the computational footprint.
 
 ## What
 

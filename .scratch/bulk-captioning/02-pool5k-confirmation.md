@@ -1,6 +1,6 @@
 # Confirm the chosen pipeline on pilot-v0-pool5k (task 7.4)
 
-Status: ready-for-human (owner approval of about $7 Gemini batch spend; then ready-for-agent)
+Status: ready-for-agent
 Reported: 2026-10-11
 Reporter: claude (build-planning session)
 
@@ -41,3 +41,4 @@ The report is committed, 7.4 is ticked, and its spend is logged in `evals/spend.
 - Owner spend approval.
 
 ## Comments
+Mazda has given permission to spend the money
