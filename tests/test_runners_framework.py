@@ -395,3 +395,95 @@ def test_replay_reparses_into_the_new_hash_without_inference(confdir, cfg, fake,
     (confdir / "candidates.toml").write_text(toml.replace("seed = 0", "seed = 1"))
     with pytest.raises(ValueError, match="seed"):
         runners.replay(runners.resolve("fake-a", confdir), old_dir, cfg)
+
+
+# ---------- ordered label sources (design D10) ----------
+
+
+def _rec(aid, mid, ph, status="ok", reason=None, v=1):
+    r = {"asset_id": aid, "model_id": mid, "params_hash": ph, "status": status,
+         "output": {"v": v} if status == "ok" else None, "raw": None, "error": None, "ts": "t"}
+    if reason:
+        r["reason"] = reason
+    return r
+
+
+SRC_A = {"candidate": "a", "model_id": "rt/a", "params_hash": "ha"}
+SRC_B = {"candidate": "b", "model_id": "rt/b", "params_hash": "hb", "retry_params_hash": "hb-retry"}
+SRC_C = {"candidate": "c", "model_id": "rt/c", "params_hash": "hc"}
+
+
+def test_ordered_sources_first_usable_wins_and_keeps_its_own_key(cfg):
+    a1, a2, a3, a4 = (f"{i}" * 64 for i in range(1, 5))
+    store.append(cfg, _rec(a1, "rt/a", "ha", v=1))
+    store.append(cfg, _rec(a1, "rt/b", "hb", v=2))
+    store.append(cfg, _rec(a2, "rt/b", "hb", v=2))                       # missing in a: b wins
+    store.append(cfg, _rec(a3, "rt/a", "ha", "invalid"))                 # schema failure: not routed
+    store.append(cfg, _rec(a3, "rt/c", "hc", v=3))
+    store.append(cfg, _rec(a4, "rt/c", "hc", v=3))
+    out = runners.source_index(cfg, [SRC_A, SRC_B, SRC_C])
+    assert (out[a1]["model_id"], out[a1]["params_hash"], out[a1]["output"]) == ("rt/a", "ha", {"v": 1})
+    assert (out[a2]["model_id"], out[a2]["params_hash"]) == ("rt/b", "hb")
+    assert out[a3]["model_id"] == "rt/a" and out[a3]["status"] == "invalid"
+    assert out[a4]["model_id"] == "rt/c"
+    assert runners.source_index(cfg, [SRC_B, SRC_A])[a1]["model_id"] == "rt/b"  # order matters
+
+
+def test_ordered_sources_refused_falls_through(cfg):
+    aid = "1" * 64
+    store.append(cfg, _rec(aid, "rt/a", "ha", "invalid", reason="refused"))
+    store.append(cfg, _rec(aid, "rt/c", "hc", v=3))
+    out = runners.source_index(cfg, [SRC_A, SRC_C])
+    assert out[aid]["model_id"] == "rt/c" and out[aid]["params_hash"] == "hc" and out[aid]["output"] == {"v": 3}
+    assert out[aid]["fell_through"] == ["a"]
+    # nothing usable further down: the primary's refusal is what a coverage report sees
+    only = runners.source_index(cfg, [SRC_A, SRC_B])
+    assert only[aid]["model_id"] == "rt/a" and only[aid]["reason"] == "refused"
+
+
+def test_ordered_sources_retry_substitution_inside_the_list(cfg):
+    ok_after_retry, failed_retry, awaiting = "1" * 64, "2" * 64, "3" * 64
+    for aid in (ok_after_retry, failed_retry, awaiting):
+        store.append(cfg, _rec(aid, "rt/b", "hb", "invalid", reason="truncated"))
+        store.append(cfg, _rec(aid, "rt/c", "hc", v=3))
+    store.append(cfg, _rec(ok_after_retry, "rt/b", "hb-retry", v=2))
+    store.append(cfg, _rec(failed_retry, "rt/b", "hb-retry", "invalid"))  # retry failed (any reason)
+    out = runners.source_index(cfg, [SRC_B, SRC_C])
+    assert out[ok_after_retry]["params_hash"] == "hb-retry" and out[ok_after_retry]["retry_of"] == "hb"
+    assert out[failed_retry]["model_id"] == "rt/c" and out[failed_retry]["fell_through"] == ["b"]
+    assert out[awaiting]["params_hash"] == "hb" and out[awaiting]["awaiting_retry"] is True
+
+
+def test_ordered_sources_truncated_without_retry_table_falls_through(cfg):
+    aid = "1" * 64
+    store.append(cfg, _rec(aid, "rt/a", "ha", "invalid", reason="truncated"))
+    store.append(cfg, _rec(aid, "rt/c", "hc", v=3))
+    assert runners.source_index(cfg, [SRC_A, SRC_C])[aid]["model_id"] == "rt/c"
+
+
+def test_ordered_sources_error_record_is_not_usable(cfg):
+    aid, bid = "1" * 64, "2" * 64
+    store.append(cfg, _rec(aid, "rt/a", "ha", "error"))
+    store.append(cfg, _rec(aid, "rt/c", "hc", v=3))
+    store.append(cfg, _rec(bid, "rt/a", "ha", "error"))
+    out = runners.source_index(cfg, [SRC_A, SRC_C])
+    assert out[aid]["model_id"] == "rt/c"
+    assert out[bid]["model_id"] == "rt/a" and out[bid]["status"] == "error"
+
+
+def test_single_source_in_a_list_equals_the_single_source(cfg):
+    aid, bid = "1" * 64, "2" * 64
+    store.append(cfg, _rec(aid, "rt/b", "hb", "invalid", reason="truncated"))
+    store.append(cfg, _rec(aid, "rt/b", "hb-retry", v=2))
+    store.append(cfg, _rec(bid, "rt/b", "hb", "invalid", reason="refused"))
+    assert runners.source_index(cfg, [SRC_B]) == runners.source_index(cfg, SRC_B)
+
+
+def test_label_source_of_a_list_is_a_list(confdir, fake):
+    (confdir / "candidates.toml").write_text(
+        (confdir / "candidates.toml").read_text() + RETRY
+        + '[candidates.fake-b]\nruntime = "fake"\nmodel = "m:2"\n')
+    a, b = runners.resolve("fake-a", confdir), runners.resolve("fake-b", confdir)
+    srcs = runners.label_source([a, b])
+    assert srcs == [runners.label_source(a), runners.label_source(b)]
+    assert srcs[0]["retry_params_hash"] == a.retry.params_hash and "retry_params_hash" not in srcs[1]

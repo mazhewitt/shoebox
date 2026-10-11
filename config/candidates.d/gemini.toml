@@ -67,3 +67,28 @@ price_input_usd_per_mtok = 0.75
 price_output_usd_per_mtok = 3.75
 price_date = "2026-10-10"
 price_valid_until = "2026-12-31"
+
+# Batch arm for the back catalogue (design D9, .scratch/bulk-captioning/01): gemini-medium-v2's prompt, schema,
+# model, media resolution and thinking level, through the Batch API (runtime `gemini-batch`, runners/gemini_batch.py).
+# A distinct store key: the runtime and its runner version are hashed. Batch is 50% of the standard price
+# (research/mvp-models.md); price_batch_discount is a price_ key, so it is not hashed. The cap is the smoke
+# batch's; the bulk run (06) raises it with the owner's approval.
+[candidates.gemini-batch-v2]
+runtime = "gemini-batch"
+model = "gemini-3.8-flash"
+media_resolution = "medium"
+thinking_level = "low"
+schema_field = "responseJsonSchema"
+max_output_tokens = 4096
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+max_usd_per_run = 5.0
+est_prompt_tokens = 2100
+est_output_tokens = 400
+est_thinking_tokens = 200
+price_input_usd_per_mtok = 0.75
+price_output_usd_per_mtok = 3.75
+price_batch_discount = 0.5
+price_date = "2026-10-10"
+price_valid_until = "2026-12-31"

@@ -594,7 +594,7 @@ def test_runtime_version_and_candidates_file():
     data = tomllib.loads(
         Path(config.REPO_ROOT / "config" / "candidates.d" / "gemini.toml").read_text()
     )
-    cands = data["candidates"]
+    cands = {k: c for k, c in data["candidates"].items() if c["runtime"] != "gemini-batch"}  # test_gemini_batch
     assert set(cands) == {"gemini-low", "gemini-medium", "gemini-medium-v2"}
     for c in cands.values():
         assert (
