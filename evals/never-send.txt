@@ -6,3 +6,7 @@
 4410111b7593164b0bbebda4ffe5cd8d785af56f41bd6fa375f9f1953d720fa5
 # 2026-10-11: 3d prenatal ultrasound image (Opus screen for eval-1k)
 3a06b1c7dde0c9b396c16f594e4905eaac646f2b008b62d0611e0b3539091d6a
+# 2026-10-11: passport photo page held in hand (Opus screen for eval-1k)
+3c35cba31c05afda63550ea129996515abb8a6e62505641f5ad17e58a7788f16
+# 2026-10-11: passport data page, machine-readable zone visible (Opus screen for eval-1k)
+439810cc85028187b422258ca76eaf5c00c7349b2f72931dac576a356a5f8ccf

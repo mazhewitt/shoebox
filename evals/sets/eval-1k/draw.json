@@ -1,0 +1,108 @@
+{
+  "name": "eval-1k",
+  "base": {
+    "name": "pilot-v0-pool5k",
+    "items_sha256": "007588bf4709eb22aed2b1adb3073acd43e1f9b2292e6f62794eebe429ffeb3e",
+    "exclude_sha256": "320e3fe9c41f0fd46e56e666e7051bff4729d3b231f688ee16335cd76b0cf774"
+  },
+  "labelled_by": {
+    "candidate": "g12b-q4",
+    "model_id": "ollama/gemma4:12b",
+    "params_hash": "a989aa842856fd03",
+    "retry_params_hash": "1292a57712b1222d"
+  },
+  "seed": 20261011,
+  "n": 1000,
+  "buffer": 80,
+  "counts": {
+    "base_items": 5042,
+    "base_excluded": 3,
+    "targets": 45,
+    "candidates": 1964,
+    "rule_skips": {
+      "held_back": 40,
+      "never_send": 4
+    },
+    "rule_eligible": 1920,
+    "screened": 1010,
+    "screen_excludes": {
+      "financial": 3,
+      "id_document": 2,
+      "other_sensitive": 5
+    },
+    "screen_group": 0,
+    "targets_dropped": [
+      {
+        "asset_id": "528fe060b56b3d1dde9f38712deae0c2533bc3fa401557df2843607ba00aee42",
+        "reason": "never_send"
+      },
+      {
+        "asset_id": "a1c78efdd57ef1694346be467df80053e4c14828e9eced28c361cacf8bb98f83",
+        "reason": "screen",
+        "category": "id_document"
+      }
+    ],
+    "targets_kept": 43,
+    "drawn": 957,
+    "substitutions": [
+      {
+        "asset_id": "286227f937836b2130f22ca7b3f7c49931963a7d7b491dfbba09c89b93fa5b2f",
+        "category": "other_sensitive",
+        "note": "street parade, person bending, underwear exposed; borderline",
+        "replaced_by": "449a0c409550508bf3fd269e4cba2db7e9e1a995b0ee9fc41b8f2f5068c51e66"
+      },
+      {
+        "asset_id": "39a8493e1e09d06a58e4fa8da1ff618965540964141a168df81c6e8e15e1680a",
+        "category": "other_sensitive",
+        "note": "handwritten signed personal letter; borderline, flagged in doubt",
+        "replaced_by": "466f538866dca4f938590c1272e97e23dc272c55852d01ea8d11de40b9237784"
+      },
+      {
+        "asset_id": "513256745f91f1883ec6abfd212d2b89665de8d5a3519c9b0a10610be64fa94a",
+        "category": "financial",
+        "note": "printed statement with euro totals",
+        "replaced_by": "0436aaaf58656c7d8c983764e567be653cde13857171f43d516c1e4141060381"
+      },
+      {
+        "asset_id": "54b404fff72688ca4f9a99893aa147a468912ac7e36eba26e511f79554414d48",
+        "category": "financial",
+        "note": "printed price/order label; too small to judge",
+        "replaced_by": "1565f8b57a75187251eb7143ffd885699ffe01bad3aba1b839c49ce46f896c77"
+      },
+      {
+        "asset_id": "1f4f0113a057cc8ad01c30b34177134db3467d5fd0f7e7ca1684ee44ccf4a904",
+        "category": "other_sensitive",
+        "note": "Framed award certificate showing a person's name",
+        "replaced_by": "25ec42095e7ed49eb2ee5778ebf147045dc7f91aadc19630042dea7244e878c4"
+      },
+      {
+        "asset_id": "10c632d82a013544399f10f3c9d376adee946f43f2843af3dacfa59e216f3af5",
+        "category": "financial",
+        "note": "renewal bill and payment slip papers",
+        "replaced_by": "2eacc33e11736d6915f26538cbe2e3c8b1c8bb0b55fb41fc47c600e44afef3f7"
+      },
+      {
+        "asset_id": "58f4396045663473f2ad287bf876310a7dc7ca2c7a174e22734ae3b2eab5cf4b",
+        "category": "other_sensitive",
+        "note": "Personal typed letter with signature",
+        "replaced_by": "18d3371af6a17d0c4db1c2a2f8c8601c6cf1b096dbb3603812132665b95735c4"
+      },
+      {
+        "asset_id": "44c3c3f751633860e7cf68d0c010e50e71bfd73f1518fdbec64bf2761e1740ca",
+        "category": "other_sensitive",
+        "note": "Handwritten note on envelope, too small to read",
+        "replaced_by": "34cc186f432b1e19eceedaf1aa7b9e4c451d90fd2ece681b7f343fcbd80e5307"
+      },
+      {
+        "asset_id": "35674672f9fc29722b5b2ef6b37c0f5a6e55adcf2800b487e2139a19deabeed2",
+        "category": "id_document",
+        "note": "Strip of three baby photos, possibly ID-style; doubtful",
+        "replaced_by": "36cf42e5c148917ab25afe9b2d50c922b57b16ed6765d84f3406f67110ee1963"
+      }
+    ]
+  },
+  "screen": {
+    "file": "screen.jsonl",
+    "sha256": "738278b53b7442055bd3c2fc3935b9baf53d91eb5757f53453e478f58bbe14bd"
+  }
+}

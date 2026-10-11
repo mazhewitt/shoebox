@@ -29,12 +29,15 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 
 ## 2. Eval corpus `eval-1k`
 
-- [ ] 2.1 Config: add `held_back` path globs (`Pictures/toren phone/**`, `Pictures/Jude Profile/**`, `Important documents/**`), and record Claude as an approved hosted model. Update `privacy check` to report both. Verify with tests: a held-back path is skipped and reported.
-- [ ] 2.2 Draw `eval-1k`: the 45 targets plus 955 of the 1,966 12B-processed non-target pool items, by a seeded draw. Run the hosted-eligibility screen: never-send, held-back paths, consent, and an Opus pre-screen for medical, ID and financial images. Swap exclusions from the rest of the pool. Write the README. Verify the draw is reproducible and every substitution is listed.
+- [x] 2.1 Config: add `held_back` path globs (`Pictures/toren phone/**`, `Pictures/Jude Profile/**`, `Important documents/**`), and record Claude as an approved hosted model. Update `privacy check` to report both. Verify with tests: a held-back path is skipped and reported.
+  Done 2026-10-11: `held_back` and `hosted_models` per source; `privacy check --provider claude --allowed-out`.
+- [x] 2.2 Draw `eval-1k`: the 45 targets plus 955 of the 1,966 12B-processed non-target pool items, by a seeded draw. Run the hosted-eligibility screen: never-send, held-back paths, consent, and an Opus pre-screen for medical, ID and financial images. Swap exclusions from the rest of the pool. Write the README. Verify the draw is reproducible and every substitution is listed.
+  Done 2026-10-11 (`shoebox eval corpus-draw`): 43 targets (the never-send ultrasound and a passport-photo sheet dropped) + 957 drawn; 40 held back by path; Opus screened 1,010 on contact sheets (`config/prompts/screen-v1.md`), 10 excluded and substituted, and 4 passport pages / ultrasounds added to never-send. Byte-identical on rerun; all 1,000 pass `privacy check` for gemini and claude.
 
 ## 3. Captions
 
-- [ ] 3.1 Write `config/prompts/label-v2.md` and the schema (D7), including `rotate_cw` (D6a). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
+- [x] 3.1 Write `config/prompts/label-v2.md` and the schema (D7), including `rotate_cw` (D6a). Iterate on 20 dev photos with Opus reading the outputs. Verify that E4B and Gemini outputs validate on those 20.
+  Done 2026-10-11 for E4B and 12B (22 dev photos incl. 2 mis-oriented scans; two Opus review rounds: errors e4b 28 → 19, g12b 17 → 10). Gemini validation runs as the first batch of 3.2. Local `rotate_cw` is unreliable (1 of 4 right on the two rotated scans); it is scored, not trusted. The dev photos' capture groups are pinned to the dev split in 4.2.
 - [ ] 3.2 Run Gemini 3.8 Flash `label-v2` (`medium`, thinking `low`) on `eval-1k` with a $5 cap. Verify the spend is logged and the skipped items are reported.
 - [ ] 3.3 Run E4B `label-v2` (about 1 h) and 12B `label-v2` (about 2 h) on `eval-1k`, and top up E4B and 12B `label-v1` where they are missing. Caption-embed all of them with EG2. Verify every arm covers all 1,000 photos or lists its invalids.
 
