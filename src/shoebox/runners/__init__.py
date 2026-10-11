@@ -10,6 +10,7 @@ candidate names them, `prompt_text` and `schema_text` (the exact texts that were
 
 import importlib
 import json
+import re
 import socket
 import subprocess
 import time
@@ -29,7 +30,9 @@ CONFIG_DIR = REPO_ROOT / "config"
 # settings that never change a model's output (spend caps, cost estimates, prices).
 # `retry` is the truncation-retry override table: it never changes the first attempt's output, and the retry
 # gets its own params_hash (see `resolve`).
-_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry"}
+# `label_sources` is the ordered label-source chain a bulk run reuses labels from (design D8): where to look,
+# not how to label.
+_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry", "label_sources"}
 _NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
 # Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
 # Vally executor read; embedding vectors are not label-v1 records and go under `embeddings`.
@@ -323,13 +326,47 @@ def label_source(res: "Resolved | list[Resolved]") -> dict | list[dict]:
     return src
 
 
+_FINISH = re.compile(r"\b(finishReason|blockReason)=([A-Z_]+)\b")
+
+
+def refusal_reason(rec: dict) -> str | None:
+    """`refused`, `truncated` or None for an `invalid` record. The record's `reason` when it has one (batch and
+    Ollama runners set it). Synchronous `gemini` records carry none (changing that runner would change its
+    params_hash), so for a `gemini...` model_id it is read from what the record kept: the raw
+    `{finishReason, blockReason, text}` of an empty or blocked response, else `finishReason=`/`blockReason=` in
+    the error text. A blockReason or a safety finishReason (`gemini_batch.REFUSAL`) is `refused`; MAX_TOKENS
+    is `truncated`. Anything else (schema or JSON failures, errors) is None."""
+    if rec.get("status") != "invalid":
+        return None
+    if rec.get("reason"):
+        return rec["reason"]
+    if not str(rec.get("model_id") or "").startswith("gemini"):
+        return None
+    from shoebox.runners.gemini_batch import REFUSAL
+
+    found: dict[str, str] = {}
+    try:
+        raw = json.loads(rec.get("raw") or "")
+    except (TypeError, ValueError):
+        raw = None
+    if isinstance(raw, dict) and {"finishReason", "blockReason"} & set(raw):
+        found = {k: raw[k] for k in ("finishReason", "blockReason") if isinstance(raw.get(k), str)}
+    else:
+        found = {k: v for k, v in _FINISH.findall(str(rec.get("error") or "")) if v != "None"}
+    if found.get("blockReason") or found.get("finishReason") in REFUSAL:
+        return "refused"
+    if found.get("finishReason") == "MAX_TOKENS":
+        return "truncated"
+    return None
+
+
 def _falls_through(rec: dict) -> bool:
     """A final record the next source in an ordered list should replace (design D10): the model refused the
     image, or it was truncated and no retry recovered it (the retry failed, or the source has no retry).
     Other failures are not routed; a truncated record still awaiting its retry is not final yet."""
     if rec.get("status") != "invalid" or rec.get("awaiting_retry"):
         return False
-    return rec.get("reason") == "refused" or rec.get("reason") == "truncated" or "retry_of" in rec
+    return refusal_reason(rec) in ("refused", "truncated") or "retry_of" in rec
 
 
 def _usable(rec: dict) -> bool:

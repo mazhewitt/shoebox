@@ -36,6 +36,27 @@ def register(sub) -> None:
     rp.add_argument("--from-hash", required=True, help="params_hash of the older store of this candidate")
     rp.set_defaults(func=cmd_replay)
 
+    bk = lsub.add_parser("bulk", help="caption a dedup worklist (guarded; reuses labels before any request)")
+    bk.add_argument("--worklist", required=True,
+                    help="worklist name (<shoebox_root>/worklists/<name>.jsonl) or path; never a frame")
+    bk.add_argument("--candidate", required=True, help="hosted (gemini-batch, gemini) or local (ollama)")
+    bk.add_argument("--partial-sources", metavar="REASON",
+                    help="run a worklist that lacks a configured source; the reason is logged in the run record")
+    bk.add_argument("--label-sources", metavar="A,B,...",
+                    help="ordered label-source chain to reuse from (default: the candidate's label_sources; "
+                         "gemini-batch-v2: gemini-batch-v2,gemini-medium-v2)")
+    bk.add_argument("--limit", type=int, help="only the first N captures to send")
+    bk.add_argument("--dry-run", action="store_true", help="print the counts; send nothing")
+    bk.add_argument("--max-poll-rounds", type=int, help="batch: stop polling after N rounds (rerun to resume)")
+    bk.set_defaults(func=cmd_bulk)
+
+    fb = lsub.add_parser("fallback", help="local caption for refused / unrecovered truncated primary labels")
+    fb.add_argument("--candidate", required=True, help="a local (ollama) candidate, e.g. g12b-q4-v2")
+    fb.add_argument("--primary", required=True, metavar="A,B,...",
+                    help="ordered primary chain, e.g. gemini-batch-v2,gemini-medium-v2")
+    fb.add_argument("--limit", type=int)
+    fb.set_defaults(func=cmd_fallback)
+
     ls = lsub.add_parser("list", help="list candidate names")
     ls.set_defaults(func=cmd_list)
 
@@ -188,3 +209,104 @@ def cmd_packets(args: argparse.Namespace) -> int:
         _err(f"skipped {s['asset_id']}: {s['reason']}")
     print(f"wrote {len(res.keys)} photos in {len(res.batches)} batches to {args.out}; {len(res.skipped)} skipped")
     return 0
+
+
+def cmd_bulk(args: argparse.Namespace) -> int:
+    from shoebox import bulk, privacy
+    from shoebox.runners import _now
+
+    cfg = config.load()
+    path = bulk.resolve_path(cfg, args.worklist)
+    res = _resolve(args.candidate)
+    if res is None:
+        return 2
+    try:
+        queue = bulk.queue_for(res)
+        header, caps = bulk.load_worklist(path)
+        missing = bulk.check_sources(header, cfg, args.partial_sources)
+        names = bulk.chain_names(res, args.label_sources)
+        plan = bulk.plan(caps, queue, bulk.chain_index(cfg, names, runners.resolve))
+    except (bulk.Refused, OSError, KeyError) as e:
+        _err(f"refused: {e}")
+        return 2
+    if missing:
+        _err(f"partial sources: worklist lacks {', '.join(missing)} ({args.partial_sources})")
+    print(f"{res.name}: {bulk.summary_line(plan.counts)}")
+    if args.dry_run:
+        return 0
+    send = plan.to_send[: args.limit] if args.limit else plan.to_send
+    items, unlocated = bulk.items_for(send, cfg)
+    for aid in unlocated:
+        _err(f"skipped {aid}: canonical asset not in the current frames (stale worklist?)")
+    record = {"started": _now(), "candidate": res.name, "model_id": res.model_id, "params_hash": res.params_hash,
+              "worklist": str(path), "worklist_created_at": header.get("created_at"),
+              "worklist_sources": header.get("sources"), "configured_sources": sorted(cfg.sources),
+              "missing_sources": missing, "partial_sources": args.partial_sources if missing else None,
+              "label_sources": names, "counts": {**plan.counts, "unlocated": len(unlocated), "sent": len(items)},
+              "state": "started"}
+    rec_path = bulk.write_run_record(cfg, res.name, record)
+    tally_doc: dict = {}
+    if items and res.cand["runtime"] == "gemini-batch":
+        from shoebox.runners import gemini_batch
+
+        try:
+            t = gemini_batch.run_batch(res, items, cfg, bulk.batch_transport(),
+                                       max_poll_rounds=args.max_poll_rounds)
+        except privacy.PrivacyError as e:
+            _err(f"refused: {e}")
+            bulk.write_run_record(cfg, res.name, {**record, "state": "refused", "error": str(e)}, rec_path)
+            return 2
+        for aid, reason in t.skipped_items:
+            _err(f"skipped {aid}: {reason}")
+        tally_doc = {k: getattr(t, k) for k in ("cached", "skipped", "submitted", "jobs_submitted", "jobs_resumed",
+                                                 "open_jobs", "returned", "ok", "invalid", "error", "usd", "refused")}
+        print(f"{res.name}: ok {t.ok}  invalid {t.invalid}  error {t.error}  cached {t.cached}  skipped {t.skipped}"
+              f"  jobs {t.jobs_submitted} (+{t.jobs_resumed} resumed, {t.open_jobs} open)  ${t.usd:.4f}"
+              + (f"  NOT SUBMITTED: {t.refused}" if t.refused else ""))
+    elif items:
+        try:
+            t = runners.run_items(res, items, cfg)
+        except Exception as e:  # noqa: BLE001 - a runtime's preflight refused the run
+            _err(f"refused: {e}")
+            bulk.write_run_record(cfg, res.name, {**record, "state": "refused", "error": str(e)}, rec_path)
+            return 2
+        for aid, reason in t.skipped_items:
+            _err(f"skipped {aid}: {reason}")
+        tally_doc = {k: getattr(t, k) for k in ("ok", "invalid", "error", "cached", "skipped", "retried", "recovered")}
+        print(f"{res.name}: {_line(t)}")
+    bulk.write_run_record(cfg, res.name, {**record, "state": "done", "finished": _now(), "tally": tally_doc},
+                          rec_path)
+    print(f"run record -> {rec_path}")
+    return 1 if tally_doc.get("error") else 0
+
+
+def cmd_fallback(args: argparse.Namespace) -> int:
+    from shoebox import bulk
+
+    cfg = config.load()
+    res = _resolve(args.candidate)
+    if res is None:
+        return 2
+    if res.cand["runtime"] not in bulk.LOCAL_RUNTIMES:
+        _err(f"refused: the fallback must be a local candidate ({', '.join(bulk.LOCAL_RUNTIMES)}); "
+             f"{res.name} is {res.cand['runtime']}")
+        return 2
+    primary = []
+    for name in (n.strip() for n in args.primary.split(",") if n.strip()):
+        r = _resolve(name)
+        if r is None:
+            return 2
+        primary.append(r)
+    selected = bulk.fallback_selection(cfg, primary)
+    held = bulk.held_locally(selected, cfg)
+    for aid in sorted(held):
+        _err(f"skipped {aid}: quarantined for local stages")
+    todo = [a for a in selected if a not in held]
+    todo = todo[: args.limit] if args.limit else todo
+    print(f"{res.name}: {len(selected)} refused or unrecovered record(s) in {args.primary}; {len(held)} held; "
+          f"running {len(todo)}")
+    t = runners.run_items(res, [{"asset_id": a} for a in todo], cfg)
+    for aid, reason in t.skipped_items:
+        _err(f"skipped {aid}: {reason}")
+    print(f"{res.name}: {_line(t)}")
+    return 1 if t.error else 0
