@@ -14,8 +14,11 @@ from shoebox.config import REPO_ROOT, Config
 
 # Store model dirs written by hosted runtimes (`store.model_dir` of their model ids).
 HOSTED_MODEL_DIR_PREFIXES = ("gemini__", "gemini-batch__", "claude__")
-# Eval sets whose items or pools went to Gemini or were shown to Claude.
-SHOWN_SETS = ("pilot-v0", "eval-1k")
+# Eval-set files naming assets that went to Gemini or were shown to Claude: `set` (every JSON/JSONL
+# file in it) or `set/glob`. pool5k's full item list was not shown, only its near-duplicate pairs
+# and exclusions (decided by Claude on derived images) and its known-item search targets.
+SHOWN_SETS = ("pilot-v0", "eval-1k", "pilot-v0-pool5k/near-dups.jsonl", "pilot-v0-pool5k/exclude.jsonl",
+              "pilot-v0-pool5k/search-known-item.jsonl")
 SETS_DIR = REPO_ROOT / "evals" / "sets"
 
 _ASSET_ID = re.compile(r"\b[0-9a-f]{64}\b")
@@ -40,7 +43,8 @@ def set_ids(sets: Iterable[str] = SHOWN_SETS, sets_dir: Path = SETS_DIR) -> set[
     """Every asset id (64 lowercase hex) appearing in any JSON/JSONL file of the named eval sets."""
     out: set[str] = set()
     for name in sets:
-        for path in sorted((Path(sets_dir) / name).glob("*.json*")):
+        set_name, _, pattern = name.partition("/")
+        for path in sorted((Path(sets_dir) / set_name).glob(pattern or "*.json*")):
             text = path.read_text()
             out.update(set(_ASSET_ID.findall(text)) - set(_CHECKSUM.findall(text)))
     return out

@@ -25,3 +25,4 @@ def test_union_of_hosted_stores_and_shown_sets(tmp_path):
     (sets / "other").mkdir()
     (sets / "other" / "items.jsonl").write_text(json.dumps({"asset_id": E}) + "\n")  # not a shown set
     assert retro.retro_ids(cfg, ("eval-1k",), sets) == {A, B, D}
+    assert retro.retro_ids(cfg, ("other/items.jsonl",), sets) == {A, B, E}  # one file of a set

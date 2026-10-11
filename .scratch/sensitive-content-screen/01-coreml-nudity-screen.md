@@ -66,3 +66,5 @@ Using it would need a developer provisioning profile and a `.app` wrapper. **Wha
 - At 3%, the whole of ImportantFiles would give about 1,500 flags for the owner to review. The threshold is set recall-first from the first review (9.4).
 
 **2026-10-11 (9.3 retro-check).** 1,565 assets already sent to a hosted model or named in the shown eval sets were screened, and 39 were flagged: 27 had gone to Gemini, 26 had been seen by Claude, and 12 appear only in eval-set lists. All 39 are `pending` until the owner's review. Details are in `evals/runs/2026-10-11_screen-retro.md` (counts only).
+
+**Correction (same day):** the retro set now also covers the pool5k near-duplicate pairs and exclusions Claude viewed. The totals are 1,697 screened and 43 flagged: 27 sent to Gemini, 26 seen by Claude, 16 only in set lists.
