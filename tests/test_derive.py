@@ -858,3 +858,30 @@ def test_content_kind_leaves_tiff_based_raws_alone():
     assert derive.content_kind(b"II*\x00" + b"\x00" * 12) is None  # NEF/DNG are TIFF containers
     assert derive.sniff_kind(b"II*\x00" + b"\x00" * 12, "NEF") == "raw"
     assert derive.sniff_kind(b"\xff\xd8\xff\xe0" + b"\x00" * 12, "dng") == "jpeg"
+
+
+def _ultra_hdr_jpeg() -> bytes:
+    """A synthetic Ultra HDR JPEG (SDR base + gain map), as newer Pixel/Android phones write."""
+    base = _vips(np.random.default_rng(0).integers(0, 255, (48, 64, 3), dtype=np.uint8), "srgb")
+    img = base.copy()
+    img.set_type(pyvips.GValue.image_type, "gainmap",
+                 _vips(np.full((24, 32), 128, dtype=np.uint8), "b-w"))
+    for k in ("max-content-boost", "min-content-boost", "gamma", "offset-sdr", "offset-hdr"):
+        v = {"max-content-boost": 2.0, "offset-sdr": 1 / 64, "offset-hdr": 1 / 64}.get(k, 1.0)
+        img.set_type(pyvips.GValue.array_double_type, f"gainmap-{k}", [v] * 3)
+    img.set_type(pyvips.GValue.gdouble_type, "gainmap-hdr-capacity-min", 1.0)
+    img.set_type(pyvips.GValue.gdouble_type, "gainmap-hdr-capacity-max", 2.0)
+    img.set_type(pyvips.GValue.gint_type, "gainmap-use-base-cg", 1)
+    data = img.uhdrsave_buffer()
+    assert pyvips.Image.new_from_buffer(data, "").get("vips-loader") == "uhdrload_buffer"
+    return data
+
+
+def test_ultra_hdr_jpeg_derives_from_its_sdr_base(env):
+    cfg, src = env
+    (src / "PXL_uhdr.jpg").write_bytes(_ultra_hdr_jpeg())
+    rec = _derive_one(cfg, src, "PXL_uhdr.jpg")
+    assert rec["status"] == "ok", rec["error"]
+    assert (rec["src_kind"], rec["rendered_from"], rec["width"], rec["height"]) == ("jpeg", "decoded", 64, 48)
+    img, _, _ = _out(cfg, rec)
+    assert not any(img.get_typeof(f) for f in (*META_FIELDS, "gainmap"))

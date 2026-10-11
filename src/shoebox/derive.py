@@ -79,6 +79,7 @@ KIND_BY_EXT = {
 # libvips loaders we accept, and the src_kind each one means.
 KIND_BY_LOADER = {
     "jpegload_buffer": "jpeg",
+    "uhdrload_buffer": "jpeg",  # Ultra HDR JPEG (newer Pixel/Android): its SDR base image
     "pngload_buffer": "png",
     "heifload_buffer": "heif",
     "webpload_buffer": "webp",
