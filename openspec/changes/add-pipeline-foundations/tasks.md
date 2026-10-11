@@ -114,11 +114,11 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 8. Worklist-driven caption runs and the batch runner (dedup/06, bulk-captioning/01, 03)
 
-- [ ] 8.1 Add the worklist guard to bulk caption runs.
+- [x] 8.1 Add the worklist guard to bulk caption runs.
   - Refuse frames and raw item lists.
   - Refuse a worklist missing a configured source unless `--partial-sources "<reason>"` is given (logged); eval sets are exempt.
   - Verify with tests for each refusal and for the eval-set exemption.
-- [ ] 8.2 Add label reuse before spend: skip captures whose canonical asset or any member already has a resolved label in the candidate's source chain; report the reused count. Verify with tests:
+- [x] 8.2 Add label reuse before spend: skip captures whose canonical asset or any member already has a resolved label in the candidate's source chain; report the reused count. Verify with tests:
   - a new byte-identical copy costs nothing;
   - a merge keeps the canonical's label;
   - the summary counts reused captures.
@@ -138,7 +138,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 - [ ] 8.7 Implement `shoebox label fallback`. It runs `g12b-q4-v2` on final `refused` or retry-failed `truncated` records of the primary chain, and is idempotent.
   - Verify with tests for the reason filter and the idempotence.
   - Verify by running it on the 2 refused eval-1k images, rebuilding `eg2-blend` from the ordered source list, and checking test nDCG@20 doesn't drop (a short `evals/runs/` note).
-- [ ] 8.8 Document worklists, the guard, reuse, batch jobs and resume in `docs/bulk-captioning.md`. Verify the documented commands run against the fake transport.
+- [x] 8.8 Document worklists, the guard, reuse, batch jobs and resume in `docs/bulk-captioning.md`. Verify the documented commands run against the fake transport.
 
 ## 9. Tiny images and the retro-check (bulk-captioning/04, sensitive-content-screen/01)
 
