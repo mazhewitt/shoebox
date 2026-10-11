@@ -189,6 +189,20 @@
 | g12b-q4-v2 | 200 | 4.305 (4.200–4.410) | 3.815 (3.720–3.900) | -0.615 (-0.725–-0.495) |
 | gemini-medium-v2 | 200 | 4.920 (4.865–4.965) | 4.795 (4.715–4.865) | reference |
 
+### Owner review (30 photos)
+
+| arm | n | owner (95% CI) | Opus rubric (95% CI) | Opus unanchored (95% CI) |
+|---|---|---|---|---|
+| e4b-bf16 | 30 | 3.667 (3.367–3.900) | 4.067 (3.867–4.267) | 3.267 (3.067–3.467) |
+| e4b-bf16-v2 | 30 | 3.700 (3.367–3.967) | 4.100 (3.733–4.400) | 3.433 (3.167–3.667) |
+| g12b-q4 | 30 | 3.567 (3.333–3.800) | 4.333 (4.133–4.533) | 3.767 (3.600–3.900) |
+| g12b-q4-v2 | 30 | 3.767 (3.533–4.000) | 4.533 (4.300–4.767) | 4.033 (3.833–4.233) |
+| gemini-medium-v2 | 30 | 4.367 (4.067–4.633) | 4.700 (4.400–4.933) | 4.567 (4.200–4.867) |
+| opus-v2 | 0 | n/a (n/a) | n/a (n/a) | n/a (n/a) |
+
+- Owner–Opus Spearman per photo-set: mean 0.422 over 23 photos; pooled 0.330
+- Mean absolute difference (owner vs Opus rubric): 0.707 over 150 pairs
+
 - rubric: Opus usefulness against config/prompts/caption-usefulness-v1.md (1-5), mean per photo
 - unanchored: the caption audit's original 1-5 usefulness (no anchored rubric), same photos
 - paired: candidate minus reference, photos resampled jointly; 95% percentile bootstrap

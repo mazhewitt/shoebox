@@ -4270,6 +4270,7 @@
    "date": "2026-10-11",
    "opus_model_id": "claude/opus-5.5",
    "opus_params_hash": "e4e4be915182d461",
+   "owner_params_hash": "ff930a089fd03332",
    "paired_vs_reference": {
     "e4b-bf16": {
      "d11_error_rate_pass": false,
@@ -7517,6 +7518,155 @@
      }
     },
     "bootstrap": 2000,
+    "owner": {
+     "agreement": {
+      "mean_abs_diff": 0.7067,
+      "pairs": 150,
+      "spearman_per_photo": {
+       "mean": 0.4221,
+       "n": 23
+      },
+      "spearman_pooled": 0.3299
+     },
+     "arms": {
+      "e4b-bf16": {
+       "n": 30,
+       "opus_rubric": {
+        "ci95": [
+         3.8667,
+         4.2667
+        ],
+        "mean": 4.0667
+       },
+       "opus_unanchored": {
+        "ci95": [
+         3.0667,
+         3.4667
+        ],
+        "mean": 3.2667
+       },
+       "owner": {
+        "ci95": [
+         3.3667,
+         3.9
+        ],
+        "mean": 3.6667
+       }
+      },
+      "e4b-bf16-v2": {
+       "n": 30,
+       "opus_rubric": {
+        "ci95": [
+         3.7333,
+         4.4
+        ],
+        "mean": 4.1
+       },
+       "opus_unanchored": {
+        "ci95": [
+         3.1667,
+         3.6667
+        ],
+        "mean": 3.4333
+       },
+       "owner": {
+        "ci95": [
+         3.3667,
+         3.9667
+        ],
+        "mean": 3.7
+       }
+      },
+      "g12b-q4": {
+       "n": 30,
+       "opus_rubric": {
+        "ci95": [
+         4.1333,
+         4.5333
+        ],
+        "mean": 4.3333
+       },
+       "opus_unanchored": {
+        "ci95": [
+         3.6,
+         3.9
+        ],
+        "mean": 3.7667
+       },
+       "owner": {
+        "ci95": [
+         3.3333,
+         3.8
+        ],
+        "mean": 3.5667
+       }
+      },
+      "g12b-q4-v2": {
+       "n": 30,
+       "opus_rubric": {
+        "ci95": [
+         4.3,
+         4.7667
+        ],
+        "mean": 4.5333
+       },
+       "opus_unanchored": {
+        "ci95": [
+         3.8333,
+         4.2333
+        ],
+        "mean": 4.0333
+       },
+       "owner": {
+        "ci95": [
+         3.5333,
+         4.0
+        ],
+        "mean": 3.7667
+       }
+      },
+      "gemini-medium-v2": {
+       "n": 30,
+       "opus_rubric": {
+        "ci95": [
+         4.4,
+         4.9333
+        ],
+        "mean": 4.7
+       },
+       "opus_unanchored": {
+        "ci95": [
+         4.2,
+         4.8667
+        ],
+        "mean": 4.5667
+       },
+       "owner": {
+        "ci95": [
+         4.0667,
+         4.6333
+        ],
+        "mean": 4.3667
+       }
+      },
+      "opus-v2": {
+       "n": 0,
+       "opus_rubric": {
+        "ci95": null,
+        "mean": null
+       },
+       "opus_unanchored": {
+        "ci95": null,
+        "mean": null
+       },
+       "owner": {
+        "ci95": null,
+        "mean": null
+       }
+      }
+     },
+     "photos": 30
+    },
     "paired_vs_reference": {
      "e4b-bf16": {
       "ci95": [

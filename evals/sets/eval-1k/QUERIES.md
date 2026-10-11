@@ -42,4 +42,4 @@ Fallbacks to visual: 39
 | known_item / test | 133 |
 | owner_note / owner | 37 |
 
-owner realism check: pending
+owner realism check: 0 of 30 answered; would type 0, wouldn't 0 of 0 (n/a); by kind (would/answered): ; by style: 
