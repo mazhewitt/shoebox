@@ -131,6 +131,18 @@ def _register_search(esub) -> None:
     nd.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
     nd.set_defaults(func=_search_neardups)
 
+    cd = esub.add_parser("corpus-draw",
+                         help="draw a screened eval corpus into evals/sets/<name>/ (exit 3: screening needed)")
+    cd.add_argument("--name", required=True, help="new set name, e.g. eval-1k")
+    cd.add_argument("--base", required=True, help="base set, e.g. pilot-v0-pool5k")
+    cd.add_argument("--labelled-by", required=True, help="label candidate whose final records make the candidates")
+    cd.add_argument("--n", type=int, required=True)
+    cd.add_argument("--seed", type=int, required=True)
+    cd.add_argument("--buffer", type=int, default=80, help="extra candidates queued for screening")
+    cd.add_argument("--screen", type=Path, default=None, help="default evals/sets/<name>/screen.jsonl")
+    cd.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    cd.set_defaults(func=_corpus_draw)
+
     r = esub.add_parser("search-report",
                         help="write evals/runs/<date>_<set>-search.json and .md from a Vally results.jsonl")
     r.add_argument("--results", required=True, type=Path)
@@ -219,6 +231,37 @@ def _search_neardups(args) -> int:
           f"({res.with_vectors} have an image vector; max {res.max_cosine})")
     print(f"wrote {res.path} ({res.written} rows); review them, then list decided exclusions in "
           f"{set_dir / search.EXCLUDE_FILE}")
+    return 0
+
+
+def _corpus_draw(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import corpus
+
+    try:
+        cfg = _cfg()
+        labelled_by, labels = corpus.resolve_labels(cfg, args.labelled_by)
+        res = corpus.draw_corpus(cfg, args.sets_dir / args.base, args.sets_dir / args.name, labels, labelled_by,
+                                 args.n, args.seed, args.buffer, args.screen, others=privacy.known_items(),
+                                 never=privacy.load_never_send())
+    except (ValueError, KeyError, FileNotFoundError) as e:
+        print(f"shoebox eval corpus-draw: {e}", file=sys.stderr)
+        return 2
+    c = res.counts
+    print(f"base {c['base_items']} items ({c['base_excluded']} excluded); targets {c['targets_kept']} kept of "
+          f"{c['targets']}; candidates {c['candidates']} labelled by {labelled_by['candidate']}; "
+          f"rule-eligible {c['rule_eligible']}")
+    for reason, k in c["rule_skips"].items():
+        print(f"  rule skip {k:6} {reason}")
+    for d in c["targets_dropped"]:
+        print(f"  target dropped {d['asset_id'][:12]}: {d['reason']}")
+    print(f"screened {c['screened']}; excludes {c['screen_excludes']}; group-mates skipped {c['screen_group']}; "
+          f"drawn {c['drawn']}; substitutions {len(c['substitutions'])}")
+    if not res.written:
+        print(f"{res.to_screen} more item(s) need a screen verdict; wrote {res.queue_path} ({res.queue_len} rows). "
+              f"Screen them into {args.screen or res.out_dir / corpus.SCREEN_FILE} and rerun.")
+        return 3
+    print(f"wrote {res.out_dir}/items.jsonl, draw.json, README.md")
     return 0
 
 

@@ -4,27 +4,28 @@ You are cataloguing one image from a family photo archive so that it can be foun
 
 Two to four plain, factual sentences, written so that the words someone would type to find this picture appear in them. Cover, where they apply:
 
-- **The setting:** indoors or outdoors, and what kind of place (beach, kitchen, mountain path, ski slope, city street, garden, church, airport, classroom, restaurant).
-- **The subjects and what they are doing:** how many people there are, roughly ("one woman", "two adults and a small child", "a large group"), their apparent roles from what is visible ("a bride and groom", "skiers", "a baby", "a waiter"), and the main animals and objects.
+- **The setting:** indoors or outdoors, and what kind of place (beach, kitchen, mountain path, ski slope, city street, garden, church, airport, classroom, restaurant). Also the season or time of day when it is evident (night, snow, autumn).
+- **The subjects and what they are doing:** how many people there are (count exactly up to five, then "a group of about ten", "a large crowd"), what they look like in general terms ("an older man", "a baby", "a teenage girl", "two adults and a small child") rather than "an adult" or "a person", their apparent roles from what is visible ("a bride and groom", "skiers", "a waiter"), and the main animals and objects.
 - **The occasion,** if it is evident (wedding, birthday party, Christmas, graduation, hike, holiday).
-- **Any legible text,** quoted exactly: signs, shop names, captions or dates written on a print, banners, screens.
-- **What kind of photo it is:** black-and-white or colour, a portrait, landscape, close-up or group photo, a scanned print with a border, film grain, a faded print, a screenshot.
+- **Any legible text,** including on signs, shop fronts, clothes, cakes, banners, screens and print borders, copied exactly inside single quotes ('HAPPY BIRTHDAY'). If only part is readable, give the readable part.
+- **What kind of photo it is,** only when it is not an ordinary colour snapshot: "black-and-white", "sepia", "film scan", "square film photo", "scanned print with a border", "faded colour print", "screenshot of a phone app". Repeat it as a tag. Never write "colour photo".
 - **Era cues,** if the picture clearly looks old: the style of clothes, cars or print ("looks like the 1970s"). Say only what the image suggests, as an impression.
 
 Rules:
 
 - Do not identify people from their faces. Do not guess names, relationships or exact ages. Say "a woman", "an older man", "a group of children".
-- Name a place only when it is written in the image or the landmark is unmistakable (for example the Eiffel Tower). Otherwise describe it: "a harbour town", "a snowy alpine village".
+- Name a place only when it is written in the image or the landmark is unmistakable (for example the Eiffel Tower or the Matterhorn). Otherwise describe it: "a harbour town", "a snowy alpine village".
+- If you are unsure what an object is, use the general word ("a scooter or bike", "a red and white flag") rather than guessing a specific one.
 - Do not describe the photo's quality or your own reasoning. Do not start with "This image shows" or "The image".
 
 ## tags
 
-Between 5 and 20 lowercase tags for search: subjects, scene, setting, activities, objects, occasion, season, and photo type (for example "beach", "children", "birthday", "snow", "black and white", "scanned print", "portrait", "group photo"). Use plain English, singular where natural. Place names are allowed only under the caption's rule above. No names of people.
+Between 5 and 20 lowercase tags for search: subjects, scene, setting, activities, objects, occasion, season, and photo type (for example "beach", "children", "birthday", "snow", "black and white", "scanned print", "portrait", "group photo"). Use plain English, singular where natural. Place names are allowed only under the caption's rule above. No names of people, no relationship words (family, grandparents), and no occasion (holiday, vacation) unless the picture shows it.
 
 ## medium: what the picture originally was
 
 - `digital`: born digital, taken by a digital camera or phone. Nothing suggests a physical original: no print border, paper texture, film rebate, dust on film, or scanner bed.
-- `film_negative`: the original was a negative that has been scanned and inverted. Cues: film grain, dust and hair as white or black specks, a strip of film border or sprocket holes, a slightly washed-out or colour-shifted look from inversion, edge markings such as frame numbers or "KODAK" along the rebate.
+- `film_negative`: the original was a negative that has been scanned and inverted. Cues: film grain, dust and hair as white or black specks, a strip of film border or sprocket holes, a slightly washed-out or colour-shifted look from inversion, edge markings such as frame numbers or "KODAK" along the rebate. A black border around the frame, or a square 6x6 frame, means a film scan, not `digital`.
 - `film_slide`: the original was a positive transparency (slide). Cues: a cardboard or plastic slide mount, rounded frame corners, very saturated or contrasty colours typical of Kodachrome or Ektachrome, deep blacks, a dark edge around the frame.
 - `print`: the original was a photographic print on paper. Cues: a white or cream paper border (sometimes deckled), rounded print corners, paper texture or sheen, creases, scratches, foxing, fading toward the edges, a print made of a print, or writing on the border.
 - `document`: a page or card rather than a photograph: letters, certificates, forms, receipts, book pages, drawings, postcards seen from the text side.
@@ -48,7 +49,7 @@ A digital-camera photo is `digital` / `camera`. A scanned print is `print` / `fl
 
 - `colour`: a normal colour image, including old colour prints that have faded or shifted toward red, magenta, yellow or cyan. A faded colour print still shows different hues in different areas (skin, sky, clothes, foliage).
 - `mono`: black-and-white or greyscale, with neutral grey tones. A slight overall cast from scanning is still `mono` if every area is the same neutral grey.
-- `toned`: a monochrome image with one consistent tint across all tones: sepia or brown, selenium purple-brown, cyanotype blue. The whole picture is one hue that only varies in lightness; there are no separate colours for different objects.
+- `toned`: a monochrome image with one consistent tint across all tones: sepia or brown, selenium purple-brown, cyanotype blue. The whole picture is one hue that only varies in lightness; there are no separate colours for different objects. A colour photo of brown things (wood, a sunset) is `colour`.
 - `unknown`: you cannot tell, for example a near-colourless faded colour print versus a toned print.
 
 ## confidence

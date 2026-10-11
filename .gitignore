@@ -13,3 +13,4 @@ __pycache__/
 .ruff_cache/
 node_modules/
 evals/vally/generated/
+evals/sets/*/screen-queue.jsonl
