@@ -270,9 +270,9 @@ class Skip:
     asset_id: str | None
     source: str | None
     relpath: str | None
-    reason: (
-        str  # never_send | no_consent | unknown_source | no_relpath | copy_restricted
-    )
+    # never_send | unknown_source | no_consent (incl. provider not in hosted_models) | no_relpath
+    # | held_back | copy_restricted
+    reason: str
 
 
 @dataclass
@@ -290,16 +290,25 @@ class Eligibility:
         )
 
 
-def _own_restriction(item: dict, cfg: config.Config, never: NeverSend) -> str | None:
+def _held_back(source: config.Source, relpath: str) -> bool:
+    rel = relpath.replace("\\", "/").lstrip("/")
+    return any(_glob_regex(g).match(rel) for g in source.held_back)
+
+
+def _own_restriction(
+    item: dict, cfg: config.Config, never: NeverSend, provider: str = "gemini"
+) -> str | None:
     if never.matches(item.get("asset_id"), item.get("relpath")):
         return "never_send"
     source = cfg.sources.get(item.get("source") or "")
     if source is None:
         return "unknown_source"
-    if source.hosted_consent is not True:
+    if source.hosted_consent is not True or provider not in source.hosted_models:
         return "no_consent"
     if not item.get("relpath"):
         return "no_relpath"  # can't check path globs, so don't send
+    if _held_back(source, item["relpath"]):
+        return "held_back"
     return None
 
 
@@ -319,13 +328,18 @@ def filter_items(
     cfg: config.Config,
     never: NeverSend | None = None,
     others: list[dict] = (),
+    provider: str = "gemini",
 ) -> Eligibility:
     """Split items into allowed and skipped. A restriction on any copy (same asset_id) or sibling
     (same group_id, e.g. a raw/JPEG pair) restricts them all: eligible only if none is restricted.
-    `others` are further known items (e.g. `known_items()`) consulted only for copies and siblings."""
+    `others` are further known items (e.g. `known_items()`) consulted only for copies and siblings.
+    `provider` is the hosted provider the items would go to; the source must list it in hosted_models."""
     never = never if never is not None else load_never_send()
-    own = [_own_restriction(it, cfg, never) for it in items]
-    every = [*zip(items, own), *((o, _own_restriction(o, cfg, never)) for o in others)]
+    own = [_own_restriction(it, cfg, never, provider) for it in items]
+    every = [
+        *zip(items, own),
+        *((o, _own_restriction(o, cfg, never, provider)) for o in others),
+    ]
     bad_ids = {it.get("asset_id") for it, r in every if r and it.get("asset_id")}
     bad_groups = {it.get("group_id") for it, r in every if r and it.get("group_id")}
     allowed, skipped = [], []

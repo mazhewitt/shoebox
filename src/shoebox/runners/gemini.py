@@ -460,7 +460,7 @@ def _check(cand: dict, items: list[dict], cfg: config.Config) -> privacy.Eligibi
     _setting(cand, "media_resolution", MEDIA_RESOLUTION)
     privacy.require_checklist()
     privacy.require_current_price(cand)
-    elig = privacy.filter_items(items, cfg, others=privacy.known_items())
+    elig = privacy.filter_items(items, cfg, others=privacy.known_items(), provider="gemini")
     last_eligibility = elig
     name = _cand_name(cand)
     print(f"gemini preflight [{name}]: {elig.summary()}", file=sys.stderr)

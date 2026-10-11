@@ -70,3 +70,35 @@ num_ctx = 8192
 num_predict = 1024
 image_budget = "auto"
 retry = { num_predict = 300, repeat_penalty = 1.1 }
+
+# label-v2 arms (design D7): search-oriented caption, 5-20 tags, rotate_cw. A v2 label is ~200-250 tokens,
+# so the truncation retry cap is 450 rather than v1's 300.
+[candidates.e4b-bf16-v2]
+runtime = "ollama"
+model = "gemma4:e4b-mlx-bf16"
+quant = "bf16"
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024
+image_budget = "auto"
+retry = { num_predict = 450, repeat_penalty = 1.1 }
+
+[candidates.g12b-q4-v2]
+runtime = "ollama"
+model = "gemma4:12b"
+quant = "Q4_K_M"
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+think = false
+temperature = 0.0
+seed = 0
+num_ctx = 8192
+num_predict = 1024
+image_budget = "auto"
+retry = { num_predict = 450, repeat_penalty = 1.1 }

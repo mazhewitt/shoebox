@@ -26,6 +26,19 @@ def register(sub) -> None:
         default=None,
         help="also report never-send/consent skips for these items, as the runner would",
     )
+    c.add_argument(
+        "--provider",
+        choices=("gemini", "claude"),
+        default="gemini",
+        help="hosted provider the items would go to (default gemini); the checklist is Gemini's, "
+        "so with claude a failing checklist is reported but does not fail the command",
+    )
+    c.add_argument(
+        "--allowed-out",
+        type=Path,
+        default=None,
+        help="write the allowed items as JSONL (requires --items)",
+    )
     c.set_defaults(func=cmd_check)
 
     s = psub.add_parser(
@@ -40,6 +53,11 @@ def cmd_check(args) -> int:
     for r in results:
         print(f"{'PASS' if r.ok else 'FAIL'}  {r.item}: {r.detail}")
     failed = sum(not r.ok for r in results)
+    provider = getattr(args, "provider", "gemini")
+    allowed_out = getattr(args, "allowed_out", None)
+    if allowed_out and not args.items:
+        print("--allowed-out needs --items", file=sys.stderr)
+        return 2
     if args.items:
         items = [
             json.loads(line)
@@ -49,8 +67,14 @@ def cmd_check(args) -> int:
         others = privacy.known_items()
         never = privacy.load_never_send()
         # The same rules the runner's preflight applies, so this report matches the run.
-        elig = privacy.filter_items(items, config.load(), never, others=others)
+        elig = privacy.filter_items(
+            items, config.load(), never, others=others, provider=provider
+        )
         print(f"items: {elig.summary()}")
+        if allowed_out:
+            allowed_out.parent.mkdir(parents=True, exist_ok=True)
+            allowed_out.write_text("".join(json.dumps(it) + "\n" for it in elig.allowed))
+            print(f"wrote {len(elig.allowed)} allowed item(s) to {allowed_out}")
         for s in elig.skipped:
             print(f"skip  {s.asset_id} {s.source} {s.relpath}: {s.reason}")
         for entry in never.unmatched([*items, *others]):
@@ -58,6 +82,11 @@ def cmd_check(args) -> int:
                 f"WARN  never-send entry {entry!r} matched no item in {args.items} or evals/sets "
                 "(paths are relative to a source root; a folder name blocks everything below it)"
             )
+    if failed and provider != "gemini" and args.items:
+        print(
+            f"{failed} Gemini checklist item(s) failed (informational for --provider {provider})."
+        )
+        return 0
     if failed:
         print(
             f"{failed} checklist item(s) failed: hosted runs are refused.",

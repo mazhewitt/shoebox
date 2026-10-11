@@ -127,7 +127,10 @@ Graders treat a missing label as **unlabelled**, which is reported separately an
   - `evals/privacy-checklist.toml` has every item true and `confirmed_on` within the last 90 days;
   - the source's `hosted_consent` is true for the item;
   - the item isn't in `evals/never-send.txt`;
+  - the provider is in the source's `hosted_models` (default `["gemini"]` when `hosted_consent` is true) and the item's path doesn't match the source's `held_back` globs (relative to the source root, case-insensitive; copies and siblings of a held-back item are `copy_restricted` too);
   - the run's estimated USD is under `max_usd_per_run` (pilot: $2).
+
+  `shoebox privacy check --items X --provider claude --allowed-out allowed.jsonl` applies the same rules for another provider and writes the vetted items (for Claude subagents); the Gemini checklist is then informational only.
 
   Spend is appended to `evals/spend.jsonl`, and the cumulative total is checked against $150.
 - **Price** (research/mvp-models.md, introductory until 2026-12-31): $0.75/1M input, $3.75/1M output, including thinking. Record the `price_date`.

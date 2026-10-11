@@ -595,16 +595,17 @@ def test_runtime_version_and_candidates_file():
         Path(config.REPO_ROOT / "config" / "candidates.d" / "gemini.toml").read_text()
     )
     cands = data["candidates"]
-    assert set(cands) == {"gemini-low", "gemini-medium"}
+    assert set(cands) == {"gemini-low", "gemini-medium", "gemini-medium-v2"}
     for c in cands.values():
         assert (
             c["runtime"] == "gemini"
             and c["model"] == "gemini-3.8-flash"
             and c["thinking_level"] == "low"
         )
-        assert c["max_usd_per_run"] == 2.0 and c["profile"] == "infer-v1"
+        assert c["max_usd_per_run"] == (5.0 if c["prompt"] == "label-v2.md" else 2.0) and c["profile"] == "infer-v1"
         assert c["price_valid_until"] == "2026-12-31"  # introductory price ends
         assert privacy.estimate(c, 45).usd < 2.0
+    assert privacy.estimate(cands["gemini-medium-v2"], 1000).usd < 5.0  # eval-1k fits its cap
     assert cands["gemini-low"]["media_resolution"] == "low"
     assert cands["gemini-medium"]["media_resolution"] == "medium"
     assert "gemini" in gemini.runtime_version(cands["gemini-low"])

@@ -401,3 +401,93 @@ def test_cli_items_report_matches_runner_rules(tmp_path, capsys, monkeypatch):
     assert "items: 1 allowed, 1 skipped (1 copy_restricted)" in out
     assert f"skip  {'1' * 64} importantfiles Pictures/a.jpg: copy_restricted" in out
     assert "WARN  never-send entry 'Kyra/**' matched no item" in out
+
+
+# ---------- held-back paths and per-provider consent (design D14) ----------
+
+
+def cfg_held(tmp_path, held_back=(), hosted_models=None) -> config.Config:
+    src = config.Source(
+        "importantfiles", tmp_path / "if", "owner", synced=False, hosted_consent=True,
+        held_back=tuple(held_back), hosted_models=hosted_models,
+    )
+    return config.Config(shoebox_root=tmp_path / "shoebox", sources={"importantfiles": src})
+
+
+@pytest.mark.parametrize(
+    "relpath", ["Pictures/toren phone/a.jpg", "pictures/TOREN PHONE/sub/deep/b.jpg"]
+)
+def test_held_back_path_is_skipped(tmp_path, relpath):
+    cfg = cfg_held(tmp_path, held_back=["Pictures/toren phone"])
+    elig = privacy.filter_items(
+        [item(relpath=relpath), item("2" * 64, relpath="Pictures/Greece/x.jpg")],
+        cfg, privacy.NeverSend(),
+    )
+    assert [s.reason for s in elig.skipped] == ["held_back"]
+    assert [i["asset_id"] for i in elig.allowed] == ["2" * 64]
+
+
+def test_copy_or_sibling_of_held_back_is_copy_restricted(tmp_path):
+    cfg = cfg_held(tmp_path, held_back=["Important documents"])
+    held = item("1" * 64, relpath="Important documents/passport.jpg", group_id="g1")
+    copy = item("1" * 64, relpath="Pictures/passport.jpg")
+    sibling = item("3" * 64, relpath="Pictures/passport.dng", group_id="g1")
+    elig = privacy.filter_items([copy, sibling], cfg, privacy.NeverSend(), others=[held])
+    assert elig.allowed == []
+    assert [s.reason for s in elig.skipped] == ["copy_restricted", "copy_restricted"]
+
+
+def test_provider_consent_per_source(tmp_path):
+    only_gemini = cfg_held(tmp_path)  # hosted_consent true, hosted_models absent
+    assert only_gemini.sources["importantfiles"].hosted_models == ("gemini",)
+    elig = privacy.filter_items([item()], only_gemini, privacy.NeverSend(), provider="claude")
+    assert [s.reason for s in elig.skipped] == ["no_consent"]
+    assert privacy.filter_items([item()], only_gemini, privacy.NeverSend()).allowed
+    both = cfg_held(tmp_path, hosted_models=("gemini", "claude"))
+    assert privacy.filter_items([item()], both, privacy.NeverSend(), provider="claude").allowed
+
+
+def test_config_hosted_models_defaults_and_validation(tmp_path):
+    base = 'shoebox_root = "/tmp/s"\n[sources.a]\nroot = "/tmp/a"\nperson = "o"\nsynced = false\n'
+    p = _write(tmp_path / "a.toml", base + "hosted_consent = true\n")
+    assert config.load(p).sources["a"].hosted_models == ("gemini",)
+    assert config.load(p).sources["a"].held_back == ()
+    p = _write(tmp_path / "b.toml", base + "hosted_consent = false\n")
+    assert config.load(p).sources["a"].hosted_models == ()
+    p = _write(tmp_path / "c.toml", base + 'hosted_consent = false\nhosted_models = ["claude"]\n')
+    with pytest.raises(ValueError, match="hosted_models"):
+        config.load(p)
+    p = _write(tmp_path / "d.toml", base + 'hosted_consent = true\nhosted_models = ["claude"]\n'
+               'held_back = ["X"]\n')
+    s = config.load(p).sources["a"]
+    assert (s.hosted_models, s.held_back) == (("claude",), ("X",))
+
+
+def test_cli_provider_claude_writes_allowed_and_ignores_gemini_checklist(
+    tmp_path, capsys, monkeypatch
+):
+    monkeypatch.setattr(privacy, "SETS_DIR", tmp_path / "nosets")
+    monkeypatch.setattr(privacy, "NEVER_SEND_PATH", tmp_path / "none.txt")
+    cfg = cfg_held(tmp_path, held_back=["Pictures/toren phone"], hosted_models=("gemini", "claude"))
+    monkeypatch.setattr(config, "load", lambda *a, **k: cfg)
+    ok, held = item("2" * 64), item("1" * 64, relpath="Pictures/toren phone/a.jpg")
+    items = _write(tmp_path / "items.jsonl", json.dumps(ok) + "\n" + json.dumps(held) + "\n")
+    bad = _write(tmp_path / "c.toml", TEMPLATE)
+    out_path = tmp_path / "allowed.jsonl"
+    argv = ["privacy", "check", "--checklist", str(bad), "--items", str(items)]
+    assert main([*argv, "--provider", "claude", "--allowed-out", str(out_path)]) == 0
+    assert "items: 1 allowed, 1 skipped (1 held_back)" in capsys.readouterr().out
+    assert [json.loads(line) for line in out_path.read_text().splitlines()] == [ok]
+    assert main(argv) == 1  # default provider gemini: the failing checklist still refuses
+
+
+def test_repo_config_holds_back_other_libraries():
+    cfg = config.load(config.REPO_ROOT / "config" / "shoebox.toml")
+    elig = privacy.filter_items(
+        [item("1" * 64, relpath="Pictures/toren phone/x.jpg"),
+         item("2" * 64, relpath="Pictures/Greece/x.jpg"),
+         item("3" * 64, relpath="Important documents/p.jpg")],
+        cfg, privacy.NeverSend(), provider="claude",
+    )
+    assert [i["asset_id"] for i in elig.allowed] == ["2" * 64]
+    assert [s.reason for s in elig.skipped] == ["held_back", "held_back"]

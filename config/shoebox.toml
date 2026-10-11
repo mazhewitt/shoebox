@@ -8,3 +8,8 @@ root = "~/mnt/importantfiles-ro"
 person = "owner"
 synced = true            # Drive-synced via Cloud Sync: never write
 hosted_consent = true
+hosted_models = ["gemini", "claude"]   # owner consent 2026-10-11: their library incl. family and friends; not others' own libraries
+# Never sent to any hosted model (globs relative to root, case-insensitive). The first two look like
+# other people's own libraries (held until the owner confirms); "Important documents" holds
+# passports, IDs, citizenship, bills and health insurance.
+held_back = ["Pictures/toren phone", "Pictures/Jude Profile", "Important documents"]

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "shoebox/label-v2",
+  "title": "Shoebox label v2",
+  "description": "One image's labels for search (label-v2: longer search-oriented caption, more tags, rotate_cw). medium is what the picture originally was; digitiser is how it became this file. 'unknown' abstains. caption may be null (with empty tags) only for the rule baseline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "caption",
+    "tags",
+    "medium",
+    "digitiser",
+    "colour_class",
+    "confidence",
+    "rotate_cw"
+  ],
+  "properties": {
+    "caption": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "2-4 factual sentences for search. No identities."
+    },
+    "tags": {
+      "type": "array",
+      "maxItems": 25,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40,
+        "pattern": "^[^A-Z]+$"
+      },
+      "description": "Free tags; lowercased by the runner."
+    },
+    "medium": {
+      "enum": [
+        "digital",
+        "film_negative",
+        "film_slide",
+        "print",
+        "document",
+        "screen",
+        "unknown"
+      ]
+    },
+    "digitiser": {
+      "enum": [
+        "camera",
+        "phone",
+        "film_scanner",
+        "flatbed_scanner",
+        "camera_rephoto",
+        "screenshot",
+        "software",
+        "unknown"
+      ]
+    },
+    "colour_class": {
+      "enum": [
+        "colour",
+        "mono",
+        "toned",
+        "unknown"
+      ]
+    },
+    "confidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "medium",
+        "digitiser",
+        "colour_class"
+      ],
+      "properties": {
+        "medium": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "digitiser": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "colour_class": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "rotate_cw": {
+      "type": "integer",
+      "enum": [
+        0,
+        90,
+        180,
+        270
+      ],
+      "description": "Clockwise turn in degrees that makes the image upright (design D6a)."
+    }
+  }
+}

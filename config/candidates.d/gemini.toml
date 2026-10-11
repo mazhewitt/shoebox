@@ -47,3 +47,23 @@ price_input_usd_per_mtok = 0.75
 price_output_usd_per_mtok = 3.75
 price_date = "2026-10-10"
 price_valid_until = "2026-12-31"
+
+# Reference captioner for the replan (design D7): label-v2 on eval-1k. ~$2-3 expected; the cap is the task's $5.
+[candidates.gemini-medium-v2]
+runtime = "gemini"
+model = "gemini-3.8-flash"
+media_resolution = "medium"
+thinking_level = "low"
+schema_field = "responseJsonSchema"
+max_output_tokens = 4096
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+max_usd_per_run = 5.0
+est_prompt_tokens = 2100          # label-v2.md (~1.7k tokens) plus the response schema
+est_output_tokens = 400
+est_thinking_tokens = 200        # pilot measured 0 thinking tokens at "low" (2026-10-10); kept above 0 to be safe
+price_input_usd_per_mtok = 0.75
+price_output_usd_per_mtok = 3.75
+price_date = "2026-10-10"
+price_valid_until = "2026-12-31"

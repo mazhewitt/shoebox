@@ -16,6 +16,18 @@ class Source:
     person: str
     synced: bool
     hosted_consent: bool
+    held_back: tuple[str, ...] = ()  # path globs relative to root, never sent to any hosted model
+    hosted_models: tuple[str, ...] | None = None  # None: ("gemini",) if hosted_consent, else ()
+
+    def __post_init__(self):
+        models = self.hosted_models
+        if models is None:
+            models = ("gemini",) if self.hosted_consent is True else ()
+        models = tuple(models)
+        if models and self.hosted_consent is not True:
+            raise ValueError(f"source {self.name}: hosted_models {list(models)} needs hosted_consent = true")
+        object.__setattr__(self, "hosted_models", models)
+        object.__setattr__(self, "held_back", tuple(self.held_back))
 
 
 @dataclass(frozen=True)
@@ -80,6 +92,8 @@ def load(path: Path = CONFIG_PATH) -> Config:
             person=s["person"],
             synced=s["synced"],
             hosted_consent=s["hosted_consent"],
+            held_back=tuple(s.get("held_back", ())),
+            hosted_models=tuple(s["hosted_models"]) if "hosted_models" in s else None,
         )
         for name, s in data.get("sources", {}).items()
     }
