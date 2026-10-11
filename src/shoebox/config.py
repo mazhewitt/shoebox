@@ -3,6 +3,7 @@
 import os
 import tomllib
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +19,9 @@ class Source:
     hosted_consent: bool
     held_back: tuple[str, ...] = ()  # path globs relative to root, never sent to any hosted model
     hosted_models: tuple[str, ...] | None = None  # None: ("gemini",) if hosted_consent, else ()
+    # When the config entry was made: hosted sends need a frame of this source dated on or after it
+    # (design D5). None: any frame that lists the source counts.
+    added: date | None = None
 
     def __post_init__(self):
         models = self.hosted_models
@@ -83,6 +87,16 @@ def original_path(cfg: Config, item: dict) -> Path:
     return path
 
 
+def _added(name: str, value) -> date | None:
+    """`added = 2026-10-10` (TOML date) or the same as a string; anything else is refused."""
+    if value is None or (isinstance(value, date) and not hasattr(value, "hour")):
+        return value
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"source {name}: added must be a date (YYYY-MM-DD), got {value!r}") from None
+
+
 def load(path: Path = CONFIG_PATH) -> Config:
     data = tomllib.loads(Path(path).read_text())
     sources = {
@@ -94,6 +108,7 @@ def load(path: Path = CONFIG_PATH) -> Config:
             hosted_consent=s["hosted_consent"],
             held_back=tuple(s.get("held_back", ())),
             hosted_models=tuple(s["hosted_models"]) if "hosted_models" in s else None,
+            added=_added(name, s.get("added")),
         )
         for name, s in data.get("sources", {}).items()
     }

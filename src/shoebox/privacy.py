@@ -12,7 +12,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from shoebox import config
+from shoebox import config, copies
+from shoebox import quarantine as quarantine_mod
 
 EVALS_DIR = config.REPO_ROOT / "evals"
 CHECKLIST_PATH = EVALS_DIR / "privacy-checklist.toml"
@@ -271,8 +272,9 @@ class Skip:
     source: str | None
     relpath: str | None
     # never_send | unknown_source | no_consent (incl. provider not in hosted_models) | no_relpath
-    # | held_back | copy_restricted
+    # | held_back | copy_restricted | quarantined
     reason: str
+    restricting_source: str | None = None  # copy_restricted: the source of the restricted copy
 
 
 @dataclass
@@ -323,36 +325,81 @@ def known_items(sets_dir: Path | None = None) -> list[dict]:
     return out
 
 
+def default_copy_index(cfg: config.Config) -> "copies.CopyIndex":
+    """The copy index `filter_items` uses when none is passed: built from the frames under shoebox_root."""
+    return copies.load(cfg)
+
+
 def filter_items(
     items: list[dict],
     cfg: config.Config,
     never: NeverSend | None = None,
     others: list[dict] = (),
     provider: str = "gemini",
+    copies: "copies.CopyIndex | None" = None,
+    quarantine: "quarantine_mod.Checker | None" = None,
 ) -> Eligibility:
     """Split items into allowed and skipped. A restriction on any copy (same asset_id) or sibling
     (same group_id, e.g. a raw/JPEG pair) restricts them all: eligible only if none is restricted.
     `others` are further known items (e.g. `known_items()`) consulted only for copies and siblings.
-    `provider` is the hosted provider the items would go to; the source must list it in hosted_models."""
+    `provider` is the hosted provider the items would go to; the source must list it in hosted_models.
+
+    `copies` is the cross-source copy index (design D5; default `default_copy_index(cfg)`, from the frames):
+    a byte or same-pixel copy anywhere in any configured source that is itself restricted makes the item
+    `copy_restricted`, naming that copy's source. If the index lists a configured source with no current
+    frame, this raises PrivacyError naming it (fail closed: no inventory must not pass as "no copies").
+    `quarantine` (default: `evals/quarantine.jsonl`) refuses `pending`/`private`/`exclude` assets and
+    their same-pixel copies as `quarantined`."""
     never = never if never is not None else load_never_send()
+    index = copies if copies is not None else default_copy_index(cfg)
+    if index.missing:
+        raise PrivacyError(
+            f"no current inventory frame for source(s): {', '.join(index.missing)} "
+            "(need a frame dated on or after the source's `added` date). Run `shoebox inventory` for "
+            "them first; every hosted send is refused until then."
+        )
+    quarantine = quarantine if quarantine is not None else quarantine_mod.Checker.load()
     own = [_own_restriction(it, cfg, never, provider) for it in items]
     every = [
         *zip(items, own),
         *((o, _own_restriction(o, cfg, never, provider)) for o in others),
     ]
-    bad_ids = {it.get("asset_id") for it, r in every if r and it.get("asset_id")}
-    bad_groups = {it.get("group_id") for it, r in every if r and it.get("group_id")}
+    bad_ids, bad_groups = {}, {}
+    for it, r in every:
+        if r and it.get("asset_id"):
+            bad_ids.setdefault(it["asset_id"], it.get("source"))
+        if r and it.get("group_id"):
+            bad_groups.setdefault(it["group_id"], it.get("source"))
+    restricted_copy: dict[tuple, str | None] = {}
+
+    def copy_restriction(aid: str) -> str | None:
+        """The source of the first restricted byte or same-pixel copy in the index, else None."""
+        for src, rel, copy_aid in index.copies(aid):
+            key = (src, rel, copy_aid)
+            if key not in restricted_copy:
+                loc = {"asset_id": copy_aid, "source": src, "relpath": rel}
+                restricted_copy[key] = _own_restriction(loc, cfg, never, provider)
+            if restricted_copy[key]:
+                return src
+        return None
+
     allowed, skipped = [], []
     for it, reason in zip(items, own):
-        if reason is None and (
-            it.get("asset_id") in bad_ids or (it.get("group_id") or None) in bad_groups
-        ):
-            reason = "copy_restricted"
+        aid, by = it.get("asset_id"), None
+        if reason is None and aid and quarantine.refused(aid, "hosted", index.pixel_group(aid)):
+            reason = "quarantined"
+        if reason is None and aid in bad_ids:
+            reason, by = "copy_restricted", bad_ids[aid]
+        if reason is None and (it.get("group_id") or None) in bad_groups:
+            reason, by = "copy_restricted", bad_groups[it["group_id"]]
+        if reason is None and aid:
+            by = copy_restriction(aid)
+            reason = "copy_restricted" if by else None
         if reason is None:
             allowed.append(it)
         else:
             skipped.append(
-                Skip(it.get("asset_id"), it.get("source"), it.get("relpath"), reason)
+                Skip(it.get("asset_id"), it.get("source"), it.get("relpath"), reason, by)
             )
     return Eligibility(allowed, skipped)
 
