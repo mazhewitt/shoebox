@@ -280,3 +280,21 @@ def test_dry_run_makes_no_http_call(env, monkeypatch, capsys):
     assert rc == 0 and env.requests == []
     assert "3 grids, 14 images" in out and "$" in out
     assert not (env.tmp / "spend.jsonl").exists()
+
+
+def test_photo_note_gives_capture_date_and_folder_only():
+    it = {"asset_id": "a", "relpath": "Pictures/Greece/L1003941.JPG"}
+    assert judge.photo_note(it, {"date": "2018-06-02T10:00:00", "date_kind": "exif"}) == \
+        "taken 2018-06-02; folder: Pictures/Greece"
+    assert judge.photo_note(it, {"date": "2021-01-01", "date_kind": "mtime"}) == "date unknown; folder: Pictures/Greece"
+    assert judge.photo_note({"asset_id": "b", "relpath": "x.jpg"}, None) == "date unknown"
+    assert "L1003941" not in judge.photo_note(it, None)
+
+
+def test_request_carries_notes_after_photo_labels():
+    cand = judge.judge_candidate({"model": "gemini-3.8-flash", "media_resolution": "low", "thinking_level": "low",
+                                  "price_input_usd_per_mtok": 0.75, "price_output_usd_per_mtok": 3.75})
+    body = judge.build_request(cand, "snow in 2010", [b"\xff\xd8a", b"\xff\xd8b"], ["taken 2010-01-03", "date unknown"])
+    texts = [p["text"] for p in body["contents"][0]["parts"] if "text" in p]
+    assert texts[1:] == ["Photo 1 (taken 2010-01-03)", "Photo 2 (date unknown)"]
+    assert judge.PROMPT_FILE == "judge-v2.md"

@@ -283,8 +283,12 @@ def _judge(args) -> int:
         for s in p.skipped:
             print(f"  skipped {s['asset_id']} for {s['query_id']}: {s['reason']}")
         return 0
+    from shoebox.evals import queries
+
+    frows = queries.frame_rows_for(items, _frame(cfg, None))
+    notes = {it["asset_id"]: judge.photo_note(it, frows.get(it["asset_id"])) for it in items}
     try:
-        res = judge.run(cfg, pool, cand, items, privacy.known_items())
+        res = judge.run(cfg, pool, cand, items, privacy.known_items(), notes=notes)
     except (privacy.PrivacyError, gemini.GeminiError) as e:
         print(f"shoebox eval judge: {e}", file=sys.stderr)
         return 2

@@ -33,12 +33,12 @@ from shoebox.evals import search
 from shoebox.runners import gemini
 
 KIND = "judgments"
-PROMPT_FILE = "judge-v1.md"
+PROMPT_FILE = "judge-v2.md"
 POOL_FILE = "pool-v1.jsonl"
 JUDGMENTS_FILE = "judgments-v1.jsonl"
 BASE_CANDIDATE = "gemini-low"  # model, resolution, thinking level and prices come from this candidate
-JUDGE_NAME = "gemini-judge-v1"
-JUDGE_VERSION = "judge-runner-1"  # bump when request building, gridding or parsing changes
+JUDGE_NAME = "gemini-judge-v2"
+JUDGE_VERSION = "judge-runner-2"  # 2: a per-photo date/folder note  # bump when request building, gridding or parsing changes
 GRID_SIZE = 10
 SHUFFLE_SEED = 20261011
 TEMPERATURE = None  # Gemini 3 default (1.0), as the label runner: Google advises against lowering it (looping)
@@ -244,11 +244,24 @@ def grade_schema(n: int) -> dict:
                 "grade": {"type": "integer", "minimum": 0, "maximum": 2}}}}}}
 
 
-def build_request(cand: dict, text: str, jpegs: list[bytes]) -> dict:
+def photo_note(item: dict, frame_row: dict | None) -> str:
+    """What the library knows about a photo's time and place, for queries about them: the capture date
+    (EXIF or file-name dates only; a scan or file date is not a capture date) and the folder it is filed in.
+    No file name (camera codes carry nothing; names in file names would be identity hints)."""
+    from shoebox.evals.queries import DATED_KINDS
+
+    row = frame_row or {}
+    d = str(row.get("date") or "")
+    when = f"taken {d[:10]}" if row.get("date_kind") in DATED_KINDS and d[:4].isdigit() else "date unknown"
+    folder = str(item.get("relpath") or "").rsplit("/", 1)[0] if "/" in str(item.get("relpath") or "") else ""
+    return f"{when}; folder: {folder}" if folder else when
+
+
+def build_request(cand: dict, text: str, jpegs: list[bytes], notes: list[str] | None = None) -> dict:
     level = gemini._setting(cand, "media_resolution", gemini.MEDIA_RESOLUTION)
     parts: list[dict] = [{"text": query_text(cand, text)}]
     for i, jpeg in enumerate(jpegs, 1):
-        parts.append({"text": f"Photo {i}"})
+        parts.append({"text": f"Photo {i} ({notes[i - 1]})" if notes else f"Photo {i}"})
         parts.append({"inlineData": {"mimeType": "image/jpeg", "data": base64.b64encode(jpeg).decode("ascii")},
                       "mediaResolution": {"level": level}})
     gen = {"responseMimeType": "application/json", "responseJsonSchema": grade_schema(len(jpegs)),
@@ -317,7 +330,7 @@ class JudgeResult:
 
 
 def run(cfg: Config, pool: list[dict], cand: dict, items: list[dict], others: list[dict] = (),
-        log=lambda msg: print(msg, file=sys.stderr)) -> JudgeResult:
+        log=lambda msg: print(msg, file=sys.stderr), notes: dict[str, str] | None = None) -> JudgeResult:
     """Judge every planned grid. Stops before a grid (no records for it) once the run cap or the project
     budget is reached; `result.stopped` says why."""
     privacy.require_checklist()
@@ -352,7 +365,7 @@ def run(cfg: Config, pool: list[dict], cand: dict, items: list[dict], others: li
             data = path.read_bytes()
             gemini.check_derived_jpeg(data)
             jpegs.append(data)
-        body = build_request(cand, g.text, jpegs)
+        body = build_request(cand, g.text, jpegs, [notes[a] for a in g.asset_ids] if notes is not None else None)
         t0 = time.monotonic()
         data, error = gemini._post(cand, body, key)
         latency_ms = int((time.monotonic() - t0) * 1000)
