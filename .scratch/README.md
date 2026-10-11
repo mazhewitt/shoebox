@@ -62,7 +62,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 | `catalogue/` | 07 (colour/mono heuristic), 12 (EG2 image vectors). 02, 05, 06, 09 and 10 follow once 01 is decided |
 | `dedup/` | 01 (exact/pixel groups), 02 (capture grouping) |
 | `sources/` | 04 (consent eligibility), 05 (skip rules) |
-| `sensitive-content-screen/` | 02 (quarantine stage), 03 (owner review page); 01 needs your Apple signing profile first |
+| `sensitive-content-screen/` | 01 (Core ML nudity screen), 02 (quarantine stage), 03 (owner review page) |
 | `eval-followups/` | 01 (rephrase subset), 02 (agreement matrix), 05 (PLAN.md rewrite; owner reviews the diff) |
 
 **Owner actions** (`ready-for-human` / `needs-info`):
