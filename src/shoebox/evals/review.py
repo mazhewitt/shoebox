@@ -229,7 +229,7 @@ function el(t,cls,txt){var e=document.createElement(t);if(cls)e.className=cls;if
 function status(m){$("status").textContent=m;}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(A));status("saved "+new Date().toLocaleTimeString());}catch(e){status("not saved: download answers before closing");}}
 function capA(k){if(!A.captions[k])A.captions[k]={labels:{},note:""};return A.captions[k];}
-function complete(k){var c=A.captions[k];if(!c)return false;for(var i=0;i<5;i++){if(!c.labels["ABCDE"[i]])return false;}return true;}
+function complete(k){var c=A.captions[k];if(!c)return false;var p=D.photos.find(function(x){return x.key===k;});return p.captions.every(function(s){return !!c.labels[s.label];});}
 $("nc").textContent=D.photos.length;$("ns").textContent=D.searches.length;
 D.levels.slice().sort(function(a,b){return b.score-a.score;}).forEach(function(l){var li=el("li");var b=el("b",null,l.score+" "+l.name+". ");li.appendChild(b);li.appendChild(document.createTextNode(l.text));$("levels").appendChild(li);});
 function tab(which){var c=which==="c";$("pc").classList.toggle("hidden",!c);$("ps").classList.toggle("hidden",c);$("tab-c").classList.toggle("on",c);$("tab-s").classList.toggle("on",!c);}
