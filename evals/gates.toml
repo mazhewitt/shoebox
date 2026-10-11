@@ -8,16 +8,22 @@
 #   (commit 5ab1a4e) before that audit ran.
 # - dev-split judgments exist and are used for tuning (blend weight, expansion prompt, filters).
 
-version = 1
+version = 2
 written = "2026-10-11"
+# v2 (2026-10-11, before any test-split search scoring): Opus judgments now cover the WHOLE test pool
+# (owner noted Opus via the subscription costs no API money), so the primary test qrels are Opus's; Gemini's
+# are a secondary report. Dev tuning uses Gemini qrels (Opus did not judge dev). Nothing else changed.
 set = "eval-1k"
 queries = "queries-v1.jsonl"
 
 [judging]
+test_qrels = "claude/opus-5.5, judge-v2.md rubric, every test pool pair (judgments-opus.jsonl)"
+dev_qrels = "gemini-judge-v2 (judgments-v1.jsonl)"
+secondary_test_qrels = "gemini-judge-v2: the same test metrics are reported; disagreements in route order are listed"
 judge = "gemini-judge-v2"            # Gemini 3.8 Flash, judge-v2.md, photos + date/folder notes
 audit_model = "claude/opus-5.5"
 kappa = "linear-weighted"            # Gemini vs Opus on the stratified audit sample
-kappa_floor = 0.6                    # below: Opus re-judges the whole test pool before scoring
+kappa_floor = 0.6                    # reported; Opus already judged the whole test pool, so it no longer gates
 unjudged = "non-relevant"            # pool coverage is reported per route
 
 [search]
@@ -35,13 +41,16 @@ route = "the best gemini-medium-v2 route on dev nDCG@20"   # chosen on dev, froz
 [candidates]
 # Every (captioner, prompt, route) triple on the eval-1k grid, the route chosen per captioner on dev,
 # plus "no captioner" (eg2-image@768, meta, image-meta and their +exp/+filt variants).
-captioners = ["e4b-bf16", "e4b-bf16-v2", "g12b-q4", "g12b-q4-v2", "gemini-medium-v2", "none"]
+captioners = ["e4b-bf16", "e4b-bf16-v2", "g12b-q4", "g12b-q4-v2", "gemini-medium-v2", "opus-v2", "none"]
+# opus-v2 (added in v2): captions by Claude Opus subagents; cost = subscription usage, not USD
+# (measured 2026-10-11: ~3.2M tokens per 1,000 images; ~2% of a weekly Max-5x allowance per 1,000).
 route_choice = "best route per captioner on dev nDCG@20; one route per captioner goes to test"
 
 [captions]
 # From the Opus caption audit (blind, 200 test-split photos).
 error_rate = "share of photos with >= 1 wrong or invented fact, or no caption"
 error_margin = 0.02                  # pass: candidate error rate <= reference + 0.02 (point estimate)
+auditor_rule = "Opus audit for all arms except opus-v2; opus-v2 vs the reference uses the Gemini audit of both (Gemini on gemini-medium-v2 is a self-audit, so this comparison is reported, with the owner's blind ratings, rather than gated)"
 mono_precision_min = 0.98            # colour/mono precision vs the Opus reference (high/medium confidence)
 no_captioner = "no caption rule applies; reported as search-only, and flagged as not meeting the MVP's 'describe every photo'"
 
