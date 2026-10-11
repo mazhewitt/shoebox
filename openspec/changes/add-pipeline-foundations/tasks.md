@@ -34,8 +34,8 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 3. Hosted eligibility across copies (sources/04)
 
-- [ ] 3.1 Build the cross-source copy index from the latest frame of every configured source, adding same-pixel links from `pixelhash`. Verify with unit tests on synthetic frames.
-- [ ] 3.2 Extend `filter_items`:
+- [x] 3.1 Build the cross-source copy index from the latest frame of every configured source, adding same-pixel links from `pixelhash`. Verify with unit tests on synthetic frames.
+- [x] 3.2 Extend `filter_items`:
   - **`copy_restricted`** when any copy is in a non-consented source, under `held_back`, or on never-send;
   - **`quarantined`** from the quarantine file (group 5);
   - **fail closed** when a configured source has no frame newer than its config entry.
@@ -85,7 +85,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 - [ ] 6.1 Build the exact and `same_pixels` groups from the frames and `pixelhash`. Group id = `g-` + the first 12 hex of the smallest member id. Write to the keyed store.
   - Verify with fixture tests (byte-identical; same pixels; re-encoded not grouped).
   - Verify with an ImportantFiles count by source/folder pair in `evals/runs/` once 1.4 is done.
-- [ ] 6.2 Implement the capture rules as `capture/<version>`:
+- [x] 6.2 Implement the capture rules as `capture/<version>`:
   - `raw_jpeg_basename` and `scan_export_basename`, generalised from `pilot/select.py`;
   - `live_photo`;
   - `motion_photo` (XMP from the frame's `exif` column, else filename-only, marked);
@@ -93,7 +93,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
   - `burst`, with the cover primary.
 
   Verify with fixtures for each rule and its near misses (same stem in another folder; `-edited` without its original).
-- [ ] 6.3 Implement canonical selection in design D7's order, with the reason recorded. Verify with a unit test per rule step and a determinism test (two runs, identical output).
+- [x] 6.3 Implement canonical selection in design D7's order, with the reason recorded. Verify with a unit test per rule step and a determinism test (two runs, identical output).
 - [ ] 6.4 Implement `shoebox dedup worklist`.
   - One row per capture, plus a header (dedup version, source set, frame dates).
   - Eligibility per capture: every member must be eligible; ineligible captures are tagged local.
