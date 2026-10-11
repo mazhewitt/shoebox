@@ -16,7 +16,7 @@ A flag must stop the asset **everywhere downstream**, not just in the bulk run:
 
 ## What
 
-- **`evals/quarantine.jsonl`** (or under `<shoebox_root>` if asset_ids alone are too revealing; decide): one row per flagged asset, with `asset_id`, detector, score, flagged-at, and verdict (`pending | include | private | exclude`) once reviewed.
+- **`evals/quarantine.jsonl`** (or under `<shoebox_root>` if asset_ids alone are too revealing; decide): one row per flagged asset, with `asset_id`, screen (`nudity` | `document`), flagged-at, and verdict (`pending | include | private | exclude`) once reviewed.
   - Rows only, no paths, no images.
   - Appended by the screen stage (01). Verdicts are written by the review page's ingest (03).
 - **Verdict effects:**

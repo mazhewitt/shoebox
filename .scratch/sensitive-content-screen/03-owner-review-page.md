@@ -17,7 +17,7 @@ Flagged items are filed for the owner's review before they go into the pipeline 
 - **Image handling:**
   - Thumbnails are written by the `derive` code. The builder must **not** read the images back for display in the session.
   - The command prints counts only.
-- **Per item:** a thumbnail (blurred by default, click to reveal), the detector and its reason (e.g. NudeNet part labels), the score, and source and folder. Buttons:
+- **Per item:** a thumbnail (blurred by default, click to reveal), which screen flagged it (nudity or document), and its source and folder. Buttons:
   - **Include:** false positive.
   - **Private:** keep, owner-only, local processing only.
   - **Exclude:** keep the original, leave it out of the catalogue.
