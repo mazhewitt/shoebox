@@ -26,6 +26,7 @@ from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 from shoebox import privacy, store
+from shoebox.config import REPO_ROOT
 from shoebox.evals import queries
 from shoebox.runners import rules
 from shoebox.runners.rules import (
@@ -43,6 +44,8 @@ SET_NAME = "colour-mono"
 SAMPLE_META = "sample.json"
 FROZEN_PATH = "colour-thresholds.json"
 REPORT_SUFFIX = "colour-heuristic"
+# Fixed record of every test-half scoring (not under --out-dir, so another out dir cannot skip the run-once rule).
+LEDGER_PATH = REPO_ROOT / "evals" / "colour-test-ledger.jsonl"
 NEAR_COLOUR_C95 = 45.0
 DEFAULT_SEED = 20261011
 N_MONO = N_NEAR = 150
@@ -59,6 +62,10 @@ FALLBACK_COMPARISONS = {"gemini-medium-v2": 0.974, "g12b-q4-v2": 1.0}
 
 
 class AlreadyScored(RuntimeError):
+    pass
+
+
+class NotReady(RuntimeError):
     pass
 
 
@@ -250,6 +257,7 @@ def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed
     rows = by_asset(frame_rows)
     drop = Counter()
     cands, seen_groups = [], set()
+    audit_groups = {queries.group_key(rows[a]) for a in exclude if a in rows}
     for a in sorted(rows, key=lambda a: (_h(seed, "order", a), a)):
         r = rows[a]
         b = bucket(r)
@@ -260,6 +268,8 @@ def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed
             drop["not_derived"] += 1
         elif a in exclude:
             drop["caption_audit_sample"] += 1
+        elif g in audit_groups:
+            drop["caption_audit_group"] += 1
         elif g in seen_groups:
             drop["same_group"] += 1
         else:
@@ -373,10 +383,15 @@ def load_frozen(path: Path) -> tuple[ColourThresholds, dict]:
     return t, doc
 
 
-def prior_test(runs_dir: Path, h: str) -> Path | None:
-    for p in sorted(Path(runs_dir).glob(f"*_{REPORT_SUFFIX}.json")):
+def prior_test(runs_dir: Path, h: str, ledger: Path) -> str | None:
+    """Name of the first test report for frozen hash `h`: from the fixed ledger, else from `runs_dir`."""
+    if Path(ledger).is_file():
+        for line in Path(ledger).read_text().splitlines():
+            if line.strip() and json.loads(line).get("frozen_hash") == h:
+                return json.loads(line)["report"] + ".json"
+    for p in sorted(Path(runs_dir).glob(f"*_{REPORT_SUFFIX}*.json")):
         if json.loads(p.read_text()).get("frozen_hash") == h:
-            return p
+            return p.name
     return None
 
 
@@ -384,7 +399,7 @@ def comparisons(audit_json: Path) -> dict:
     p = Path(audit_json)
     if p.is_file():
         st = json.loads(p.read_text()).get("structured") or {}
-        out = {a: {"precision": st[a]["overall"]["precision"], "source": str(p)} for a in FALLBACK_COMPARISONS
+        out = {a: {"precision": st[a]["overall"]["mono"]["precision"], "source": str(p)} for a in FALLBACK_COMPARISONS
                if a in st}
         if len(out) == len(FALLBACK_COMPARISONS):
             return out
@@ -394,13 +409,22 @@ def comparisons(audit_json: Path) -> dict:
 
 def test_report(rows: list[dict], frozen: Path, runs_dir: Path, day: str, gate: float, min_pred: int = MIN_PRED,
                 force_reason: str | None = None, audit: dict | None = None, dev: dict | None = None,
-                comparisons: dict | None = None) -> dict:
+                comparisons: dict | None = None, coverage: tuple[int, int] | None = None,
+                ledger: Path | None = None) -> dict:
+    """`coverage`: (drawn test items with a reference label record, drawn test items). Refuses, writing
+    nothing, unless there are trusted rows and every drawn test item is labelled: the one score is not spent
+    on missing labels."""
+    ledger = Path(ledger or LEDGER_PATH)
     t, doc = load_frozen(frozen)
-    prior = prior_test(runs_dir, doc["hash"])
+    labelled, total = coverage or (len(rows), len(rows))
+    if not rows or labelled < total:
+        raise NotReady(f"test half not ready: {labelled} of {total} drawn test items labelled, {len(rows)} with a "
+                       "trusted reference; nothing scored")
+    prior = prior_test(runs_dir, doc["hash"], ledger)
     if force_reason is not None and not force_reason.strip():
         raise ValueError("--force-rescore needs a non-empty reason")
     if prior and force_reason is None:
-        raise AlreadyScored(f"the test half was already scored for frozen hash {doc['hash']} ({prior.name}); "
+        raise AlreadyScored(f"the test half was already scored for frozen hash {doc['hash']} ({prior}); "
                             "pass --force-rescore REASON to score it again")
     g = _guessed(rows, t)
     sc = score(g)
@@ -412,13 +436,23 @@ def test_report(rows: list[dict], frozen: Path, runs_dir: Path, day: str, gate: 
                      "lenient_toned_test": sc["lenient_toned"]},
            "audit_sample": audit, "dev": dev or {k: doc.get(k) for k in ("dev_strata", "dev_n")},
            "comparisons": comparisons or {}}
+    rep["coverage"] = {"labelled": labelled, "total": total}
     if prior:
-        rep["force_rescore_reason"], rep["previous"] = force_reason, prior.name
+        rep["force_rescore_reason"], rep["previous"] = force_reason, prior
     runs_dir = Path(runs_dir)
     runs_dir.mkdir(parents=True, exist_ok=True)
-    stem = runs_dir / f"{day}_{REPORT_SUFFIX}"
+    name, k = f"{day}_{REPORT_SUFFIX}", 1
+    while (runs_dir / f"{name}.json").exists() or (runs_dir / f"{name}.md").exists():
+        k += 1
+        name = f"{day}_{REPORT_SUFFIX}-r{k}"
+    rep["report"] = name
+    stem = runs_dir / name
     stem.with_suffix(".json").write_text(json.dumps(rep, indent=1, sort_keys=True) + "\n")
     stem.with_suffix(".md").write_text(render_md(rep))
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    with ledger.open("a") as f:
+        f.write(json.dumps({"frozen_hash": doc["hash"], "date": day, "report": name, "runs_dir": runs_dir.name,
+                            "force_rescore_reason": force_reason if prior else None}, sort_keys=True) + "\n")
     return rep
 
 

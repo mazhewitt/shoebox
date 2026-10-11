@@ -456,7 +456,9 @@ def _colour_rows(args, cfg, split: str):
              if it.get("split") == split]
     refs = colour.load_labels(cfg, colour.REFERENCE_CANDIDATE)
     gem = colour.load_labels(cfg, colour.GEMINI_CANDIDATE)
-    return colour.labelled_rows(items, colour.rows_for(items, frame_rows), refs, gem), len(items), frame_rows, gem
+    labelled = sum((refs.get(it["asset_id"]) or {}).get("status") == "ok" for it in items)
+    return (colour.labelled_rows(items, colour.rows_for(items, frame_rows), refs, gem), (labelled, len(items)),
+            frame_rows, gem)
 
 
 def _colour_tune(args) -> int:
@@ -465,7 +467,7 @@ def _colour_tune(args) -> int:
     cfg = _cfg()
     try:
         gate = _mono_gate(args.gates)
-        rows, n_items, frame_rows, gem = _colour_rows(args, cfg, "dev")
+        rows, (_lab, n_items), frame_rows, gem = _colour_rows(args, cfg, "dev")
         n_audit = 0
         if args.with_audit:
             recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
@@ -498,7 +500,7 @@ def _colour_test(args) -> int:
     try:
         gate = _mono_gate(args.gates)
         _t, doc = colour.load_frozen(args.frozen)
-        rows, _n, frame_rows, _gem = _colour_rows(args, cfg, "test")
+        rows, cov, frame_rows, _gem = _colour_rows(args, cfg, "test")
         try:
             recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
             audit = colour.audit(recs, frows)
@@ -509,8 +511,8 @@ def _colour_test(args) -> int:
         dev = {k: doc.get(k) for k in ("grid", "dev_strata", "dev_n", "with_audit_sample", "audit_rows",
                                         "combination")}
         rep = colour.test_report(rows, args.frozen, args.out_dir, day, gate, args.min_pred, args.force_rescore,
-                                 audit, dev, colour.comparisons(cj))
-    except colour.AlreadyScored as e:
+                                 audit, dev, colour.comparisons(cj), cov)
+    except (colour.AlreadyScored, colour.NotReady) as e:
         print(f"shoebox eval colour-test: {e}", file=sys.stderr)
         return 1
     except (ValueError, FileNotFoundError, KeyError) as e:
@@ -519,7 +521,7 @@ def _colour_test(args) -> int:
     for s in colour.STRATA:
         m = rep["strata"][s]
         print(f"test {s}: {_fmt_mono(m)}, {m['status']}, filter {rep['filter'][s]}")
-    print(f"wrote {args.out_dir / (day + '_' + colour.REPORT_SUFFIX)}.md/.json (frozen hash {rep['frozen_hash']})")
+    print(f"wrote {args.out_dir / rep['report']}.md/.json (frozen hash {rep['frozen_hash']})")
     return 0
 
 

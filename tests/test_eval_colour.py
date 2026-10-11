@@ -200,6 +200,17 @@ def test_draw_buckets_strata_split_and_eligibility(tmp_path):
     assert "P/" not in json.dumps(meta)
 
 
+def test_draw_excludes_capture_group_siblings_of_audit_assets(tmp_path):
+    rows = corpus(8)
+    rows[0]["group_id"] = rows[4]["group_id"] = "g2"
+    kw = {"seed": 1, "n_mono": 100, "n_near": 100, "floor": 1}
+    ids = {it["asset_id"] for it in colour.draw(rows, {r["asset_id"] for r in rows}, set(), cfg_for(tmp_path), **kw)[0]}
+    assert aid(0) in ids or aid(4) in ids
+    items, meta = colour.draw(rows, {r["asset_id"] for r in rows}, {aid(0)}, cfg_for(tmp_path), **kw)
+    assert not {aid(0), aid(4)} & {it["asset_id"] for it in items}
+    assert meta["dropped"]["caption_audit_group"] == 1
+
+
 def test_near_threshold_bucket_rule():
     assert colour.bucket(frow(c95=1.0)) == "mono"
     assert colour.bucket(frow(c95=2.5)) == "near"  # mono with c95 >= 2
@@ -283,16 +294,40 @@ def test_freeze_and_test_refuses_a_second_run(tmp_path):
     assert doc["hash"] == colour.thresholds_hash(colour.load_frozen(fpath)[0])
     runs = tmp_path / "runs"
     test_rows = [r for r in rows if r["split"] == "test"]
-    rep = colour.test_report(test_rows, fpath, runs, "2026-10-11", gate=0.98, min_pred=3)
+    led = tmp_path / "ledger.jsonl"
+    rep = colour.test_report(test_rows, fpath, runs, "2026-10-11", gate=0.98, min_pred=3, ledger=led)
     assert rep["frozen_hash"] == doc["hash"] and rep["test"]["overall"]["precision"] == 1.0
     assert (runs / "2026-10-11_colour-heuristic.json").exists() and (runs / "2026-10-11_colour-heuristic.md").exists()
     with pytest.raises(colour.AlreadyScored):
-        colour.test_report(test_rows, fpath, runs, "2026-10-12", gate=0.98, min_pred=3)
+        colour.test_report(test_rows, fpath, runs, "2026-10-12", gate=0.98, min_pred=3, ledger=led)
+    with pytest.raises(colour.AlreadyScored):  # another --out-dir does not skip the guard
+        colour.test_report(test_rows, fpath, tmp_path / "elsewhere", "2026-10-12", gate=0.98, min_pred=3, ledger=led)
     with pytest.raises(ValueError, match="reason"):
-        colour.test_report(test_rows, fpath, runs, "2026-10-12", gate=0.98, min_pred=3, force_reason="")
-    again = colour.test_report(test_rows, fpath, runs, "2026-10-12", gate=0.98, min_pred=3,
-                               force_reason="reference relabelled")
+        colour.test_report(test_rows, fpath, runs, "2026-10-12", gate=0.98, min_pred=3, force_reason="", ledger=led)
+    again = colour.test_report(test_rows[:5], fpath, runs, "2026-10-11", gate=0.98, min_pred=3,
+                               force_reason="reference relabelled", ledger=led)
     assert again["force_rescore_reason"] == "reference relabelled"
+    first = json.loads((runs / "2026-10-11_colour-heuristic.json").read_text())
+    assert first["test"]["overall"]["n"] == len(test_rows) and "force_rescore_reason" not in first
+    assert again["previous"] == "2026-10-11_colour-heuristic.json"
+    assert (runs / f"{again['report']}.json").exists() and again["report"] != "2026-10-11_colour-heuristic"
+    assert not (tmp_path / "elsewhere").exists()
+
+
+def test_test_report_refuses_without_full_labelled_coverage(tmp_path):
+    rows = eval_rows()
+    fpath, runs, led = tmp_path / "t.json", tmp_path / "runs", tmp_path / "ledger.jsonl"
+    colour.freeze(fpath, colour.tune([r for r in rows if r["split"] == "dev"], gate=0.98, min_pred=3), {})
+    test_rows = [r for r in rows if r["split"] == "test"]
+    with pytest.raises(colour.NotReady, match="0 of 0"):
+        colour.test_report([], fpath, runs, "2026-10-11", gate=0.98, min_pred=3, ledger=led)
+    with pytest.raises(colour.NotReady, match="50 of 60"):
+        colour.test_report(test_rows, fpath, runs, "2026-10-11", gate=0.98, min_pred=3, ledger=led,
+                           coverage=(50, 60))
+    assert not runs.exists() and not led.exists()
+    rep = colour.test_report(test_rows, fpath, runs, "2026-10-11", gate=0.98, min_pred=3, ledger=led,
+                             coverage=(60, 60))
+    assert rep["coverage"] == {"labelled": 60, "total": 60}
 
 
 def test_report_has_counts_only_and_comparisons(tmp_path):
@@ -302,7 +337,7 @@ def test_report_has_counts_only_and_comparisons(tmp_path):
     for r in rows:
         r["row"]["relpath"] = "Secret/Folder/IMG_0001.jpg"
     rep = colour.test_report([r for r in rows if r["split"] == "test"], fpath, tmp_path / "runs", "2026-10-11",
-                             gate=0.98, min_pred=3, audit={"frame": {"overall": {"tp": 35}}},
+                             gate=0.98, min_pred=3, ledger=tmp_path / "l.jsonl", audit={"frame": {"overall": {"tp": 35}}},
                              comparisons=colour.comparisons(tmp_path / "none.json"))
     md = (tmp_path / "runs" / "2026-10-11_colour-heuristic.md").read_text()
     assert "Secret" not in md and "IMG_0001" not in md and "Secret" not in json.dumps(rep)
@@ -313,10 +348,18 @@ def test_report_has_counts_only_and_comparisons(tmp_path):
 
 def test_comparisons_from_caption_audit_json(tmp_path):
     p = tmp_path / "a.json"
-    p.write_text(json.dumps({"structured": {"gemini-medium-v2": {"overall": {"precision": 0.9737}},
-                                            "g12b-q4-v2": {"overall": {"precision": 1.0}}}}))
+    from shoebox.evals import caption_audit as ca
+
+    def arm(ok, bad):  # the real build_report shape: structured[arm]["overall"]["mono"]["precision"]
+        conf = dict.fromkeys(("medium", "digitiser", "colour_class", "rotate_cw"), "high")
+        ref = {"medium": "print", "digitiser": "x", "colour_class": "mono", "rotate_cw": 0, "confidence": conf}
+        pairs = [(ref, {"colour_class": "mono"})] * ok + [({**ref, "colour_class": "colour"}, {"colour_class": "mono"})] * bad
+        return {"overall": ca._structured(pairs)}
+
+    p.write_text(json.dumps({"structured": {"gemini-medium-v2": arm(37, 1), "g12b-q4-v2": arm(30, 0)}}))
     c = colour.comparisons(p)
-    assert c["gemini-medium-v2"]["precision"] == 0.9737 and c["g12b-q4-v2"]["source"].endswith("a.json")
+    assert c["gemini-medium-v2"]["precision"] == ca._ratio(37, 38)
+    assert c["g12b-q4-v2"]["precision"] == 1.0 and c["g12b-q4-v2"]["source"].endswith("a.json")
     c = colour.comparisons(tmp_path / "missing.json")
     assert c["gemini-medium-v2"]["precision"] == 0.974 and "RECOMMENDATION" in c["gemini-medium-v2"]["source"]
 
@@ -369,6 +412,7 @@ def test_cli_draw_tune_test(tmp_path, monkeypatch, capsys):
     refs = {it["asset_id"]: label("mono" if by[it["asset_id"]]["chroma_p95"] < 2 else "colour") for it in items}
     monkeypatch.setattr(colour, "load_labels", lambda cfg, cand: refs if cand == colour.REFERENCE_CANDIDATE else {})
     frozen, runs = tmp_path / "frozen.json", tmp_path / "runs"
+    monkeypatch.setattr(colour, "LEDGER_PATH", tmp_path / "ledger.jsonl")
     assert main(["eval", "colour-tune", *common, "--frozen", str(frozen), "--min-pred", "2"]) == 0
     assert json.loads(frozen.read_text())["hash"]
     test = ["eval", "colour-test", *common, "--frozen", str(frozen), "--min-pred", "2", "--out-dir", str(runs),
