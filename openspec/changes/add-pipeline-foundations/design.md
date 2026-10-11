@@ -122,7 +122,7 @@ See proposal.md for the motivation. Current state, from `add-eval-harness` and t
 
 ## Risks / Trade-offs
 
-- **[Full derive over SMB takes days: 250 GB of TIFF, 106 GB of DNG]** → Run it resumable on the Mac Studio, which is wired to the NAS at 1 GbE (the laptop's Wi-Fi measured 12–47 MB/s on 2026-10-11), measuring img/h on the first 1k. It is the long pole, so it starts first. The screen and vectors pipeline behind it per asset.
+- **[Full derive over SMB takes days: 250 GB of TIFF, 106 GB of DNG]** → Run it resumable on the Mac Studio, which is wired to the NAS at 1 GbE (the laptop's Wi-Fi measured 12–47 MB/s on 2026-10-11; the Studio read a 113 MB scan TIFF at 100 MB/s on 2026-10-11, so a pure read of the 356 GB of TIFF and DNG is about 1 h; decode will dominate), measuring img/h on the first 1k. It is the long pole, so it starts first. The screen and vectors pipeline behind it per asset.
 - **[OpenNSFW2 misses some nudity (no score kept, single model)]** → Recall-first: the threshold starts at about 0.2. The owner reviews 200 unflagged items. A retro-check covers past sends. The threshold is set from the owner's first batch before the bulk worklist is screened.
 - **[Quarantine file in a GitHub repo reveals that flagged assets exist]** → It holds hashes only, and the repo is private. If the owner prefers, move it under `<shoebox_root>` and back it up with the results store; the code takes the path from config.
 - **[Copy-index fail-closed blocks pool5k until every configured source has a frame]** → Only ImportantFiles is configured today. New sources are added to config only together with their first inventory (`sources/06`).
