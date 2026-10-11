@@ -97,11 +97,10 @@ def write_records(cfg: Config, kind: str, model_id: str, params: dict, records: 
     ph = store.params_hash(params)
     d = store.write_params(cfg, model_id, ph, params, kind=kind)
     have = store.index_records(store.iter_dir(d))
-    for key, payload in records:
-        if store.is_final(have.get(key)):
-            continue
-        store.append(cfg, {"asset_id": key, "model_id": model_id, "params_hash": ph, "status": "ok", **payload},
-                     kind=kind)
+    new = [{"asset_id": key, "model_id": model_id, "params_hash": ph, "status": "ok", **payload}
+           for key, payload in records if not store.is_final(have.get(key))]
+    for i in range(0, len(new), 1000):  # one store write per thousand (an append costs ~240 ms over SMB)
+        store.append_many(cfg, new[i:i + 1000], kind=kind)
     return d
 
 
