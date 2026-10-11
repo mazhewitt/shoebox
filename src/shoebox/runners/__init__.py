@@ -33,7 +33,7 @@ _NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "r
 _NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
 # Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
 # Vally executor read; embedding vectors are not label-v1 records and go under `embeddings`.
-STORE_KIND = {"embed": "embeddings"}
+STORE_KIND = {"embed": "embeddings", "screen": "screen"}
 
 
 class StopRun(Exception):
