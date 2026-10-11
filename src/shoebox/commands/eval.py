@@ -98,7 +98,19 @@ def _register_search(esub) -> None:
     s.add_argument("--no-sensitivity", action="store_true", help="omit the eg2-blend@w0.3/0.7 routes")
     s.add_argument("--embed-candidate", default=search.EMBED_CANDIDATE)
     s.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    s.add_argument("--queries", default=search.QUERIES_FILE, help="query file in the set dir")
+    s.add_argument("--grid", choices=("default", "eval1k"), default="default",
+                   help="route grid when --routes is not given (eval1k: meta, fusion, +exp/+filt variants)")
+    s.add_argument("--frame", type=Path, default=None,
+                   help="frame parquet for meta/+filt routes (default: newest <shoebox_root>/frame/frame-*.parquet)")
     s.set_defaults(func=_search_run)
+
+    x = esub.add_parser("expand", help="expand queries with the local E4B (cached in results/expansions/)")
+    x.add_argument("--set", required=True, dest="set_name")
+    x.add_argument("--queries", default=search.QUERIES_FILE, help="query file in the set dir")
+    x.add_argument("--split", default=None, help="only queries of this split (dev|test|owner)")
+    x.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    x.set_defaults(func=_expand)
 
     g = esub.add_parser("gen-search",
                         help="write evals/vally/generated/<set>-search/eval.yaml and routes.json")
@@ -213,10 +225,18 @@ def _search_queries(args) -> int:
 def _search_run(args) -> int:
     from shoebox.evals import search
 
-    names = _split(args.routes) or search.default_routes(_split(args.candidates), not args.no_sensitivity)
+    if args.grid == "eval1k":
+        names = _split(args.routes) or search.eval1k_routes(_split(args.candidates))
+    else:
+        names = _split(args.routes) or search.default_routes(_split(args.candidates), not args.no_sensitivity)
     try:
         routes = [search.parse_route(n) for n in names]
-        src = search.load_sources(_cfg(), args.set_name, routes, args.sets_dir, args.embed_candidate)
+        cfg = _cfg()
+        need_frame = any(r.kind in ("meta", "image-meta", "hybrid-meta") or r.filt for r in routes)
+        frame = _frame(cfg, args.frame) if need_frame else None
+        expander = search.ollama_expander() if any(r.exp for r in routes) else None
+        src = search.load_sources(cfg, args.set_name, routes, args.sets_dir, args.embed_candidate,
+                                  queries_file=args.queries, frame_path=frame, expander=expander)
     except (ValueError, FileNotFoundError, RuntimeError) as e:
         print(f"shoebox eval search-run: {e}", file=sys.stderr)
         return 2
@@ -228,6 +248,26 @@ def _search_run(args) -> int:
     if res.index_path:
         print(f"updated {res.index_path}")
     return 1 if res.skipped or not res.written else 0
+
+
+def _expand(args) -> int:
+    import httpx
+
+    from shoebox.evals import search
+
+    qpath = args.sets_dir / args.set_name / args.queries
+    try:
+        queries = search.read_jsonl(qpath)
+        if args.split:
+            queries = [q for q in queries if q.get("split") == args.split]
+        expander = search.ollama_expander()
+    except (FileNotFoundError, RuntimeError, httpx.HTTPError) as e:
+        print(f"shoebox eval expand: {e}", file=sys.stderr)
+        return 2
+    out = search.expand_queries(_cfg(), queries, expander)
+    d = search.store.store_dir(_cfg(), expander.model_id, expander.params_hash, "expansions")
+    print(f"{len(out)} of {len(queries)} queries expanded ({expander.params_hash}) in {d}")
+    return 0 if len(out) == len(queries) else 1
 
 
 def _search_pool(args) -> int:

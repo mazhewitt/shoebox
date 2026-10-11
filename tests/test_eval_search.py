@@ -689,3 +689,264 @@ def test_load_sources_keeps_only_corpus_items_from_the_stores(tmp_path, monkeypa
     src = search.load_sources(cfg, "p", [search.parse_route("fts:cA")], sets_dir=set_dir.parent, log=lambda m: None)
     assert set(src.image) == {"a1"} and set(src.labels["cA"]) == {"a1", "x1"}
     assert src.exclude["n"] == 1 and "x3" not in src.corpus
+
+
+# --- eval-1k routes: metadata, fusion, filters, expansion (tasks 5.1-5.3) ------------------------------
+
+def frow(date=None, kind="exif", colour="colour", make=None, model=None, software=None):
+    return {"date": date, "date_kind": kind, "colour_guess": colour, "make": make, "model": model,
+            "software": software}
+
+
+def test_meta_tokens_split_folders_drop_camera_codes_and_date_from_exif_only():
+    toks = search.meta_tokens("Holidays/Italy2007/Zermatt-rope-park/IMG_1234.JPG", frow("2007-08-12", "exif"))
+    assert toks[:6] == ["holidays", "italy", "2007", "zermatt", "rope", "park"]
+    assert "img" not in toks and "1234" not in toks
+    assert "2007" in toks and "august" in toks
+    toks = search.meta_tokens("famPhotos/SummerBBQ_party/DSC01234 granny.jpg", frow("2019-07-01", "mtime"))
+    assert toks[:5] == ["fam", "photos", "summer", "bbq", "party"]
+    assert "dsc01234" not in toks and "granny" in toks
+    assert "2019" not in toks and "july" not in toks  # an mtime date is not a capture date
+    toks = search.meta_tokens("x/20070812_153000_beach.jpg", frow("2007-08-12", "filename"))
+    assert "20070812" not in toks and "153000" not in toks and "beach" in toks and "august" in toks
+    toks = search.meta_tokens("scans/roll_3/frame.tif", frow("2015-01-01", "scan", make="Nikon", model="LS-5000"))
+    assert toks[-1] == "scan" and "2015" not in toks and "january" not in toks
+    assert "the" not in search.meta_tokens("the/of/garden.jpg", frow())
+
+
+def meta_sources():
+    src = fake_sources()
+    known = src.embed_query
+    src.embed_query = lambda t: known(t) if t in ("bridge over canal", "red rose", "small dog") else unit((0, 1.0))
+    src.corpus = ["a1", "a2", "b1", "c1", "x1"]
+    src.image["x1"] = unit((4, 1.0))
+    src.items = {"a1": {"relpath": "2005/Venice-trip/IMG_0001.jpg"}, "a2": {"relpath": "2005/Venice-trip/IMG_0002.jpg"},
+                 "b1": {"relpath": "garden/roses/DSC0101.jpg"}, "c1": {"relpath": "pets/rexTheDog/P1010023.jpg"},
+                 "x1": {"relpath": "scans/neg/000123.tif"}}
+    src.frame = {"a1": frow("2005-05-01"), "a2": frow("2005-05-01"), "b1": frow("2018-06-01", colour="mono"),
+                 "c1": frow(None, kind=None), "x1": frow("1975-01-01", "filename", make="Nikon", model="LS-5000",
+                                                          colour="mono")}
+    return src
+
+
+def test_meta_route_ranks_a_folder_name_match_first():
+    src = meta_sources()
+    q = {"query_id": "q", "text": "photos of rex the dog", "relevant": []}
+    ranking, scores = search.rank_scores(src.corpus, search.route_scores(search.parse_route("meta"), q, src))
+    assert ranking[0] == "c1" and scores[1] is None
+    q2 = {"query_id": "q2", "text": "venice in may", "relevant": []}
+    r2, _ = search.rank_scores(src.corpus, search.route_scores(search.parse_route("meta"), q2, src))
+    assert set(r2[:2]) == {"a1", "a2"}
+    assert src.missing(search.parse_route("meta")) is None
+    bare = fake_sources()
+    assert "frame" in bare.missing(search.parse_route("meta"))
+
+
+def test_image_meta_and_hybrid_meta_fuse():
+    src = meta_sources()
+    q = {"query_id": "q-dog", "text": "small dog", "relevant": ["c1"]}
+    img = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-image@768"), q, src))
+    meta = search.rank_scores(src.corpus, search.route_scores(search.parse_route("meta"), q, src))
+    fused = search.route_scores(search.parse_route("image-meta"), q, src)
+    assert fused == pytest.approx(search.rrf_scores([img, meta]))
+    assert fused["c1"] == pytest.approx(2 / 61)
+    blend = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-blend:cA"), q, src))
+    fts = search.rank_scores(src.corpus, search.route_scores(search.parse_route("fts:cA"), q, src))
+    hm = search.route_scores(search.parse_route("hybrid-meta:cA"), q, src)
+    assert hm == pytest.approx(search.rrf_scores([blend, fts, meta]))
+    d = search.route_definition(search.parse_route("hybrid-meta:cA"), src)
+    assert d["fused"] == ["eg2-blend:cA", "fts:cA", "meta"] and "meta" in d
+
+
+@pytest.mark.parametrize("text,want", [
+    ("a beach at sunset", {}),
+    ("black and white photo of granny", {"mono": True}),
+    ("B&W portrait", {"mono": True}),
+    ("bw street", {"mono": True}),
+    ("black-and-white monochrome", {"mono": True}),
+    ("greyscale dog", {"mono": True}),
+    ("film photo of a car", {"scan": True}),
+    ("scanned slide of mum", {"scan": True}),
+    ("old prints from the attic", {"scan": True}),
+    ("prints on the wall", {}),
+    ("a negative of the house", {"scan": True}),
+    ("christmas 2018", {"years": [2018, 2018]}),
+    ("parties in the 70s", {"years": [1970, 1979]}),
+    ("1970s kitchen", {"years": [1970, 1979]}),
+    ("holidays in the 2000s", {"years": [2000, 2009]}),
+    ("skiing from 2005 to 2008", {"years": [2005, 2008]}),
+    ("b&w film photos of the 70s", {"mono": True, "scan": True, "years": [1970, 1979]}),
+    ("filming a scene, 123 bikes", {}),
+])
+def test_parse_filters(text, want):
+    assert search.parse_filters(text) == want
+
+
+def test_soft_filter_keeps_order_within_tiers_and_preserves_ties():
+    scores = {"a": 0.9, "b": 0.5, "c": 0.5, "d": 0.1}  # e unscored
+    out = search.apply_soft_filter(scores, {"c", "d", "e"})
+    ranking, s = search.rank_scores(["a", "b", "c", "d", "e"], out)
+    assert ranking == ["c", "d", "a", "b", "e"]  # e passes the filter but was never retrieved: stays last
+    assert s[-1] is None and s[0] > s[1] > s[2] > s[3]
+    tied = search.apply_soft_filter(scores, {"b", "c"})
+    assert tied["b"] == tied["c"]  # a tie stays a tie
+    assert search.rank_scores(["a", "b", "c", "d", "e"], search.apply_soft_filter(scores, set()))[0] == \
+        ["a", "b", "c", "d", "e"]
+
+
+def test_filter_attributes_from_labels_for_captioner_routes_and_frame_otherwise():
+    src = meta_sources()
+    # label says a1 is mono; the frame says b1 and x1 are mono
+    src.labels["cA"]["a1"]["colour_class"] = "toned"
+    src.labels["cA"]["b1"]["colour_class"] = "colour"
+    q = {"query_id": "q-bw", "text": "black and white bridge over canal", "relevant": []}
+    img = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-image@768"), q, src))[0]
+    imgf = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-image@768+filt"), q, src))[0]
+    assert imgf == [a for a in img if a in {"b1", "x1"}] + [a for a in img if a not in {"b1", "x1"}]
+    blend = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-blend:cA"), q, src))[0]
+    blendf = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-blend:cA+filt"), q, src))[0]
+    assert blendf[0] == "a1" and blendf[1:] == [a for a in blend if a != "a1"]
+    # years come from the frame only; an unknown year fails
+    q2 = {"query_id": "q-y", "text": "dog in the 70s", "relevant": []}
+    r = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-image@768+filt"), q2, src))[0]
+    assert r[0] == "x1"
+    scan = {"query_id": "q-s", "text": "scanned negative", "relevant": []}
+    rs = search.rank_scores(src.corpus, search.route_scores(search.parse_route("fts:cA+filt"), scan, src))[0]
+    assert rs == search.rank_scores(src.corpus, search.route_scores(search.parse_route("fts:cA"), scan, src))[0]
+    src.labels["cA"]["b1"]["medium"] = "film_slide"
+    retrieved = search.route_scores(search.parse_route("fts:cA"), scan, src)
+    rs = search.rank_scores(src.corpus, search.route_scores(search.parse_route("fts:cA+filt"), scan, src))[0]
+    if "b1" in retrieved:
+        assert rs[0] == "b1"
+    else:  # a filter never retrieves: an FTS miss stays below everything the route found
+        assert rs.index("b1") >= len(retrieved)
+    blendf = search.rank_scores(src.corpus, search.route_scores(search.parse_route("eg2-blend:cA+filt"), scan, src))[0]
+    assert blendf[0] == "b1"  # dense routes score every item, so the scan moves to the front
+    # no constraint: identical scores
+    plain = {"query_id": "q-p", "text": "bridge over canal", "relevant": []}
+    assert search.route_scores(search.parse_route("hybrid:cA+filt"), plain, src) == \
+        search.route_scores(search.parse_route("hybrid:cA"), plain, src)
+
+
+class FakeModel:
+    def __init__(self, out):
+        self.out, self.calls = out, []
+
+    def __call__(self, text):
+        self.calls.append(text)
+        return self.out(text)
+
+
+def fake_expander(fn=None, prompt="p1"):
+    model = FakeModel(fn or (lambda t: {"keywords": ["Canal", "boat"], "rewrite": "a canal in venice"}))
+    return search.Expander("ollama/fake", {"prompt_sha256": prompt, "model_digest": "d", "options": {}}, model), model
+
+
+def test_expansion_cache_is_keyed_and_reused(tmp_path):
+    cfg, _ = fake_cfg(tmp_path)
+    exp, model = fake_expander()
+    out = search.expand_queries(cfg, QUERIES, exp)
+    assert set(out) == {"q-bridge", "q-rose", "q-dog"} and len(model.calls) == 3
+    assert out["q-bridge"] == {"keywords": ["canal", "boat"], "rewrite": "a canal in venice"}
+    again = search.expand_queries(cfg, QUERIES, exp)
+    assert again == out and len(model.calls) == 3  # cache hit, no new calls
+    d = search.store.store_dir(cfg, "ollama/fake", exp.params_hash, "expansions")
+    assert d.is_dir() and (d / "params.json").exists()
+    exp2, model2 = fake_expander(prompt="p2")
+    assert exp2.params_hash != exp.params_hash
+    search.expand_queries(cfg, QUERIES[:1], exp2)
+    assert len(model2.calls) == 1
+    assert search.load_expansions(cfg, exp) == out
+    # bad output is stored invalid, not used
+    exp3, _ = fake_expander(lambda t: {"keywords": "nope"}, prompt="p3")
+    assert search.expand_queries(cfg, QUERIES[:1], exp3) == {}
+
+
+def test_expansion_changes_fts_and_embedding_inputs():
+    src = fake_sources()
+    seen = []
+    base = src.embed_query
+
+    def embed(text):
+        seen.append(text)
+        return base(text) if text in ("bridge over canal", "red rose", "small dog") else unit((3, 1.0))
+
+    src.embed_query = embed
+    src.expansions = {"q-dog": {"keywords": ["rose", "flower"], "rewrite": "a puppy"}}
+    src.expansion = {"model_id": "ollama/fake", "params_hash": "eph"}
+    q = QUERIES[2]
+    assert search.route_scores(search.parse_route("fts:cA"), q, src) == {}
+    s = search.route_scores(search.parse_route("fts:cA+exp"), q, src)
+    assert set(s) == {"b1"}  # "rose" / "flower" now match b1's caption and tags
+    v = src.query_vector(q, exp=True)
+    want = unit((2, 1.0), (500, 1.0)) + unit((3, 1.0))
+    assert np.allclose(v, want / np.linalg.norm(want), atol=1e-6)
+    assert "a puppy" in seen
+    assert np.allclose(src.query_vector(q), unit((2, 1.0), (500, 1.0)))
+    img = search.route_scores(search.parse_route("eg2-image@768+exp"), q, src)
+    assert img["b1"] > search.route_scores(search.parse_route("eg2-image@768"), q, src)["b1"]
+    # a query without an expansion makes the +exp route unrunnable
+    assert "expand" in src.missing(search.parse_route("fts:cA+exp"))
+    src.expansions.update({"q-bridge": {"keywords": [], "rewrite": ""}, "q-rose": {"keywords": [], "rewrite": ""}})
+    assert src.missing(search.parse_route("fts:cA+exp")) is None
+
+
+def test_route_suffixes_round_trip_and_change_the_hash():
+    for name in ("eg2-image@768+filt", "hybrid:e4b-bf16-v2+filt", "hybrid:x+exp+filt", "meta+exp", "image-meta",
+                 "hybrid-meta:c.1", "eg2-blend:c+exp", "eg2-blend@w0.3:c+filt"):
+        r = search.parse_route(name)
+        assert r.name == name and search.parse_route(r.name) == r and ":" not in r.dir_name
+    r = search.parse_route("hybrid:x+exp+filt")
+    assert (r.kind, r.cand, r.exp, r.filt, r.w) == ("hybrid", "x", True, True, 0.5)
+    assert search.parse_route("meta").cand is None and not search.parse_route("image-meta").caption_based
+    assert search.parse_route("hybrid-meta:x").caption_based
+    for bad in ("hybrid:x+filt+exp", "meta:x", "image-meta:x", "hybrid-meta", "fts:x+foo", "eg2-image@768+exp+exp"):
+        with pytest.raises(ValueError):
+            search.parse_route(bad)
+    src = meta_sources()
+    src.expansions = {q["query_id"]: {"keywords": [], "rewrite": ""} for q in QUERIES}
+    src.expansion = {"model_id": "ollama/fake", "params_hash": "eph"}
+    h = {n: search.store.params_hash(search.route_definition(search.parse_route(n), src))
+         for n in ("hybrid:cA", "hybrid:cA+exp", "hybrid:cA+filt", "hybrid:cA+exp+filt")}
+    assert len(set(h.values())) == 4
+    d = search.route_definition(search.parse_route("hybrid:cA+exp+filt"), src)
+    assert d["expansion"]["params_hash"] == "eph" and d["filter"]["version"] == search.FILTER_VERSION
+    plain = search.route_definition(search.parse_route("hybrid:cA"), src)
+    assert "expansion" not in plain and "filter" not in plain
+    src.expansion = {"model_id": "ollama/fake", "params_hash": "eph2"}
+    assert search.store.params_hash(search.route_definition(search.parse_route("hybrid:cA+exp"), src)) != \
+        h["hybrid:cA+exp"]
+
+
+def test_eval1k_route_grid():
+    names = search.eval1k_routes(["c1"])
+    assert names[:3] == ["eg2-image@768", "meta", "image-meta"]
+    for n in ("eg2-caption:c1", "eg2-blend:c1", "fts:c1", "hybrid:c1", "hybrid-meta:c1",
+              "eg2-image@768+exp+filt", "image-meta+filt", "eg2-blend:c1+exp", "hybrid-meta:c1+exp+filt"):
+        assert n in names
+    assert len(names) == len(set(names)) == 3 + 5 + 4 * 3
+    assert all(search.parse_route(n) for n in names)
+    assert len(search.eval1k_routes(["c1", "c2"])) == 3 + 2 * 5 + 2 * 3 + 2 * 2 * 3
+
+
+def test_search_run_with_queries_file_and_empty_relevant(tmp_path, monkeypatch, capsys):
+    cfg, toml = fake_cfg(tmp_path)
+    monkeypatch.setenv("SHOEBOX_CONFIG", str(toml))
+    sets = tmp_path / "sets"
+    set_dir = _pool_set(sets)
+    rows = [{"query_id": "k1", "text": "red rose", "kind": "known_item", "style": "visual", "source_asset_id": "b1",
+             "relevant": ["b1"], "split": "dev", "provenance": {}},
+            {"query_id": "c1", "text": "small dog", "kind": "category", "facet": "subject", "source_asset_id": None,
+             "relevant": [], "split": "dev", "provenance": {}}]
+    write_jsonl(set_dir / "queries-v1.jsonl", rows)
+    _fake_image_store(monkeypatch, {a: unit((i, 1.0)) for i, a in enumerate(("a1", "a2", "b1", "c1", "x1", "x2", "x3"))})
+    rc = main(["eval", "search-run", "--set", "p", "--routes", "eg2-image@768", "--sets-dir", str(sets),
+               "--queries", "queries-v1.jsonl"])
+    assert rc == 0, capsys.readouterr().err
+    e = json.loads((search.search_dir(cfg, "p") / "index.json").read_text())["routes"]["eg2-image@768"]
+    assert e["queries_sha256"] == search.file_sha256(set_dir / "queries-v1.jsonl")
+    out = search.read_jsonl(Path(e["path"]))
+    assert [r["query_id"] for r in out] == ["k1", "c1"] and all(len(r["ranking"]) == 7 for r in out)
+    assert e["queries_file"] == "queries-v1.jsonl"
+    diag = {d["query_id"]: d for d in search.read_jsonl(Path(e["diagnostics"]))}
+    assert diag["c1"]["rank_best"] is None

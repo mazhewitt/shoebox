@@ -23,7 +23,8 @@ import sqlite3
 import statistics
 import sys
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from datetime import date as Date
 from pathlib import Path
 
@@ -50,6 +51,14 @@ BOOTSTRAP_RESAMPLES = 1000
 BOOTSTRAP_SEED = 20261010
 MDD_Z = 2.80  # z_{0.975} + z_{0.8}: two-sided 5%, 80% power
 BASELINE_ROUTE = "eg2-image@768"
+META_VERSION = 1  # bump when the metadata document (meta_tokens) changes
+FILTER_VERSION = 2  # 2: unscored items are never promoted. Bump when parse_filters / the attribute rules / the soft filter change
+EXPAND_MODEL = "gemma4:e4b-mlx-bf16"
+EXPAND_MODEL_ID = f"ollama/{EXPAND_MODEL}"
+EXPAND_PROMPT = REPO_ROOT / "config" / "prompts" / "expand-v1.md"
+EXPAND_OPTIONS = {"temperature": 0.0, "seed": 0, "num_predict": 256}
+EXPAND_MAX_KEYWORDS = 10
+EXPAND_VERSION = 1  # bump when the expansion parsing/normalisation changes
 HEADER = "# generated — do not edit. Regenerate with `shoebox eval gen-search`."
 
 # A plain English function-word list (no domain words such as "photo" or "scene": nothing here was
@@ -65,8 +74,9 @@ were what when where which while who whom why will with would you your yours you
 STOPWORDS = frozenset(_STOPWORDS_TEXT.split())
 
 _ROUTE = re.compile(
-    r"^(?:eg2-image@(?P<dim>\d+)"
-    r"|(?P<kind>eg2-caption|eg2-blend|fts|hybrid)(?:@w(?P<w>[0-9.]+))?:(?P<cand>[A-Za-z0-9._-]+))$"
+    r"^(?:eg2-image@(?P<dim>\d+)|(?P<bare>meta|image-meta)"
+    r"|(?P<kind>eg2-caption|eg2-blend|fts|hybrid|hybrid-meta)(?:@w(?P<w>[0-9.]+))?:(?P<cand>[A-Za-z0-9._-]+))"
+    r"(?P<exp>\+exp)?(?P<filt>\+filt)?$"
 )
 _TOKEN = re.compile(r"[^\W_]+")  # what FTS5's unicode61 tokenizer keeps: letters and digits
 
@@ -176,14 +186,16 @@ def write_queries(set_dir: Path) -> tuple[Path, QueryBuild]:
 @dataclass(frozen=True)
 class Route:
     name: str
-    kind: str  # eg2-image | eg2-caption | eg2-blend | fts | hybrid
+    kind: str  # eg2-image | eg2-caption | eg2-blend | fts | hybrid | meta | image-meta | hybrid-meta
     cand: str | None = None
     dim: int = 768
     w: float | None = None
+    exp: bool = False  # `+exp`: query expansion (FTS: original OR keywords; embeddings: mean with the rewrite)
+    filt: bool = False  # `+filt`: soft attribute filter from parse_filters
 
     @property
     def caption_based(self) -> bool:
-        return self.kind != "eg2-image"
+        return self.cand is not None
 
     @property
     def sensitivity(self) -> bool:
@@ -204,12 +216,16 @@ def parse_route(name: str) -> Route:
     m = _ROUTE.match(name.strip())
     if not m:
         raise ValueError(f"unknown route {name!r} (want eg2-image@768|256, eg2-caption:<cand>, eg2-blend:<cand>, "
-                         "eg2-blend@w0.3:<cand>, fts:<cand>, hybrid:<cand>)")
+                         "eg2-blend@w0.3:<cand>, fts:<cand>, hybrid:<cand>, meta, image-meta, hybrid-meta:<cand>, "
+                         "optionally suffixed +exp, +filt or +exp+filt)")
+    flags = {"exp": bool(m["exp"]), "filt": bool(m["filt"])}
     if m["dim"]:
         dim = int(m["dim"])
         if dim not in IMAGE_DIMS:
             raise ValueError(f"route {name!r}: dim must be one of {IMAGE_DIMS}")
-        return Route(name, "eg2-image", dim=dim)
+        return Route(name, "eg2-image", dim=dim, **flags)
+    if m["bare"]:
+        return Route(name, m["bare"], **flags)
     kind, cand = m["kind"], m["cand"]
     if m["w"] is not None:
         if kind != "eg2-blend":
@@ -219,9 +235,9 @@ def parse_route(name: str) -> Route:
             raise ValueError(f"route {name!r}: w must be in [0, 1]")
         if w == BLEND_W:
             raise ValueError(f"route {name!r}: the primary blend (w={BLEND_W}) is eg2-blend:{cand}")
-        return Route(name, kind, cand, w=w)
-    w = BLEND_W if kind in ("eg2-blend", "hybrid") else None
-    return Route(name, kind, cand, w=w)
+        return Route(name, kind, cand, w=w, **flags)
+    w = BLEND_W if kind in ("eg2-blend", "hybrid", "hybrid-meta") else None
+    return Route(name, kind, cand, w=w, **flags)
 
 
 def default_routes(candidates: Iterable[str] = VLM_CANDIDATES, sensitivity: bool = True) -> list[str]:
@@ -231,6 +247,21 @@ def default_routes(candidates: Iterable[str] = VLM_CANDIDATES, sensitivity: bool
         if sensitivity:
             out += [f"eg2-blend@w{_w_str(w)}:{c}" for w in BLEND_SENSITIVITY]
         out += [f"fts:{c}", f"hybrid:{c}"]
+    return out
+
+
+EVAL1K_VARIANTS = ("+exp", "+filt", "+exp+filt")
+
+
+def eval1k_routes(candidates: Iterable[str]) -> list[str]:
+    """The eval-1k route grid (task 5.3): the no-captioner routes, every captioner route per candidate, and the
+    expansion/filter variants of eg2-image@768, image-meta, eg2-blend:<cand> and hybrid-meta:<cand>."""
+    candidates = list(candidates)
+    out = ["eg2-image@768", "meta", "image-meta"]
+    for c in candidates:
+        out += [f"eg2-caption:{c}", f"eg2-blend:{c}", f"fts:{c}", f"hybrid:{c}", f"hybrid-meta:{c}"]
+    bases = ["eg2-image@768", "image-meta"] + [r for c in candidates for r in (f"eg2-blend:{c}", f"hybrid-meta:{c}")]
+    out += [b + v for b in bases for v in EVAL1K_VARIANTS]
     return out
 
 
@@ -319,6 +350,101 @@ def rrf_scores(rankings: list[tuple[list[str], list[float | None]]], k: int = RR
     return out
 
 
+# --- metadata documents (route `meta`) ---------------------------------------------------------------
+
+_CAMEL = (re.compile(r"(?<=[a-z])(?=[A-Z])"), re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])"),
+          re.compile(r"(?<=[^\W\d_])(?=\d)|(?<=\d)(?=[^\W\d_])"))
+_STEM_SEP = re.compile(r"[\s.\-]+")
+_CAMERA_CODE = re.compile(r"^[a-z]{1,4}_?\d{3,}$")  # IMG_1234, DSC01234, P1010023
+_LONG_DIGITS = re.compile(r"^\d{5,}$")  # frame counters, date-time stamps
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+           "november", "december")
+
+
+def _words(chunk: str) -> list[str]:
+    """Letter/digit runs, split at camelCase and digit-letter boundaries, casefolded ("Italy2007" -> italy 2007)."""
+    for rx in _CAMEL:
+        chunk = rx.sub(" ", chunk)
+    return _TOKEN.findall(chunk.casefold())
+
+
+def meta_tokens(relpath: str, frame_row: dict | None) -> list[str]:
+    """The metadata document of one item: folder tokens, file-name stem tokens (camera codes and digit runs of
+    5+ dropped), the capture year and month name (exif/filename dates only) and "scan" for a film/print scan.
+    Stopwords are dropped (as in FTS queries)."""
+    from shoebox.evals.queries import capture_year, is_scan
+
+    row = frame_row or {}
+    p = Path(str(relpath or ""))
+    out = [t for part in p.parent.parts for t in _words(part)]
+    for chunk in _STEM_SEP.split(p.stem):
+        if chunk and not _CAMERA_CODE.match(chunk.casefold()):
+            out += [t for t in _words(chunk) if not _LONG_DIGITS.match(t)]
+    out = [t for t in out if t not in STOPWORDS]
+    year = capture_year(row)
+    if year is not None:
+        out.append(str(year))
+        d = str(row.get("date") or "")
+        if len(d) >= 7 and d[4] == "-" and d[5:7].isdigit() and 1 <= int(d[5:7]) <= 12:
+            out.append(_MONTHS[int(d[5:7]) - 1])
+    if is_scan(row):
+        out.append("scan")
+    return out
+
+
+# --- attribute filters (`+filt`) ---------------------------------------------------------------------
+
+_MONO = re.compile(r"(?<![\w&/])(?:black[\s-]+and[\s-]+white|b\s*&\s*w|b/w|bw|monochrome|gr[ea]yscale)(?![\w&/])")
+_SCAN = re.compile(r"\b(?:film|scans?|scanned|negatives?|slides?|(?:old|scanned)\s+prints?)\b")
+_YEAR_RANGE = re.compile(r"\b(?:from|between)\s+((?:18|19|20)\d\d)\s+(?:to|and|until|till)\s+((?:18|19|20)\d\d)\b"
+                         r"|\b((?:18|19|20)\d\d)\s*[-\u2013]\s*((?:18|19|20)\d\d)\b")
+_DECADE = re.compile(r"(?<![\w'])'?((?:18|19|20)?\d0)'?s\b")
+_YEAR = re.compile(r"\b((?:18|19|20)\d\d)\b")
+FILTER_RULES = {
+    "mono": "black and white | black-and-white | b&w | b/w | bw | monochrome | greyscale/grayscale",
+    "scan": "film | scan(s) | scanned | negative(s) | slide(s) | old print(s) | scanned print(s)",
+    "years": "from/between Y1 to/and Y2 | Y1-Y2 | (19)70s / the 2000s (two-digit: >=30 -> 19xx) | YYYY; "
+             "several -> their span",
+    "attributes": "captioner route: label colour_class mono/toned -> mono, medium film_negative/film_slide/print "
+                  "-> scan; no captioner: frame colour_guess mono/toned, is_scan; year: frame date "
+                  "(exif/filename only), unknown fails",
+    "soft": "items meeting every constraint first, then the rest; each keeps its order and its ties",
+}
+
+
+def parse_filters(text: str) -> dict:
+    """Constraints parsed from the query text: {mono: True, scan: True, years: [lo, hi]}; {} when none."""
+    t = str(text).casefold()
+    out: dict = {}
+    if _MONO.search(t):
+        out["mono"] = True
+    if _SCAN.search(t):
+        out["scan"] = True
+    years: list[int] = []
+    for m in _YEAR_RANGE.finditer(t):
+        a, b = (int(x) for x in (m.groups()[:2] if m[1] else m.groups()[2:]))
+        years += [a, b]
+    t = _YEAR_RANGE.sub(" ", t)
+    for m in _DECADE.finditer(t):
+        d = m[1]
+        start = int(d) if len(d) == 4 else (1900 if int(d) >= 30 else 2000) + int(d)
+        years += [start, start + 9]
+    t = _DECADE.sub(" ", t)
+    years += [int(y) for y in _YEAR.findall(t)]
+    if years:
+        out["years"] = [min(years), max(years)]
+    return out
+
+
+def apply_soft_filter(scores: Scores, ok: set[str]) -> Scores:
+    """Among the items the route scored, those in `ok` move ahead of the rest; both tiers keep their order and
+    their ties. Scores become tier (2 or 0) + a dense rank in (0, 1]. Items the route didn't score stay
+    unscored: a filter reorders what the route retrieved, it never retrieves (an FTS miss stays a miss)."""
+    distinct = sorted(set(scores.values()), reverse=True)
+    dense = {v: 1.0 - i / (len(distinct) + 1) for i, v in enumerate(distinct)}
+    return {a: (2.0 if a in ok else 0.0) + dense[v] for a, v in scores.items()}
+
+
 # --- sources ------------------------------------------------------------------------------------
 
 @dataclass
@@ -337,18 +463,76 @@ class Sources:
     caption_vecs: dict[str, dict[str, np.ndarray]] = field(default_factory=dict)  # cand -> vectors
     caption_store: dict[str, dict] = field(default_factory=dict)  # cand -> {model_id, params_hash}
     exclude: dict | None = None  # {file, n, sha256} when the set has an exclude.jsonl
-    _qvec: dict[str, np.ndarray] = field(default_factory=dict, repr=False)
+    queries_file: str = QUERIES_FILE
+    items: dict[str, dict] = field(default_factory=dict)  # asset_id -> set item (relpath): meta documents
+    frame: dict[str, dict] = field(default_factory=dict)  # asset_id -> frame row: meta documents, filters
+    frame_file: str | None = None  # the frame parquet's file name
+    expansions: dict[str, dict] = field(default_factory=dict)  # query_id -> {keywords, rewrite}
+    expansion: dict | None = None  # {model_id, params_hash} of the expansion store
+    _qvec: dict = field(default_factory=dict, repr=False)
     _fts: dict[str, FtsIndex] = field(default_factory=dict, repr=False)
 
-    def query_vector(self, q: dict) -> np.ndarray:
+    def query_vector(self, q: dict, exp: bool = False) -> np.ndarray:
+        """embed(text); under expansion, the normalised mean of embed(text) and embed(rewrite)."""
         if q["query_id"] not in self._qvec:
             self._qvec[q["query_id"]] = np.asarray(self.embed_query(q["text"]), dtype=np.float32)
-        return self._qvec[q["query_id"]]
+        v = self._qvec[q["query_id"]]
+        rewrite = (self.expansions.get(q["query_id"]) or {}).get("rewrite") if exp else None
+        if not rewrite:
+            return v
+        key = (q["query_id"], "exp")
+        if key not in self._qvec:
+            m = v + np.asarray(self.embed_query(rewrite), dtype=np.float32)
+            self._qvec[key] = (m / np.linalg.norm(m)).astype(np.float32)
+        return self._qvec[key]
+
+    def fts_text(self, q: dict, exp: bool = False) -> str:
+        """The FTS query text: the original, or under expansion the original OR the keywords."""
+        kw = (self.expansions.get(q["query_id"]) or {}).get("keywords") if exp else None
+        return " ".join([q["text"], *kw]) if kw else q["text"]
 
     def fts(self, cand: str) -> FtsIndex:
         if cand not in self._fts:
             self._fts[cand] = FtsIndex(self.labels[cand])
         return self._fts[cand]
+
+    @property
+    def meta_docs(self) -> dict[str, str]:
+        return {a: " ".join(meta_tokens(self.items[a].get("relpath"), self.frame.get(a)))
+                for a in self.corpus if a in self.items}
+
+    def meta(self) -> FtsIndex:
+        if "\0meta" not in self._fts:
+            self._fts["\0meta"] = FtsIndex({a: {"caption": d, "tags": []} for a, d in self.meta_docs.items()})
+        return self._fts["\0meta"]
+
+    def attributes(self, a: str, cand: str | None) -> dict:
+        """{mono, scan, year} of one item for the soft filter (see FILTER_RULES)."""
+        from shoebox.evals.queries import capture_year, is_scan
+
+        row = self.frame.get(a) or {}
+        if cand:
+            lab = self.labels.get(cand, {}).get(a) or {}
+            mono, scan = lab.get("colour_class") in ("mono", "toned"), \
+                lab.get("medium") in ("film_negative", "film_slide", "print")
+        else:
+            mono, scan = row.get("colour_guess") in ("mono", "toned"), is_scan(row)
+        return {"mono": mono, "scan": scan, "year": capture_year(row)}
+
+    def filter_ok(self, constraints: dict, cand: str | None) -> set[str]:
+        out = set()
+        for a in self.corpus:
+            at = self.attributes(a, cand)
+            if constraints.get("mono") and not at["mono"]:
+                continue
+            if constraints.get("scan") and not at["scan"]:
+                continue
+            if "years" in constraints:
+                lo, hi = constraints["years"]
+                if at["year"] is None or not lo <= at["year"] <= hi:
+                    continue
+            out.add(a)
+        return out
 
     @property
     def corpus_sha256(self) -> str:
@@ -360,15 +544,36 @@ class Sources:
 
     def missing(self, route: Route) -> str | None:
         """Why this route can't run from these sources, or None."""
-        if route.kind in ("eg2-caption", "eg2-blend", "hybrid") and route.cand not in self.caption_vecs:
+        if route.kind in ("eg2-caption", "eg2-blend", "hybrid", "hybrid-meta") and route.cand not in self.caption_vecs:
             return f"no EG2 caption embeddings for {route.cand} (run `shoebox embed run --caption-from {route.cand}`)"
-        if route.kind in ("fts", "hybrid") and not self.labels.get(route.cand):
+        if route.kind in ("fts", "hybrid", "hybrid-meta") and not self.labels.get(route.cand):
             return f"no captions in the label store of {route.cand}"
+        if (route.kind in ("meta", "image-meta", "hybrid-meta") or route.filt) and not (self.items and self.frame):
+            return "no items/frame rows for the metadata documents and filters (pass --frame)"
+        if route.exp:
+            lacking = [q["query_id"] for q in self.queries if q["query_id"] not in self.expansions]
+            if self.expansion is None or lacking:
+                return (f"{len(lacking)} queries have no cached expansion "
+                        "(run `shoebox eval expand --set <set> --queries <file>`)")
         return None
 
 
+def _fused_parts(route: Route) -> list[str]:
+    if route.kind == "hybrid":
+        return [f"eg2-blend:{route.cand}", f"fts:{route.cand}"]
+    if route.kind == "image-meta":
+        return [BASELINE_ROUTE, "meta"]
+    if route.kind == "hybrid-meta":
+        return [f"eg2-blend:{route.cand}", f"fts:{route.cand}", "meta"]
+    return []
+
+
 def route_scores(route: Route, q: dict, src: Sources) -> Scores:
-    qv = src.query_vector(q) if route.kind != "fts" else None
+    if route.filt:
+        scores = route_scores(replace(route, filt=False), q, src)
+        constraints = parse_filters(q["text"])
+        return apply_soft_filter(scores, src.filter_ok(constraints, route.cand)) if constraints else scores
+    qv = src.query_vector(q, route.exp) if route.kind in ("eg2-image", "eg2-caption", "eg2-blend") else None
     if route.kind == "eg2-image":
         return cosine_scores(qv, src.image, route.dim)
     if route.kind == "eg2-caption":
@@ -376,11 +581,12 @@ def route_scores(route: Route, q: dict, src: Sources) -> Scores:
     if route.kind == "eg2-blend":
         return blend_scores(cosine_scores(qv, src.image), cosine_scores(qv, src.caption_vecs[route.cand]), route.w)
     if route.kind == "fts":
-        return src.fts(route.cand).scores(q["text"])
-    if route.kind == "hybrid":
-        blend = rank_scores(src.corpus, route_scores(parse_route(f"eg2-blend:{route.cand}"), q, src))
-        fts = rank_scores(src.corpus, route_scores(parse_route(f"fts:{route.cand}"), q, src))
-        return rrf_scores([blend, fts], RRF_K)
+        return src.fts(route.cand).scores(src.fts_text(q, route.exp))
+    if route.kind == "meta":
+        return src.meta().scores(src.fts_text(q, route.exp))
+    if route.kind in ("hybrid", "image-meta", "hybrid-meta"):
+        parts = [replace(parse_route(n), exp=route.exp) for n in _fused_parts(route)]
+        return rrf_scores([rank_scores(src.corpus, route_scores(p, q, src)) for p in parts], RRF_K)
     raise ValueError(route.kind)
 
 
@@ -416,21 +622,38 @@ def route_definition(route: Route, src: Sources) -> dict:
         d["mrl"] = "truncate the 768-d query and image vectors to dim, then L2-normalise"
     if route.cand:
         d["candidate"] = route.cand
-    if route.kind in ("eg2-caption", "eg2-blend", "hybrid"):
+    if route.kind in ("eg2-caption", "eg2-blend", "hybrid", "hybrid-meta"):
         d["dim"] = 768
         d["caption_embeddings"] = src.caption_store[route.cand]
-    if route.kind in ("eg2-blend", "hybrid"):
+    if route.kind in ("eg2-blend", "hybrid", "hybrid-meta"):
         d["w"] = route.w
         d["blend"] = "w*cos(image) + (1-w)*cos(caption); no caption vector -> image score"
-    if route.kind in ("fts", "hybrid"):
+    if route.kind == "image-meta":
+        d["dim"] = 768
+    if route.kind in ("fts", "hybrid", "hybrid-meta"):
         d["caption_source"] = src.label_source[route.cand]
         d["fts"] = {"engine": f"sqlite {sqlite3.sqlite_version} fts5 (in memory)", "tokenizer": FTS_TOKENIZER,
                     "columns": ["caption", "tags"], "score": "-bm25() default weights",
                     "query": "casefolded [^\\W_]+ terms, stopwords removed, deduped, each quoted, ORed",
                     "stopwords_sha256": sha256_lines(sorted(STOPWORDS)), "version": FTS_VERSION}
-    if route.kind == "hybrid":
+    if route.kind in ("meta", "image-meta", "hybrid-meta"):
+        d["meta"] = {"version": META_VERSION, "frame": src.frame_file,
+                     "docs_sha256": sha256_lines(f"{a}\t{t}" for a, t in sorted(src.meta_docs.items())),
+                     "engine": f"sqlite {sqlite3.sqlite_version} fts5 (in memory)", "tokenizer": FTS_TOKENIZER,
+                     "score": "-bm25() default weights", "fts_version": FTS_VERSION,
+                     "stopwords_sha256": sha256_lines(sorted(STOPWORDS))}
+    if route.kind in ("hybrid", "image-meta", "hybrid-meta"):
         d["rrf_k"] = RRF_K
-        d["fused"] = [f"eg2-blend:{route.cand}", f"fts:{route.cand}"]
+        d["fused"] = _fused_parts(route)
+    if route.exp:
+        d["expansion"] = {**(src.expansion or {}), "fts": "original OR keywords",
+                          "embedding": "normalised mean of embed(original) and embed(rewrite)"}
+    if route.filt:
+        d["filter"] = {"version": FILTER_VERSION, "rules": FILTER_RULES, "frame": src.frame_file,
+                       "attributes": "label" if route.cand else "frame",
+                       "frame_sha256": sha256_lines(
+                           f"{a}\t{at['mono']}\t{at['scan']}\t{at['year']}"
+                           for a in src.corpus for at in [src.attributes(a, None)])}
     if src.exclude is not None:  # only then: sets without exclusions keep their hashes
         d["exclude"] = dict(src.exclude)
     return d
@@ -470,7 +693,9 @@ def write_route(cfg: Config, route: Route, src: Sources, rows: list[dict]) -> di
                                                              relevant[r["query_id"]])) + "\n" for r in rows))
     return {"params_hash": ph, "path": str(path), "diagnostics": str(diag), "queries_sha256": src.queries_sha256,
             "corpus_sha256": src.corpus_sha256, "corpus": src.corpus_info, "n_queries": len(rows), "coverage": cov,
-            "kind": route.kind, "candidate": route.cand, "dim": definition.get("dim"), "w": route.w}
+            "kind": route.kind, "candidate": route.cand, "dim": definition.get("dim"), "w": route.w,
+            **({"queries_file": src.queries_file} if src.queries_file != QUERIES_FILE else {}),
+            **({"exp": True} if route.exp else {}), **({"filt": True} if route.filt else {})}
 
 
 def update_index(cfg: Config, set_name: str, entries: dict[str, dict]) -> Path:
@@ -505,7 +730,8 @@ def _label_docs(cfg: Config, source: dict) -> dict[str, dict]:
         cap = o.get("caption")
         if isinstance(cap, str) and cap.strip():
             tags = [t for t in o.get("tags") or [] if isinstance(t, str)]
-            out[aid] = {"caption": cap.strip(), "tags": tags}
+            out[aid] = {"caption": cap.strip(), "tags": tags,
+                        **{k: o[k] for k in ("colour_class", "medium") if isinstance(o.get(k), str)}}
     return out
 
 
@@ -552,15 +778,19 @@ def load_image_store(cfg: Config, embed_candidate: str = EMBED_CANDIDATE):
 
 
 def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path = REPO_ROOT / "evals" / "sets",
-                 embed_candidate: str = EMBED_CANDIDATE, log=lambda m: print(m, file=sys.stderr)) -> Sources:
-    """Resolve the EG2 and label candidates the routes need (local Ollama only) and load their stores."""
+                 embed_candidate: str = EMBED_CANDIDATE, log=lambda m: print(m, file=sys.stderr),
+                 queries_file: str = QUERIES_FILE, frame_path: Path | None = None,
+                 expander: "Expander | None" = None) -> Sources:
+    """Resolve the EG2 and label candidates the routes need (local Ollama only) and load their stores.
+    The frame is read only for metadata/filter routes (`frame_path`), cached expansions only for `+exp`
+    routes (`expander` says which store; nothing is generated here)."""
     from shoebox import embed
     from shoebox.commands.embed import resolve as resolve_embed
     from shoebox.runners import label_source
     from shoebox.runners import resolve as resolve_label
 
     set_dir = Path(sets_dir) / set_name
-    qpath = set_dir / QUERIES_FILE
+    qpath = set_dir / queries_file
     if not qpath.exists():
         raise FileNotFoundError(f"{qpath} missing: run `shoebox eval search-queries --set {set_name}`")
     queries = read_jsonl(qpath)
@@ -575,7 +805,23 @@ def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path
 
     src = Sources(set_name, corpus, queries, file_sha256(qpath), embed_query,
                   {"candidate": embed_candidate, "model_id": res.model_id, "params_hash": res.params_hash,
-                   "query_prompt": res.cand.get("query_prompt")}, image, exclude=exclude)
+                   "query_prompt": res.cand.get("query_prompt")}, image, exclude=exclude, queries_file=queries_file)
+    if any(r.kind in ("meta", "image-meta", "hybrid-meta") or r.filt for r in routes):
+        if frame_path is None:
+            raise FileNotFoundError("metadata and +filt routes need the frame (--frame)")
+        from shoebox.evals.queries import frame_rows_for
+
+        items = [it for it in read_jsonl(set_dir / "items.jsonl") if it["asset_id"] in keep]
+        src.items = {}
+        for it in items:
+            src.items.setdefault(it["asset_id"], it)
+        src.frame = frame_rows_for(items, Path(frame_path))
+        src.frame_file = Path(frame_path).name
+    if any(r.exp for r in routes):
+        if expander is None:
+            raise RuntimeError("+exp routes need the expansion store (no expander given)")
+        src.expansion = {"model_id": expander.model_id, "params_hash": expander.params_hash}
+        src.expansions = load_expansions(cfg, expander)
     for cand in sorted({r.cand for r in routes if r.cand}):
         lres = resolve_label(cand)
         source = label_source(lres)
@@ -590,6 +836,98 @@ def load_sources(cfg: Config, set_name: str, routes: list[Route], sets_dir: Path
         else:
             log(f"{cand}: no caption vectors in {cres.store_dir(cfg)}")
     return src
+
+
+# --- query expansion (`+exp`) ---------------------------------------------------------------------
+
+EXPAND_SCHEMA = {"type": "object", "required": ["keywords", "rewrite"], "additionalProperties": False,
+                 "properties": {"keywords": {"type": "array", "items": {"type": "string"},
+                                             "maxItems": EXPAND_MAX_KEYWORDS},
+                                "rewrite": {"type": "string"}}}
+
+
+@dataclass
+class Expander:
+    """A query rewriter: `call(text) -> {keywords, rewrite}` (raw model JSON). `params` holds everything the output
+    depends on (prompt, model digest, options); its hash keys the cache."""
+
+    model_id: str
+    params: dict
+    call: Callable[[str], dict]
+
+    @property
+    def params_hash(self) -> str:
+        return store.params_hash(self.params)
+
+
+def normalise_expansion(out) -> dict | None:
+    """{keywords: <=10 lowercase non-empty unique strings, rewrite: str}, or None when the output is malformed."""
+    if not isinstance(out, dict) or not isinstance(out.get("keywords"), list) or not isinstance(out.get("rewrite"), str):
+        return None
+    if not all(isinstance(k, str) for k in out["keywords"]):
+        return None
+    kws: list[str] = []
+    for k in out["keywords"]:
+        k = " ".join(k.split()).casefold()
+        if k and k not in kws:
+            kws.append(k)
+    return {"keywords": kws[:EXPAND_MAX_KEYWORDS], "rewrite": " ".join(out["rewrite"].split())}
+
+
+def expand_queries(cfg: Config, queries: list[dict], expander: Expander,
+                   log=lambda m: print(m, file=sys.stderr)) -> dict[str, dict]:
+    """Expand each query once: a final record in `results/expansions/<model>/<params_hash>/` (asset_id = query_id)
+    is a cache hit. Returns {query_id: expansion} for the ok ones among `queries`."""
+    ph = expander.params_hash
+    store.write_params(cfg, expander.model_id, ph, {**expander.params, "model_id": expander.model_id},
+                       kind="expansions")
+    have = store.index(cfg, expander.model_id, ph, kind="expansions")
+    for q in queries:
+        if store.is_final(have.get(q["query_id"])):
+            continue
+        rec = {"asset_id": q["query_id"], "model_id": expander.model_id, "params_hash": ph,
+               "ts": datetime.now(UTC).isoformat(timespec="seconds")}
+        try:
+            raw = expander.call(q["text"])
+        except Exception as e:  # noqa: BLE001 - recorded as a retryable error, the run goes on
+            rec.update(status="error", output=None, error=f"{type(e).__name__}: {e}"[:300])
+        else:
+            out = normalise_expansion(raw)
+            rec.update(status="ok" if out else "invalid", output=out, raw=None if out else raw,
+                       error=None if out else "malformed expansion")
+        store.append(cfg, rec, kind="expansions")
+        if rec["status"] != "ok":
+            log(f"{q['query_id']}: expansion {rec['status']}: {rec['error']}")
+    wanted = {q["query_id"] for q in queries}
+    return {a: r for a, r in load_expansions(cfg, expander).items() if a in wanted}
+
+
+def load_expansions(cfg: Config, expander: Expander) -> dict[str, dict]:
+    """{query_id: {keywords, rewrite}} of the ok records in the expander's store."""
+    recs = store.index(cfg, expander.model_id, expander.params_hash, kind="expansions")
+    return {a: r["output"] for a, r in recs.items() if r.get("status") == "ok" and r.get("output")}
+
+
+def ollama_expander(prompt_path: Path = EXPAND_PROMPT, model: str = EXPAND_MODEL) -> Expander:
+    """The local E4B rewriter (loopback Ollama only, text only). The prompt's `{query}` is the query text."""
+    from shoebox.runners import ollama
+
+    prompt = Path(prompt_path).read_text()
+    fp = ollama.fingerprint({"model": model})
+    params = {"prompt_file": Path(prompt_path).name, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+              "model": model, "model_digest": fp["model_digest"], "options": EXPAND_OPTIONS, "think": False,
+              "format": EXPAND_SCHEMA, "version": EXPAND_VERSION}
+
+    def call(text: str) -> dict:
+        body = {"model": model, "messages": [{"role": "user", "content": prompt.replace("{query}", text)}],
+                "format": EXPAND_SCHEMA, "think": False, "stream": False, "keep_alive": ollama.KEEP_ALIVE,
+                "options": EXPAND_OPTIONS}
+        with ollama._client() as c:
+            r = c.post("/api/chat", json=body)
+        r.raise_for_status()
+        return json.loads((r.json().get("message") or {}).get("content") or "")
+
+    return Expander(f"ollama/{model}", params, call)
 
 
 @dataclass
