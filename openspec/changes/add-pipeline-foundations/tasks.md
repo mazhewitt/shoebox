@@ -50,21 +50,21 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 4. Nudity screen runner (sensitive-content-screen/01)
 
-- [ ] 4.1 Write `tools/convert_nsfw.py`.
+- [x] 4.1 Write `tools/convert_nsfw.py`.
   - It converts OpenNSFW2 to Core ML into `<shoebox_root>/models/`, printing the `.mlpackage` hash. If that fails, convert the ViT fallback instead.
   - Check the licence and record it in the script header.
   - Verify the conversion runs, and that the converted model's outputs on 5 synthetic inputs match the source model within 1e-3.
-- [ ] 4.2 Add `coremltools` to `pyproject.toml`. Add candidate `nsfw-coreml-v1` in `config/candidates.d/screen.toml`: model hash, threshold 0.2, runner version; the threshold is hashed. Verify that `uv sync` succeeds and the candidate resolves.
-- [ ] 4.3 Implement `runners/screen.py`.
+- [x] 4.2 Add `coremltools` to `pyproject.toml`. Add candidate `nsfw-coreml-v1` in `config/candidates.d/screen.toml`: model hash, threshold 0.2, runner version; the threshold is hashed. Verify that `uv sync` succeeds and the candidate resolves.
+- [x] 4.3 Implement `runners/screen.py`.
   - Input: the `infer-v1` JPEG, resized with pyvips.
   - `ComputeUnit.ALL`, no network.
   - Writes `{asset_id, sensitive}` to `results/screen/<candidate>/<params_hash>/`, with no score kept, and appends flags to the quarantine.
   - Verify with tests using a stub model that returns fixed scores: booleans at the threshold boundary; no network (socket blocked); flags appended once; re-run is a cache hit.
-- [ ] 4.4 Add a `shoebox screen run` command over a derived set. Verify with a CLI test, and by measuring img/h on 500 pool5k assets (recorded in `.scratch/sensitive-content-screen/01` Comments).
+- [x] 4.4 Add a `shoebox screen run` command over a derived set. Verify with a CLI test, and by measuring img/h on 500 pool5k assets (recorded in `.scratch/sensitive-content-screen/01` Comments).
 
 ## 5. Quarantine and owner review (sensitive-content-screen/02, 03)
 
-- [ ] 5.1 Implement the quarantine file `evals/quarantine.jsonl` (latest row per asset wins). Verdicts are `pending|include|private|exclude`, with `verdict_by`/`verdict_at`, propagated to the asset's dedup group.
+- [x] 5.1 Implement the quarantine file `evals/quarantine.jsonl` (latest row per asset wins). Verdicts are `pending|include|private|exclude`, with `verdict_by`/`verdict_at`, propagated to the asset's dedup group.
   - Verify with tests: a `pending` asset is refused by:
     - the Gemini sync runner;
     - the Gemini batch runner (group 8);
@@ -73,12 +73,12 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
     - `corpus-draw`;
     - local caption runs.
   - Verify that a `private` asset is refused by hosted runners only, and an `exclude` asset is never re-queued.
-- [ ] 5.2 Implement `shoebox screen review-page`.
+- [x] 5.2 Implement `shoebox screen review-page`.
   - Offline HTML with blurred thumbnails (click to reveal), keyboard shortcuts, a grid, "mark page as include", and a `screen` column.
   - Output goes to `~/shoebox-review/screen/`, with the page-map outside the page folder. The build refuses repo, Desktop and Documents paths, and prints counts only.
   - Verify with tests on a stub flag list, including the refused output locations.
-- [ ] 5.3 Implement `shoebox screen ingest <answers.json>`. It checks the page id and completeness, writes verdicts as human labels (`labelled_by = owner`), and offers to delete the review thumbnails. Verify with tests: page-id mismatch refused; incomplete answers refused; verdicts applied to group members.
-- [ ] 5.4 Document the screen, quarantine and review workflow in `docs/screen.md`. Verify the documented commands run as written on the stub set.
+- [x] 5.3 Implement `shoebox screen ingest <answers.json>`. It checks the page id and completeness, writes verdicts as human labels (`labelled_by = owner`), and offers to delete the review thumbnails. Verify with tests: page-id mismatch refused; incomplete answers refused; verdicts applied to group members.
+- [x] 5.4 Document the screen, quarantine and review workflow in `docs/screen.md`. Verify the documented commands run as written on the stub set.
 
 ## 6. Dedup: groups, captures, canonical, worklist (dedup/01, 02, 04)
 
