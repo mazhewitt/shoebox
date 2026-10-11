@@ -78,6 +78,7 @@ def register(sub) -> None:
     r.set_defaults(func=_report)
     _register_search(esub)
     _register_judge(esub)
+    _register_audit(esub)
 
 
 def _register_search(esub) -> None:
@@ -227,6 +228,134 @@ def _register_judge(esub) -> None:
     jq.add_argument("--out", default=judge.JUDGMENTS_FILE)
     jq.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
     jq.set_defaults(func=_judgments)
+
+
+def _register_audit(esub) -> None:
+    from shoebox.evals import audit
+
+    sets = REPO_ROOT / "evals" / "sets"
+    s = esub.add_parser("audit-sample", help="stratified sample of Gemini-judged pairs for the Opus audit (D10)")
+    s.add_argument("--set", required=True, dest="set_name")
+    s.add_argument("--pool", default="pool-v2.jsonl")
+    s.add_argument("--judgments", default="judgments-v1.jsonl", help="`eval judgments` export in the set dir")
+    s.add_argument("--frac", type=float, default=audit.DEFAULT_FRAC)
+    s.add_argument("--seed", type=int, default=audit.DEFAULT_SEED)
+    s.add_argument("--sets-dir", type=Path, default=sets)
+    s.set_defaults(func=_audit_sample)
+
+    p = esub.add_parser("audit-packets", help="numbered contact sheets and batch files for Opus subagents")
+    p.add_argument("--set", required=True, dest="set_name")
+    p.add_argument("--out", required=True, type=Path, help="scratch dir (never under evals/)")
+    p.add_argument("--pool", default="pool-v2.jsonl")
+    p.add_argument("--grid", type=int, default=10)
+    p.add_argument("--per-batch", type=int, default=30, help="grids per batch file")
+    p.add_argument("--seed", type=int, default=audit.DEFAULT_SEED)
+    p.add_argument("--frame", type=Path, default=None)
+    p.add_argument("--sets-dir", type=Path, default=sets)
+    p.set_defaults(func=_audit_packets)
+
+    i = esub.add_parser("audit-ingest", help="validate and store the subagents' grades-*.jsonl")
+    i.add_argument("--set", required=True, dest="set_name")
+    i.add_argument("--dir", required=True, type=Path)
+    i.add_argument("--model-id", default=audit.MODEL_ID)
+    i.set_defaults(func=_audit_ingest)
+
+    r = esub.add_parser("audit-report", help="Gemini vs Opus weighted kappa -> evals/runs/<date>_<set>-judge-audit")
+    r.add_argument("--set", required=True, dest="set_name")
+    r.add_argument("--judgments", default="judgments-v1.jsonl")
+    r.add_argument("--model-id", default=audit.MODEL_ID)
+    r.add_argument("--params-hash", default=None)
+    r.add_argument("--date", default=None)
+    r.add_argument("--bootstrap", type=int, default=audit.BOOTSTRAP)
+    r.add_argument("--sets-dir", type=Path, default=sets)
+    r.add_argument("--out-dir", type=Path, default=REPO_ROOT / "evals" / "runs")
+    r.set_defaults(func=_audit_report)
+
+
+def _audit_sample(args) -> int:
+    from shoebox.evals import audit, judge, search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        pool = search.read_jsonl(set_dir / args.pool)
+        gem = audit.gemini_grades(search.read_jsonl(set_dir / args.judgments))
+    except FileNotFoundError as e:
+        print(f"shoebox eval audit-sample: {e}", file=sys.stderr)
+        return 2
+    rows = audit.sample(pool, gem, args.frac, args.seed)
+    judge.write_jsonl(set_dir / audit.SAMPLE_FILE, rows)
+    s = audit.sample_summary(rows, pool, gem)
+    print(f"wrote {set_dir / audit.SAMPLE_FILE}: {s['pairs']} of {s['judged_pairs']} judged pairs "
+          f"({s['fraction']:.1%}) over {s['queries']} queries; {s['targets_lt2']} targets graded < 2")
+    return 0
+
+
+def _audit_packets(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import audit, queries, search
+
+    set_dir = args.sets_dir / args.set_name
+    cfg = _cfg()
+    try:
+        audit.check_out_dir(args.out)
+        rows = search.read_jsonl(set_dir / audit.SAMPLE_FILE)
+        pool = search.read_jsonl(set_dir / args.pool)
+        items = search.read_jsonl(set_dir / "items.jsonl")
+        frows = queries.frame_rows_for(items, _frame(cfg, args.frame))
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval audit-packets: {e}", file=sys.stderr)
+        return 2
+    res = audit.packets(cfg, rows, pool, items, frows, args.out, args.grid, args.per_batch, args.seed,
+                        privacy.known_items())
+    for s in res.skipped:
+        print(f"  skipped {s['asset_id']} for {s['query_id']}: {s['reason']}", file=sys.stderr)
+    print(f"wrote {len(res.grids)} grids in {len(res.batches)} batches to {args.out}; {len(res.skipped)} skipped")
+    return 0
+
+
+def _audit_ingest(args) -> int:
+    from shoebox.evals import audit, judge
+    from shoebox.runners import gemini
+
+    try:
+        res = audit.ingest(_cfg(), args.dir, (gemini.PROMPTS_DIR / judge.PROMPT_FILE).read_text(), args.model_id)
+    except (audit.IngestError, FileNotFoundError) as e:
+        print(f"shoebox eval audit-ingest: {e}", file=sys.stderr)
+        return 1
+    print(f"stored {res.stored} judgments ({res.already} already stored) as {args.model_id} {res.params_hash}; "
+          f"{len(res.missing_grids)} grids not yet graded")
+    if res.conflicts:
+        print(f"shoebox eval audit-ingest: {len(res.conflicts)} pairs already stored with another grade "
+              f"(kept the stored one): {res.conflicts[:10]}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _audit_report(args) -> int:
+    from datetime import date
+
+    from shoebox.evals import audit, search
+
+    set_dir = args.sets_dir / args.set_name
+    try:
+        rows = search.read_jsonl(set_dir / audit.SAMPLE_FILE)
+        exported = search.read_jsonl(set_dir / args.judgments)
+        ph, opus = audit.opus_grades(_cfg(), args.model_id, args.params_hash)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval audit-report: {e}", file=sys.stderr)
+        return 2
+    first = exported[0] if exported else {}
+    meta = {"set": args.set_name, "date": args.date or date.today().isoformat(),
+            "gemini_model_id": first.get("model_id"), "gemini_params_hash": first.get("params_hash"),
+            "opus_model_id": args.model_id, "opus_params_hash": ph}
+    rep = audit.build_report(rows, opus, meta, args.bootstrap)
+    stem = args.out_dir / f"{meta['date']}_{args.set_name}-judge-audit"
+    search._atomic_write(stem.with_suffix(".json"), json.dumps(rep, indent=1, sort_keys=True) + "\n")
+    search._atomic_write(stem.with_suffix(".md"), audit.render_md(rep))
+    o = rep["overall"]
+    print(f"wrote {stem}.md/.json: {o['n']} pairs, kappa linear {o['kappa_linear']} quadratic "
+          f"{o['kappa_quadratic']}; re-judge test pool: {rep['rejudge_test_pool']}")
+    return 0
 
 
 def _judge_cand(max_usd: float):
