@@ -491,3 +491,131 @@ def test_repo_config_holds_back_other_libraries():
     )
     assert [i["asset_id"] for i in elig.allowed] == ["2" * 64]
     assert [s.reason for s in elig.skipped] == ["held_back", "held_back"]
+
+
+# ---------- cross-source copies, quarantine, fail closed (design D3, D5) ----------
+
+
+def cfg_sources(tmp_path) -> config.Config:
+    """The owner's library (gemini+claude, one held-back folder) and a non-consented person's source."""
+    own = config.Source("importantfiles", tmp_path / "if", "owner", synced=True, hosted_consent=True,
+                        held_back=("Pictures/held",), hosted_models=("gemini", "claude"),
+                        added=date(2026, 10, 10))
+    jude = config.Source("jude", tmp_path / "jude", "jude", synced=False, hosted_consent=False,
+                         added=date(2026, 10, 10))
+    return config.Config(shoebox_root=tmp_path / "shoebox", sources={"importantfiles": own, "jude": jude})
+
+
+def index(locs, pixels=None, missing=()):
+    from shoebox import copies
+
+    return copies.CopyIndex.build(locs, pixels or {}, missing)
+
+
+def qcheck(tmp_path, pending=(), verdicts=None, groups=None):
+    from shoebox import quarantine
+
+    p = tmp_path / "quarantine.jsonl"
+    quarantine.flag(list(pending) + list(verdicts or {}), "nudity", path=p)
+    for aid, v in (verdicts or {}).items():
+        quarantine.record_verdict(aid, v, "owner", path=p)
+    return quarantine.Checker.load(p, groups=groups)
+
+
+B64, C64 = "b" * 64, "c" * 64
+
+
+@pytest.mark.parametrize("provider", ["gemini", "claude"])
+def test_copies_only_in_owner_library_pass(tmp_path, provider):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("importantfiles", "Backup/a.jpg", AID)])
+    elig = privacy.filter_items([item()], cfg, privacy.NeverSend(), provider=provider, copies=idx)
+    assert elig.allowed == [item()]
+
+
+@pytest.mark.parametrize("provider", ["gemini", "claude"])
+def test_copy_in_non_consented_source_refuses_and_names_it(tmp_path, provider):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("jude", "Camera/a.jpg", AID)])
+    elig = privacy.filter_items([item()], cfg, privacy.NeverSend(), provider=provider, copies=idx)
+    assert elig.allowed == []
+    [s] = elig.skipped
+    assert (s.reason, s.restricting_source, s.source) == ("copy_restricted", "jude", "importantfiles")
+
+
+def test_same_pixel_copy_in_non_consented_source_refuses(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("jude", "Camera/a.jpg", B64)],
+                pixels={AID: "px", B64: "px"})
+    [s] = privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=idx).skipped
+    assert (s.reason, s.restricting_source) == ("copy_restricted", "jude")
+
+
+def test_held_back_copy_refuses_the_other_copy(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("importantfiles", "Pictures/held/a.jpg", AID)])
+    [s] = privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=idx).skipped
+    assert (s.reason, s.restricting_source) == ("copy_restricted", "importantfiles")
+
+
+def test_never_send_glob_on_a_copy_refuses(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    never = privacy.load_never_send(_write(tmp_path / "ns.txt", "Scans/**\n"))
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("importantfiles", "Scans/a.jpg", AID)])
+    [s] = privacy.filter_items([item()], cfg, never, copies=idx).skipped
+    assert s.reason == "copy_restricted"
+
+
+def test_missing_frame_refuses_everything_and_names_source(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID)], missing=("jude",))
+    with pytest.raises(privacy.PrivacyError, match="jude"):
+        privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=idx)
+
+
+@pytest.mark.real_copy_index
+def test_default_copy_index_loads_frames_and_fails_closed(tmp_path, monkeypatch):
+    from shoebox import quarantine
+
+    monkeypatch.setattr(quarantine, "QUARANTINE_PATH", tmp_path / "q.jsonl")
+    cfg = cfg_sources(tmp_path)  # no frames written under shoebox_root
+    with pytest.raises(privacy.PrivacyError, match="importantfiles, jude"):
+        privacy.filter_items([item()], cfg, privacy.NeverSend())
+
+
+def test_same_pixel_copy_of_pending_asset_is_quarantined(tmp_path):
+    cfg = cfg_sources(tmp_path)
+    idx = index([("importantfiles", "Pictures/a.jpg", AID), ("importantfiles", "Other/b.jpg", B64)],
+                pixels={AID: "px", B64: "px"})
+    chk = qcheck(tmp_path, pending=[B64])
+    elig = privacy.filter_items([item(), item(C64, relpath="Pictures/c.jpg")], cfg, privacy.NeverSend(),
+                                copies=idx, quarantine=chk)
+    assert [i["asset_id"] for i in elig.allowed] == [C64]
+    assert [s.reason for s in elig.skipped] == ["quarantined"]
+
+
+@pytest.mark.parametrize("verdict, allowed", [("private", False), ("exclude", False), ("include", True)])
+def test_quarantine_verdicts_for_hosted(tmp_path, verdict, allowed):
+    cfg = cfg_sources(tmp_path)
+    chk = qcheck(tmp_path, verdicts={AID: verdict})
+    elig = privacy.filter_items([item()], cfg, privacy.NeverSend(), copies=index([]), quarantine=chk)
+    assert bool(elig.allowed) is allowed
+    if not allowed:
+        assert [s.reason for s in elig.skipped] == ["quarantined"]
+
+
+def test_default_quarantine_file_is_consulted(tmp_path, monkeypatch):
+    from shoebox import quarantine
+
+    p = tmp_path / "q.jsonl"
+    monkeypatch.setattr(quarantine, "QUARANTINE_PATH", p)
+    quarantine.flag([AID], "nudity")
+    elig = privacy.filter_items([item()], cfg_sources(tmp_path), privacy.NeverSend(), copies=index([]))
+    assert [s.reason for s in elig.skipped] == ["quarantined"]
+
+
+def test_restricting_source_for_known_item_copies(tmp_path):
+    cfg = cfg_held(tmp_path, held_back=["Important documents"])
+    held = item("1" * 64, relpath="Important documents/passport.jpg")
+    [s] = privacy.filter_items([item("1" * 64)], cfg, privacy.NeverSend(), others=[held]).skipped
+    assert (s.reason, s.restricting_source) == ("copy_restricted", "importantfiles")

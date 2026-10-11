@@ -8,6 +8,11 @@ root = "~/mnt/importantfiles-ro"
 person = "owner"
 synced = true            # Drive-synced via Cloud Sync: never write
 hosted_consent = true
+# The date this entry was made. Hosted sends refuse (fail closed, design D5) until the source has an
+# inventory frame dated on or after it, so a new source can't pass as "no copies" before it is
+# inventoried. Give every new source today's date. importantfiles predates the key; its first full
+# frame is frame-2026-10-10.
+added = 2026-10-10
 hosted_models = ["gemini", "claude"]   # owner consent 2026-10-11: their library incl. family and friends; not others' own libraries
 # Never sent to any hosted model (globs relative to root, case-insensitive). The first two look like
 # other people's own libraries (held until the owner confirms); "Important documents" holds
