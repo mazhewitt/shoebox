@@ -143,6 +143,39 @@ def _register_search(esub) -> None:
     cd.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
     cd.set_defaults(func=_corpus_draw)
 
+    qs = esub.add_parser("query-sources", help="draw known-item query sources into evals/sets/<set>/query-sources.jsonl")
+    qs.add_argument("--set", required=True, dest="set_name")
+    qs.add_argument("--n", type=int, default=200)
+    qs.add_argument("--seed", type=int, default=20261012)
+    qs.add_argument("--frame", type=Path, default=None, help="default: newest <shoebox_root>/frame/frame-*.parquet")
+    qs.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    qs.set_defaults(func=_query_sources)
+
+    qp = esub.add_parser("query-packets", help="write batch packets with 768px thumbnails for the query writers")
+    qp.add_argument("--set", required=True, dest="set_name")
+    qp.add_argument("--out", required=True, type=Path, help="scratch dir (not in git)")
+    qp.add_argument("--batch", type=int, default=25)
+    qp.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    qp.set_defaults(func=_query_packets)
+
+    cs = esub.add_parser("corpus-summary", help="print a markdown summary of a set for the category writer")
+    cs.add_argument("--set", required=True, dest="set_name")
+    cs.add_argument("--frame", type=Path, default=None, help="default: newest <shoebox_root>/frame/frame-*.parquet")
+    cs.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    cs.set_defaults(func=_corpus_summary)
+
+    qi = esub.add_parser("query-ingest", help="validate, store and split the written queries into queries-v1.jsonl")
+    qi.add_argument("--set", required=True, dest="set_name")
+    qi.add_argument("--known", required=True, help="glob of known-item JSONL files")
+    qi.add_argument("--category", required=True, type=Path)
+    qi.add_argument("--model-id", required=True)
+    qi.add_argument("--dev-pin", type=Path, default=None, help="items JSONL whose capture groups go to dev")
+    qi.add_argument("--seed", type=int, default=20261012)
+    qi.add_argument("--notes", type=Path, default=None, help="owner notes (default pilot-v0-pool5k known-item)")
+    qi.add_argument("--prompts-dir", type=Path, default=None)
+    qi.add_argument("--sets-dir", type=Path, default=REPO_ROOT / "evals" / "sets")
+    qi.set_defaults(func=_query_ingest)
+
     r = esub.add_parser("search-report",
                         help="write evals/runs/<date>_<set>-search.json and .md from a Vally results.jsonl")
     r.add_argument("--results", required=True, type=Path)
@@ -262,6 +295,84 @@ def _corpus_draw(args) -> int:
               f"Screen them into {args.screen or res.out_dir / corpus.SCREEN_FILE} and rerun.")
         return 3
     print(f"wrote {res.out_dir}/items.jsonl, draw.json, README.md")
+    return 0
+
+
+def _frame(cfg, frame):
+    if frame:
+        return frame
+    frames = sorted((cfg.shoebox_root / "frame").glob("frame-*.parquet"))
+    if not frames:
+        raise FileNotFoundError(f"no frame-*.parquet under {cfg.shoebox_root / 'frame'}")
+    return frames[-1]
+
+
+def _query_sources(args) -> int:
+    from shoebox.evals import queries
+
+    try:
+        res = queries.write_sources(args.sets_dir / args.set_name, _frame(_cfg(), args.frame), args.n, args.seed)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval query-sources: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {res.path} ({len(res.rows)} sources from {res.meta['candidates']} capture groups) and {res.sidecar}")
+    for s, c in res.meta["strata"].items():
+        print(f"  {s:28} {c['drawn']:4} of {c['candidates']}")
+    print("  styles: " + ", ".join(f"{k} {v}" for k, v in res.meta["styles"].items()))
+    return 0
+
+
+def _query_packets(args) -> int:
+    from shoebox import privacy
+    from shoebox.evals import queries
+
+    try:
+        res = queries.write_packets(_cfg(), args.sets_dir / args.set_name, args.out, args.batch,
+                                    others=privacy.known_items(), never=privacy.load_never_send())
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval query-packets: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote {len(res.paths)} packet(s) to {args.out}")
+    for s in res.skipped:
+        print(f"  refused {s['key']}: {s['reason']}", file=sys.stderr)
+    return 1 if res.skipped else 0
+
+
+def _corpus_summary(args) -> int:
+    from shoebox.evals import queries
+
+    try:
+        print(queries.corpus_summary(args.sets_dir / args.set_name, _frame(_cfg(), args.frame)))
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval corpus-summary: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _query_ingest(args) -> int:
+    import glob
+
+    from shoebox.evals import queries
+
+    known = [Path(p) for p in sorted(glob.glob(args.known))]
+    kwargs = {"notes_path": args.notes or queries.NOTES_PATH}
+    if args.prompts_dir:
+        kwargs["prompts_dir"] = args.prompts_dir
+    try:
+        if not known:
+            raise FileNotFoundError(f"no files match {args.known}")
+        res = queries.ingest(_cfg(), args.sets_dir / args.set_name, known, args.category, args.model_id,
+                             args.seed, dev_pin=args.dev_pin, **kwargs)
+    except queries.IngestError as e:
+        for err in e.errors:
+            print(err, file=sys.stderr)
+        print(f"shoebox eval query-ingest: {e}", file=sys.stderr)
+        return 2
+    except (ValueError, FileNotFoundError) as e:
+        print(f"shoebox eval query-ingest: {e}", file=sys.stderr)
+        return 2
+    print(f"params_hash {res.params_hash}: appended {res.appended} record(s)")
+    print(f"wrote {res.path} ({len(res.rows)} queries) and {res.md_path}")
     return 0
 
 

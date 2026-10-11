@@ -1,0 +1,87 @@
+{
+  "seed": 20261012,
+  "n": 200,
+  "mix": {
+    "vague_recall": 0.2,
+    "visual": 0.25,
+    "attribute": 0.2,
+    "place_time": 0.15,
+    "people_role": 0.1,
+    "text": 0.1
+  },
+  "candidates": 994,
+  "items": 1000,
+  "strata": {
+    "1990s|other|noscan": {
+      "candidates": 9,
+      "drawn": 1
+    },
+    "2000-09|mono|noscan": {
+      "candidates": 14,
+      "drawn": 3
+    },
+    "2000-09|other|noscan": {
+      "candidates": 279,
+      "drawn": 56
+    },
+    "2010-14|mono|noscan": {
+      "candidates": 2,
+      "drawn": 1
+    },
+    "2010-14|other|noscan": {
+      "candidates": 114,
+      "drawn": 23
+    },
+    "2015-19|mono|noscan": {
+      "candidates": 1,
+      "drawn": 1
+    },
+    "2015-19|other|noscan": {
+      "candidates": 281,
+      "drawn": 56
+    },
+    "2020+|mono|noscan": {
+      "candidates": 2,
+      "drawn": 1
+    },
+    "2020+|other|noscan": {
+      "candidates": 33,
+      "drawn": 6
+    },
+    "2020+|other|scan": {
+      "candidates": 1,
+      "drawn": 1
+    },
+    "unknown|mono|noscan": {
+      "candidates": 22,
+      "drawn": 4
+    },
+    "unknown|mono|scan": {
+      "candidates": 75,
+      "drawn": 15
+    },
+    "unknown|other|noscan": {
+      "candidates": 96,
+      "drawn": 19
+    },
+    "unknown|other|scan": {
+      "candidates": 65,
+      "drawn": 13
+    }
+  },
+  "styles": {
+    "attribute": 40,
+    "people_role": 20,
+    "place_time": 30,
+    "text": 20,
+    "vague_recall": 40,
+    "visual": 50
+  },
+  "rules": {
+    "stratum": "era|colour|scan",
+    "era": "capture year from frame date when date_kind is exif or filename; scan, mtime or missing dates are unknown",
+    "colour": "frame colour_guess mono vs other",
+    "scan": "make/model matches coolscan|ls-N|scanner|epson|perfection|noritsu|frontier (lab scanners) or software matches vuescan|silverfast|nikon scan|epson scan",
+    "groups": "at most one source per capture group (group_id, else asset_id)"
+  }
+}
