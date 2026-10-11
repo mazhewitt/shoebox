@@ -81,8 +81,10 @@ def cmd_sheet(args) -> int:
     from shoebox.pilot.sheet import write_sheet
 
     cfg = config.load()
-    out = write_sheet(cfg, Path(args.items), Path(args.labels), Path(args.out) if args.out else None)
-    _log(f"wrote {out}")
+    left_out: dict = {}
+    out = write_sheet(cfg, Path(args.items), Path(args.labels), Path(args.out) if args.out else None,
+                      left_out=left_out)
+    _log(f"wrote {out}; left out {left_out.get('quarantined', 0)} quarantined")
     return 0
 
 

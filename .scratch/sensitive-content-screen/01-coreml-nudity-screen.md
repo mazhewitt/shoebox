@@ -59,3 +59,8 @@ Using it would need a developer provisioning profile and a `.app` wrapper. **Wha
 
 - 2026-10-11 (owner): wants it simple, fast and Apple, with no metadata. The first draft's multi-model eval (NudeNet, OpenNSFW2 and others) was dropped.
 - 2026-10-11 (owner): Apple SensitiveContentAnalysis needs restricted signing, so use the Core ML fallback.
+
+**2026-10-11 (Studio, add-pipeline-foundations 4.4).** `shoebox screen run --items <first 500 pool5k items> --workers 4` with `nsfw-coreml-v1` (OpenNSFW2 FP32 Core ML, `ComputeUnit.ALL`, threshold 0.2):
+- 500 screened in 224 s, about 8,000 img/h, including model load. The run is bound by reading the derived JPEGs from the NAS; the model takes 3.8 ms per image.
+- 15 flagged (3%), now `pending` in `evals/quarantine.jsonl` (hashes only). Counts only; nobody has looked at them.
+- At 3%, the whole of ImportantFiles would give about 1,500 flags for the owner to review. The threshold is set recall-first from the first review (9.4).

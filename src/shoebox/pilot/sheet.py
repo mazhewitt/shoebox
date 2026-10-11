@@ -90,6 +90,9 @@ def _candidates(cfg: Config, wanted: set[str]) -> tuple[list[dict], dict[str, di
 def build_data(cfg: Config, items_path: Path, labels_path: Path, out_dir: Path | None = None) -> dict:
     out_dir = out_dir or cfg.results_dir / SET_NAME
     items = _read_jsonl(items_path)
+    # Quarantine (content-screen spec): the sheet may be viewed by Claude, so the hosted rule applies.
+    held = _quarantined(cfg, [i["asset_id"] for i in items])
+    items = [i for i in items if i["asset_id"] not in held]
     cands, outputs = _candidates(cfg, {i["asset_id"] for i in items})
     blind = blind_slice([i["asset_id"] for i in items])
     rows = []
@@ -114,7 +117,19 @@ def build_data(cfg: Config, items_path: Path, labels_path: Path, out_dir: Path |
         "candidates": cands,
         "items": rows,
         "labels": {lab["asset_id"]: lab for lab in _read_jsonl(labels_path)},
+        "left_out": {"quarantined": len(held)},
     }
+
+
+def _quarantined(cfg: Config, asset_ids: list[str]) -> set[str]:
+    """Assets (or their same-pixel copies) the quarantine refuses for Claude viewing."""
+    from shoebox import privacy, quarantine
+
+    chk = quarantine.Checker.load()
+    if not chk.rows:
+        return set()
+    index = privacy.default_copy_index(cfg)
+    return {a for a in asset_ids if chk.refused(a, "hosted", index.pixel_group(a))}
 
 
 def render(data: dict) -> str:
@@ -122,9 +137,13 @@ def render(data: dict) -> str:
     return _TEMPLATE.replace("__DATA__", blob)
 
 
-def write_sheet(cfg: Config, items_path: Path, labels_path: Path, out: Path | None = None) -> Path:
+def write_sheet(cfg: Config, items_path: Path, labels_path: Path, out: Path | None = None,
+                left_out: dict | None = None) -> Path:
+    """Write the sheet; `left_out`, if given, is updated with the counts left out (e.g. quarantined)."""
     out = out or cfg.results_dir / SET_NAME / "sheet.html"
     data = build_data(cfg, items_path, labels_path, out.parent)
+    if left_out is not None:
+        left_out.update(data["left_out"])
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(render(data))
     return out

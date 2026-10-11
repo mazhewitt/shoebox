@@ -172,3 +172,23 @@ def test_packets_refuse_evals_dir(env):
 
     with pytest.raises(ValueError, match="must not"):
         external.packets(env.cfg, env.its, REPO_ROOT / "evals" / "x")
+
+
+@pytest.mark.parametrize("verdict", ["pending", "private"])
+def test_packets_leave_out_quarantined(env, verdict):
+    from shoebox import quarantine
+
+    src = env.tmp / "src"
+    src.mkdir()
+    cfg = config.Config(shoebox_root=env.tmp / "shoebox", sources={
+        "s": config.Source("s", src, "owner", synced=False, hosted_consent=True, hosted_models=("claude",))})
+    for it in env.its[:2]:
+        write_derived(cfg, it["asset_id"], jpeg())
+    quarantine.flag([aid(1)], "nudity")
+    if verdict != "pending":
+        quarantine.record_verdict(aid(1), verdict, "owner")
+    out = env.tmp / "packets"
+    res = external.packets(cfg, env.its[:2], out, provider="claude")
+    assert list(res.keys.values()) == [aid(0)]
+    assert res.skipped == [{"asset_id": aid(1), "reason": "quarantined"}]
+    assert json.loads((out / "packets.json").read_text())["skipped"] == res.skipped

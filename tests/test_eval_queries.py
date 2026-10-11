@@ -354,3 +354,28 @@ def test_sources_one_per_group_when_groups_crowd(tmp_path):
         assert Counter(r["group_id"] for r in rows)["big"] == 1
     with pytest.raises(ValueError):
         queries.write_sources(tmp_path / "s", fpath, n=7, seed=1)
+
+
+def test_packets_leave_out_quarantined(world, tmp_path):
+    from shoebox import quarantine
+
+    src = tmp_path / "src"
+    src.mkdir()
+    cfg = config.Config(shoebox_root=tmp_path / "root", sources={
+        "own": config.Source("own", src, "owner", synced=False, hosted_consent=True,
+                             hosted_models=("gemini", "claude"))})
+    items = [item(f"q{i}") for i in range(2)]
+    set_dir = tmp_path / "sets" / "q"
+    write_jsonl(set_dir / "items.jsonl", items)
+    write_jsonl(set_dir / "query-sources.jsonl", [
+        {"key": f"s-{i + 1:03d}", "asset_id": x["asset_id"], "group_id": None, "style_assigned": "visual",
+         "stratum": "x", "date": "2005", "folder": "Pictures/Trip", "filename": "f.jpg"}
+        for i, x in enumerate(items)])
+    for x in items:
+        write_derived(cfg, x["asset_id"], data=jpeg())
+    quarantine.flag([items[1]["asset_id"]], "nudity")
+    res = queries.write_packets(cfg, set_dir, tmp_path / "packets", others=[],
+                                never=queries.privacy.NeverSend(frozenset(), (), ()))
+    packed = [e["key"] for p in res.paths for e in json.loads(Path(p).read_text())]
+    assert packed == ["s-001"]
+    assert res.skipped == [{"key": "s-002", "reason": "quarantined"}]

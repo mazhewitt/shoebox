@@ -487,3 +487,51 @@ def test_label_source_of_a_list_is_a_list(confdir, fake):
     srcs = runners.label_source([a, b])
     assert srcs == [runners.label_source(a), runners.label_source(b)]
     assert srcs[0]["retry_params_hash"] == a.retry.params_hash and "retry_params_hash" not in srcs[1]
+
+
+@pytest.mark.parametrize("verdict, runs", [("pending", False), ("private", True), ("exclude", False),
+                                           ("include", True)])
+def test_local_run_honours_quarantine(confdir, cfg, fake, verdict, runs):
+    from shoebox import quarantine
+
+    res = runners.resolve("fake-a", confdir)
+    its = items(2)
+    make_derived(cfg, its)
+    quarantine.flag([its[0]["asset_id"]], "nudity")
+    if verdict != "pending":
+        quarantine.record_verdict(its[0]["asset_id"], verdict, "owner")
+    tally = runners.run_items(res, its, cfg)
+    assert (its[0]["asset_id"] in fake.calls) is runs
+    assert its[1]["asset_id"] in fake.calls
+    if not runs:
+        assert tally.skipped_items == [(its[0]["asset_id"], "quarantined")]
+
+
+def test_local_run_refuses_same_pixel_copy_of_pending(confdir, cfg, fake, monkeypatch):
+    from shoebox import copies, privacy, quarantine
+
+    res = runners.resolve("fake-a", confdir)
+    its = items(2)
+    make_derived(cfg, its)
+    pixels = {it["asset_id"]: "samepix" for it in its}
+    monkeypatch.setattr(privacy, "default_copy_index", lambda c: copies.CopyIndex.build([], pixels))
+    quarantine.flag([its[0]["asset_id"]], "nudity")
+    runners.run_items(res, its[1:], cfg)
+    assert fake.calls == []
+
+
+def test_exclude_is_never_requeued_and_stays_refused(confdir, cfg, fake):
+    from shoebox import quarantine
+
+    res = runners.resolve("fake-a", confdir)
+    its = items(1)
+    make_derived(cfg, its)
+    a = its[0]["asset_id"]
+    quarantine.flag([a], "nudity")
+    quarantine.record_verdict(a, "exclude", "owner")
+    assert quarantine.flag([a], "nudity") == 0
+    assert quarantine.flag([a], "document") == 0
+    assert quarantine.load()[a]["verdict"] == "exclude"
+    runners.run_items(res, its, cfg)
+    assert fake.calls == []
+    assert quarantine.Checker.load().refused(a, "hosted")
