@@ -87,7 +87,7 @@ def test_client_ignores_proxy_environment(monkeypatch, var):
 
 def test_runtime_version_and_digest(server):
     assert ollama.runtime_version(cand()) == "ollama 0.40.2"
-    assert ollama.fingerprint(cand()) == {"model_digest": "9bf9" + "0" * 60}
+    assert ollama.fingerprint(cand()) == {"model_digest": "9bf9" + "0" * 60, "runner": ollama.RUNNER_VERSION}
     with pytest.raises(RuntimeError, match="not pulled"):
         ollama.fingerprint(cand(model="gemma4:nope"))
 
@@ -125,7 +125,7 @@ def test_ok_output(server, image):
     json.dumps({**GOOD, "medium": "photo"}),                    # not in enum
     json.dumps({**GOOD, "extra": 1}),                           # additionalProperties false
     json.dumps({**GOOD, "caption": None}),                      # null caption is for rules only
-    json.dumps({**GOOD, "tags": ["Beach"]}),                    # tags must be lowercase
+    json.dumps({**GOOD, "tags": [3]}),                          # tags must be strings (only case is normalised)
     json.dumps({**GOOD, "confidence": {"medium": 2, "digitiser": 0.5, "colour_class": 0.5}}),
 ])
 def test_malformed_output_is_invalid_with_raw_never_coerced(server, image, content):
@@ -133,6 +133,48 @@ def test_malformed_output_is_invalid_with_raw_never_coerced(server, image, conte
     out = ollama.run_one(cand(), {"asset_id": "a"}, image, None)
     assert out["status"] == "invalid"
     assert out["raw"] == content and out["output"] is None and out["error"]
+
+
+def test_tags_are_lowercased_and_raw_kept(server, image):
+    content = json.dumps({**GOOD, "tags": ["Helsinki", "Eiffel Tower", "snow"]})
+    server.reply = chat_reply(content)
+    out = ollama.run_one(cand(), {"asset_id": "a"}, image, None)
+    assert out["status"] == "ok"
+    assert out["output"]["tags"] == ["helsinki", "eiffel tower", "snow"]
+    assert out["raw"] == content  # what the model said, since the stored output differs from it
+    server.reply = chat_reply(json.dumps(GOOD))
+    assert ollama.run_one(cand(), {"asset_id": "a"}, image, None)["raw"] is None
+
+
+def test_capped_output_is_invalid_truncated(server, image):
+    server.reply = chat_reply('{"caption": "A gradient gradient gradient', done_reason="length", eval_count=1024)
+    out = ollama.run_one(cand(num_predict=1024), {"asset_id": "a"}, image, None)
+    assert out["status"] == "invalid" and out["reason"] == "truncated"
+    assert out["error"].startswith("truncated at num_predict=1024: not JSON")
+    server.reply = chat_reply('{"caption": "A gradient', done_reason="stop")
+    out = ollama.run_one(cand(), {"asset_id": "a"}, image, None)
+    assert out["status"] == "invalid" and "reason" not in out
+
+
+def test_repeat_penalty_is_sent(server, image):
+    server.reply = chat_reply(json.dumps(GOOD))
+    ollama.run_one(cand(num_predict=300, repeat_penalty=1.1), {"asset_id": "a"}, image, None)
+    body = json.loads([r for r in server.requests if r.url.path == "/api/chat"][-1].content)
+    assert body["options"]["num_predict"] == 300 and body["options"]["repeat_penalty"] == 1.1
+
+
+def test_reparse_replays_stored_records():
+    c = cand()
+    ok = {"status": "ok", "output": GOOD, "raw": None}
+    assert ollama.reparse(c, ok) == {"status": "ok", "output": GOOD, "raw": None, "error": None}
+    upper = json.dumps({**GOOD, "tags": ["Eiffel Tower"]})
+    old_invalid = {"status": "invalid", "raw": upper, "error": "schema: tags/0: 'Eiffel Tower' does not match"}
+    out = ollama.reparse(c, old_invalid)
+    assert out["status"] == "ok" and out["output"]["tags"] == ["eiffel tower"]
+    v1_capped = {"status": "invalid", "raw": '{"caption": "x x x',
+                 "error": "not JSON: Expecting ',' (truncated: done_reason=length)"}
+    out = ollama.reparse(c, v1_capped)
+    assert out["status"] == "invalid" and out["reason"] == "truncated"
 
 
 def test_http_error_is_error(server, image):

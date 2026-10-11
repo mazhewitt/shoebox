@@ -48,6 +48,7 @@ K_VALUES = (1, 5, 10, 20)  # 20: the D11 search gate is on nDCG@20
 PASS_K = 5  # the Vally verdict: pass iff a relevant item is in the top 5 under every tie order
 BOOTSTRAP_RESAMPLES = 1000
 BOOTSTRAP_SEED = 20261010
+MDD_Z = 2.80  # z_{0.975} + z_{0.8}: two-sided 5%, 80% power
 BASELINE_ROUTE = "eg2-image@768"
 HEADER = "# generated — do not edit. Regenerate with `shoebox eval gen-search`."
 
@@ -496,8 +497,10 @@ def _vectors(records: dict[str, dict], key: str) -> dict[str, np.ndarray]:
 
 
 def _label_docs(cfg: Config, source: dict) -> dict[str, dict]:
+    from shoebox.runners import source_index
+
     out = {}
-    for aid, r in store.index(cfg, source["model_id"], source["params_hash"]).items():
+    for aid, r in source_index(cfg, source).items():
         o = (r.get("output") or {}) if r.get("status") == "ok" else {}
         cap = o.get("caption")
         if isinstance(cap, str) and cap.strip():
@@ -819,6 +822,27 @@ def paired(a: dict[str, float], b: dict[str, float]) -> dict:
             "sign_test_p": sign_test(wins, losses)}
 
 
+def mdd(deltas: list[float]) -> float | None:
+    """Minimum detectable difference of a paired mean delta: (z_.975 + z_.8) * sd / sqrt(n)."""
+    if len(deltas) < 2:
+        return None
+    return float(MDD_Z * np.std(np.asarray(deltas, dtype=np.float64), ddof=1) / math.sqrt(len(deltas)))
+
+
+def paired_bootstrap(a: dict[str, float], b: dict[str, float], resamples: int = BOOTSTRAP_RESAMPLES,
+                     seed: int = BOOTSTRAP_SEED, level: float = 0.95) -> dict | None:
+    """Paired percentile bootstrap of mean(a - b) over the queries both have: one resample of query
+    indices per draw, applied to both routes (i.e. to the per-query delta). None if no overlap."""
+    common = sorted(a.keys() & b.keys())
+    if not common:
+        return None
+    d = np.asarray([a[q] - b[q] for q in common], dtype=np.float64)
+    idx = np.random.default_rng(seed).integers(0, len(d), size=(resamples, len(d)))
+    lo, hi = np.percentile(d[idx].mean(axis=1), [(1 - level) / 2 * 100, (1 + level) / 2 * 100])
+    return {"n": len(common), "mean_delta": float(d.mean()), "delta_ci95": (float(lo), float(hi)),
+            "mdd": mdd(d.tolist())}
+
+
 # --- report -------------------------------------------------------------------------------------
 
 _KV = re.compile(r"(route|query_id|params_hash|set|routes_file)=([^,\s)\]]+)")
@@ -942,6 +966,7 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
     qids = list(rdoc.get("query_ids") or queries)
     routes_out: dict[str, dict] = {}
     rr_by_route: dict[str, dict[str, float]] = {}
+    ndcg_by_route: dict[str, dict[str, float]] = {}
     for name in sorted(by_route):
         ts = by_route[name]
         meta = (rdoc.get("routes") or {}).get(name) or {}
@@ -986,6 +1011,7 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
                             "per_query": {q: {**{k: m[k] for k in PER_QUERY_KEYS}, "above_target": above[q]}
                                           for q, m in sorted(per_query.items())}}
         rr_by_route[name] = {q: m["rr"] for q, m in per_query.items()}
+        ndcg_by_route[name] = {q: m["ndcg@20"] for q, m in per_query.items()}
 
     comparisons: dict[str, dict] = {}
     best = None
@@ -994,6 +1020,13 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
         for name, rr in rr_by_route.items():
             if name != BASELINE_ROUTE:
                 comparisons[name] = paired(rr, base)
+                pr = paired_bootstrap(rr, base)
+                pn = paired_bootstrap(ndcg_by_route[name], ndcg_by_route[BASELINE_ROUTE])
+                comparisons[name].update({
+                    "rr_delta_ci95": pr["delta_ci95"] if pr else None, "rr_mdd": pr["mdd"] if pr else None,
+                    "ndcg@20_delta": pn["mean_delta"] if pn else None,
+                    "ndcg@20_delta_ci95": pn["delta_ci95"] if pn else None,
+                    "ndcg@20_mdd": pn["mdd"] if pn else None})
         contenders = [n for n, r in routes_out.items() if r["caption_based"] and not r["sensitivity"]
                       and r.get("n_queries")]
         if contenders:  # highest MRR; a tie goes to the first route name
@@ -1052,6 +1085,14 @@ def build_report(trials: list[SearchTrial], results_path: Path, run_date: str,
                 f"{BASELINE_ROUTE} is optimistic (selection bias). n is small: treat all differences as indicative."
             ),
             f"MRR CI: percentile bootstrap over queries, {BOOTSTRAP_RESAMPLES} resamples, seed {BOOTSTRAP_SEED}.",
+            (
+                "Route comparisons: paired bootstrap over the queries both routes ran — one resample of query "
+                f"indices per draw applied to both routes, i.e. to the per-query delta ({BOOTSTRAP_RESAMPLES} "
+                f"resamples, seed {BOOTSTRAP_SEED}); 95% percentile CI of the mean delta in reciprocal rank (MRR) "
+                f"and nDCG@20. MDD (minimum detectable difference, 80% power, two-sided 5%) = {MDD_Z} * sd(delta) "
+                "/ sqrt(n). A delta whose CI includes 0 and whose size is below the MDD is a tie. The sign test "
+                "is reported for information only."
+            ),
             "Items with no caption: blend uses their image score; caption/FTS routes rank them last.",
             (f"Vally's pass = hit@{PASS_K} under every tie order (score = expected hit@{PASS_K}); its overall "
             "score is not the metric."),
@@ -1067,6 +1108,10 @@ def _f(v, digits: int = 3) -> str:
     if isinstance(v, float):
         return f"{v:.{digits}f}"
     return str(v)
+
+
+def _ci(ci) -> str:
+    return f"{ci[0]:.3f}–{ci[1]:.3f}" if ci else "–"
 
 
 def to_markdown(rep: dict) -> str:
@@ -1108,17 +1153,25 @@ def to_markdown(rep: dict) -> str:
     if best and cmp:
         out.append(f"`{best}` vs `{rep['baseline']}` on reciprocal rank over {cmp['n']} queries: "
                    f"{cmp['wins']} wins, {cmp['losses']} losses, {cmp['ties']} ties; mean RR delta "
-                   f"{_f(cmp['mean_rr_delta'])}; two-sided sign test p = {_f(cmp['sign_test_p'], 4)}. "
-                   "Chosen on the same queries: the p-value is optimistic.")
+                   f"{_f(cmp['mean_rr_delta'])} (paired bootstrap 95% CI {_ci(cmp.get('rr_delta_ci95'))}, MDD "
+                   f"{_f(cmp.get('rr_mdd'))}); nDCG@20 delta {_f(cmp.get('ndcg@20_delta'))} (95% CI "
+                   f"{_ci(cmp.get('ndcg@20_delta_ci95'))}, MDD {_f(cmp.get('ndcg@20_mdd'))}); two-sided sign test "
+                   f"p = {_f(cmp['sign_test_p'], 4)} (for information only). "
+                   "Chosen on the same queries: the CI and p-value are optimistic.")
     else:
         out.append("Not available (baseline or caption-based routes missing).")
     if rep["vs_baseline"]:
-        out += ["", f"All routes vs {rep['baseline']} (reciprocal rank, paired):", "",
-                "| route | wins | losses | ties | mean RR delta | sign-test p |", "|---|---|---|---|---|---|"]
+        out += ["", (f"All routes vs {rep['baseline']} (paired bootstrap over queries; sign test for information "
+                     "only). A delta whose 95% CI includes 0 and whose size is below the MDD (80% power) is a tie."), "",
+                ("| route | wins | losses | ties | mean RR delta | RR delta 95% CI | RR MDD | nDCG@20 delta "
+                 "| nDCG@20 delta 95% CI | nDCG@20 MDD | sign-test p |"),
+                "|---|---|---|---|---|---|---|---|---|---|---|"]
         for n in order:
             c = rep["vs_baseline"].get(n)
             if c:
                 out.append(f"| {n} | {c['wins']} | {c['losses']} | {c['ties']} | {_f(c['mean_rr_delta'])} | "
+                           f"{_ci(c.get('rr_delta_ci95'))} | {_f(c.get('rr_mdd'))} | {_f(c.get('ndcg@20_delta'))} | "
+                           f"{_ci(c.get('ndcg@20_delta_ci95'))} | {_f(c.get('ndcg@20_mdd'))} | "
                            f"{_f(c['sign_test_p'], 4)} |")
     out += ["", "## Per labeller: whose captions make photos easiest to find", "",
             "MRR per route family (hit@5 in brackets); mean over the four when all four ran.", "",

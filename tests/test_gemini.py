@@ -629,3 +629,13 @@ def test_direct_call_inside_run_keeps_spend_accumulator(env):
     gemini.run_one(CAND, other, image, env.cfg)  # checked, same run: $3.00 now
     with pytest.raises(gemini.SpendCapReached):
         gemini.run_one(CAND, other, image, env.cfg)
+
+
+def test_parse_response_lowercases_tags():
+    schema = json.loads((gemini.SCHEMAS_DIR / "label-v1.json").read_text())
+    label = {"caption": "A tower.", "tags": ["Eiffel Tower", "paris"], "medium": "digital", "digitiser": "phone",
+             "colour_class": "colour", "confidence": {"medium": 0.9, "digitiser": 0.8, "colour_class": 0.9}}
+    data = {"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(label)}]}}]}
+    status, output, _, err = gemini.parse_response(data, schema)
+    assert status == "ok" and err is None and output["tags"] == ["eiffel tower", "paris"]
+    assert "gemini-runner-2" in gemini.runtime_version({})

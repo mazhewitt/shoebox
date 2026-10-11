@@ -22,6 +22,9 @@ seed = 0
 num_ctx = 8192
 num_predict = 1024        # caps runaway output; a label is ~100-150 tokens
 image_budget = "auto"     # Ollama has no budget control (design D6)
+# A first attempt that hits num_predict (a repetition loop) is stored as invalid/truncated and retried once
+# with these overrides under its own params_hash; evals read the retry (spec label-runners).
+retry = { num_predict = 300, repeat_penalty = 1.1 }
 
 [candidates.e4b-q4]
 runtime = "ollama"
@@ -36,6 +39,7 @@ seed = 0
 num_ctx = 8192
 num_predict = 1024
 image_budget = "auto"
+retry = { num_predict = 300, repeat_penalty = 1.1 }
 
 [candidates.g12b-q4]
 runtime = "ollama"
@@ -50,6 +54,7 @@ seed = 0
 num_ctx = 8192
 num_predict = 1024
 image_budget = "auto"
+retry = { num_predict = 300, repeat_penalty = 1.1 }
 
 [candidates.g31b]
 runtime = "ollama"
@@ -64,3 +69,4 @@ seed = 0
 num_ctx = 8192
 num_predict = 1024
 image_budget = "auto"
+retry = { num_predict = 300, repeat_penalty = 1.1 }

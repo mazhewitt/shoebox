@@ -11,7 +11,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from shoebox import store
 from shoebox.runners.ollama import (
     HOST as OLLAMA_HOST,  # the one allowed endpoint (loopback, no proxies)
 )
@@ -113,17 +112,19 @@ def document_text(cand: dict, text: str) -> str:
 # --- captions from a label candidate ---------------------------------------------------------
 
 def caption_source(name: str) -> dict:
-    """{"candidate", "model_id", "params_hash"} of the label candidate whose captions get embedded."""
-    from shoebox.runners import resolve
+    """{"candidate", "model_id", "params_hash"[, "retry_params_hash"]} of the label candidate whose captions
+    get embedded (`shoebox.runners.label_source`)."""
+    from shoebox.runners import label_source, resolve
 
-    res = resolve(name)
-    return {"candidate": name, "model_id": res.model_id, "params_hash": res.params_hash}
+    return label_source(resolve(name))
 
 
 def load_captions(cfg, source: dict) -> dict[str, str]:
     """asset_id -> caption, from the source's `ok` records with a non-empty caption."""
+    from shoebox.runners import source_index
+
     out = {}
-    for aid, r in store.index(cfg, source["model_id"], source["params_hash"]).items():
+    for aid, r in source_index(cfg, source).items():
         cap = (r.get("output") or {}).get("caption") if r.get("status") == "ok" else None
         if isinstance(cap, str) and cap.strip():
             out[aid] = cap.strip()

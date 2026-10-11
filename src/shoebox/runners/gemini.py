@@ -31,11 +31,11 @@ import httpx
 import jsonschema
 
 from shoebox import config, privacy
-from shoebox.runners import StopRun
+from shoebox.runners import StopRun, normalise_label
 
 API_ROOT = "https://generativelanguage.googleapis.com/v1beta"
 RUNNER_VERSION = (
-    "gemini-runner-1"  # bump when request building or schema adaptation changes
+    "gemini-runner-2"  # bump when request building, schema adaptation or parsing changes; 2: tags lowercased
 )
 ENV_PATH = config.REPO_ROOT / ".env"
 PROMPTS_DIR = config.REPO_ROOT / "config" / "prompts"
@@ -316,7 +316,7 @@ def parse_response(
     data: dict, schema: dict
 ) -> tuple[str, dict | None, str | None, str | None]:
     """(status, output, raw, error). Blocked or empty -> invalid with finishReason in raw;
-    bad JSON or schema failure -> invalid with the text in raw. Never coerced."""
+    bad JSON or schema failure -> invalid with the text in raw. Never coerced beyond lowercasing tags."""
     block = (data.get("promptFeedback") or {}).get("blockReason")
     cands = data.get("candidates") or []
     first = cands[0] if cands else {}
@@ -337,6 +337,7 @@ def parse_response(
         output = json.loads(text)
     except ValueError as e:
         return "invalid", None, text, f"not JSON (finishReason={finish}): {e}"
+    output = normalise_label(output)
     errors = sorted(
         jsonschema.Draft202012Validator(schema).iter_errors(output),
         key=lambda e: list(e.path),

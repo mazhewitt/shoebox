@@ -258,6 +258,52 @@ def test_sign_test_and_paired():
     assert p["mean_rr_delta"] == pytest.approx((0.5 + 0 - 0.8) / 3)
 
 
+def test_paired_bootstrap_recovers_a_known_delta_and_pairing_matters():
+    rng = np.random.default_rng(7)
+    a_vals = rng.uniform(0, 1, 60)
+    a = {f"q{i}": float(v) for i, v in enumerate(a_vals)}
+    b = {q: v + 0.1 + float(rng.normal(0, 0.01)) for q, v in a.items()}
+    pb = search.paired_bootstrap(b, a)
+    lo, hi = pb["delta_ci95"]
+    assert pb["n"] == 60 and lo < 0.1 < hi and lo > 0
+    assert pb["mean_delta"] == pytest.approx(sum(b[q] - a[q] for q in a) / 60)
+    # exact shift: the paired CI collapses; independent resampling of the two routes does not
+    exact = search.paired_bootstrap({q: v + 0.1 for q, v in a.items()}, a)
+    assert exact["delta_ci95"][1] - exact["delta_ci95"][0] == pytest.approx(0, abs=1e-9)
+    r = np.random.default_rng(search.BOOTSTRAP_SEED)
+    va, vb = np.array(list(a.values())), np.array([v + 0.1 for v in a.values()])
+    ia = r.integers(0, 60, size=(1000, 60))
+    ib = r.integers(0, 60, size=(1000, 60))
+    d = vb[ib].mean(axis=1) - va[ia].mean(axis=1)
+    unpaired = np.percentile(d, 97.5) - np.percentile(d, 2.5)
+    assert unpaired > 0.05 and (hi - lo) < unpaired
+
+
+def test_paired_bootstrap_reproducible_and_seeded():
+    a = {f"q{i}": i / 10 for i in range(10)}
+    b = {f"q{i}": ((i * 7) % 10) / 10 for i in range(10)}
+    assert search.paired_bootstrap(a, b) == search.paired_bootstrap(a, b)
+    assert search.paired_bootstrap(a, b, seed=1)["delta_ci95"] != search.paired_bootstrap(a, b)["delta_ci95"]
+
+
+def test_paired_bootstrap_uses_shared_queries_only():
+    pb = search.paired_bootstrap({"q1": 1.0, "q2": 0.5, "x": 100.0}, {"q1": 0.5, "q2": 0.5, "y": -100.0})
+    assert pb["n"] == 2 and pb["mean_delta"] == pytest.approx(0.25)
+    assert -0.0001 <= pb["delta_ci95"][0] and pb["delta_ci95"][1] <= 0.5 + 1e-9
+    assert search.paired_bootstrap({"a": 1.0}, {"b": 1.0}) is None
+    assert search.paired_bootstrap({}, {}) is None
+
+
+def test_minimum_detectable_difference():
+    deltas = [0.0, 1.0] * 50
+    sd = float(np.std(deltas, ddof=1))
+    assert search.mdd(deltas) == pytest.approx(2.80 * sd / math.sqrt(100), rel=1e-3)
+    assert search.mdd([0.3] * 4) == 0.0
+    assert search.mdd([0.3]) is None and search.mdd([]) is None
+    pb = search.paired_bootstrap({f"q{i}": float(i % 2) for i in range(100)}, {f"q{i}": 0.0 for i in range(100)})
+    assert pb["mdd"] == pytest.approx(search.mdd(deltas), rel=1e-9)
+
+
 # --- routes over synthetic sources -------------------------------------------------------------------
 
 CORPUS = ["a1", "a2", "b1", "c1"]  # a1/a2 are one capture group
@@ -442,6 +488,14 @@ def test_report_metrics_comparison_and_no_text(tmp_path):
     md = mpath.read_text()
     assert "not tuned on held-out data" in md and "eg2-blend@w0.3:cA (sensitivity)" in md
     assert "## Pool coverage" in md and "nDCG@20" in md and "100%" not in md
+    for k in ("rr_delta_ci95", "rr_mdd", "ndcg@20_delta", "ndcg@20_delta_ci95", "ndcg@20_mdd", "mean_rr_delta"):
+        assert k in cmp
+    assert cmp["rr_delta_ci95"][0] <= cmp["mean_rr_delta"] <= cmp["rr_delta_ci95"][1]
+    lo, hi = cmp["rr_delta_ci95"]
+    assert f"{lo:.3f}–{hi:.3f}" in md and f"{cmp['rr_mdd']:.3f}" in md
+    nlo, nhi = cmp["ndcg@20_delta_ci95"]
+    assert f"{nlo:.3f}–{nhi:.3f}" in md and f"{cmp['ndcg@20_mdd']:.3f}" in md
+    assert "paired bootstrap" in md and "for information only" in md and "MDD" in md
 
 
 def test_report_blockers_for_missing_and_disagreeing_trials(tmp_path):

@@ -42,6 +42,11 @@ def fake(monkeypatch):
         b = mod.behaviour.get(item["asset_id"], "ok")
         if isinstance(b, BaseException):
             raise b
+        if callable(b):
+            b = b(cand)
+        if b == "truncated":
+            return {"status": "invalid", "reason": "truncated", "output": None, "raw": '{"x', "error": "cap",
+                    "latency_ms": 5, "usd": 0.0}
         return {"status": b, "output": {"v": 1} if b == "ok" else None, "raw": "r", "error": None,
                 "usage": {"input_tokens": 3, "output_tokens": 4, "thinking_tokens": None},
                 "latency_ms": 5, "usd": 0.0}
@@ -314,3 +319,79 @@ def test_gemini_spend_cap_is_a_stop_run():
     from shoebox.runners import gemini
 
     assert issubclass(gemini.SpendCapReached, runners.StopRun)
+
+
+RETRY = '[candidates.fake-a.retry]\nnum_predict = 300\nrepeat_penalty = 1.1\n'
+
+
+def test_retry_table_resolves_its_own_hash_and_leaves_the_first_attempts_hash(confdir, fake):
+    h = runners.resolve("fake-a", confdir).params_hash
+    (confdir / "candidates.toml").write_text((confdir / "candidates.toml").read_text() + RETRY)
+    res = runners.resolve("fake-a", confdir)
+    assert res.params_hash == h and "retry" not in res.params
+    assert res.retry.name == "fake-a~retry" and res.retry.model_id == res.model_id
+    assert res.retry.params["num_predict"] == 300 and res.retry.params["repeat_penalty"] == 1.1
+    assert res.retry.params_hash != h and res.retry.retry is None
+
+
+def test_truncated_items_are_retried_once_and_evals_read_the_retry(confdir, cfg, fake):
+    (confdir / "candidates.toml").write_text((confdir / "candidates.toml").read_text() + RETRY)
+    res = runners.resolve("fake-a", confdir)
+    its = items(3)
+    make_derived(cfg, its)
+    a, b = its[0]["asset_id"], its[1]["asset_id"]
+    fake.behaviour = {a: lambda c: "ok" if c.get("num_predict") == 300 else "truncated",
+                      b: lambda c: "truncated"}
+    t = runners.run_items(res, its, cfg)
+    assert (t.ok, t.invalid, t.retried, t.recovered) == (1, 2, 2, 1)
+    first = store.index(cfg, res.model_id, res.params_hash)
+    assert first[a]["status"] == "invalid" and first[a]["reason"] == "truncated"
+    view = runners.label_index(cfg, res)
+    assert view[a]["status"] == "ok" and view[a]["retry_of"] == res.params_hash
+    assert view[a]["params_hash"] == res.retry.params_hash
+    assert view[b]["status"] == "invalid" and view[b]["retry_of"] == res.params_hash  # retry failed: a failure
+    assert view[its[2]["asset_id"]] == first[its[2]["asset_id"]]
+    fake.calls.clear()
+    t2 = runners.run_items(res, its, cfg)
+    assert fake.calls == [] and (t2.cached, t2.retried) == (3, 0)
+    assert runners.label_source(res)["retry_params_hash"] == res.retry.params_hash
+
+
+def test_truncated_without_a_retry_record_is_awaiting(confdir, cfg, fake):
+    its = items(1)
+    make_derived(cfg, its)
+    fake.behaviour = {its[0]["asset_id"]: "truncated"}
+    plain = runners.resolve("fake-a", confdir)
+    runners.run_items(plain, its, cfg)  # no retry table yet: the truncated record just sits there
+    (confdir / "candidates.toml").write_text((confdir / "candidates.toml").read_text() + RETRY)
+    res = runners.resolve("fake-a", confdir)
+    assert res.params_hash == plain.params_hash
+    assert runners.label_index(cfg, res)[its[0]["asset_id"]]["awaiting_retry"] is True
+
+
+def test_replay_reparses_into_the_new_hash_without_inference(confdir, cfg, fake, monkeypatch):
+    res_old = runners.resolve("fake-a", confdir)
+    its = items(3)
+    make_derived(cfg, its)
+    fake.behaviour = {its[1]["asset_id"]: "invalid", its[2]["asset_id"]: "error"}
+    runners.run_items(res_old, its, cfg)
+    old_dir = res_old.store_dir(cfg)
+
+    fake.fingerprint = lambda cand: {"model_digest": "sha256:abc", "runner": "fake-runner-2"}
+    fake.reparse = lambda cand, rec: {"status": "ok", "output": {"v": 2}, "raw": None, "error": None}
+    res = runners.resolve("fake-a", confdir)
+    assert res.params_hash != res_old.params_hash
+    fake.calls.clear()
+    counts = runners.replay(res, old_dir, cfg)
+    assert fake.calls == []
+    assert counts == {"ok": 2, "invalid": 0, "already": 0, "changed": 2}  # the error record is not replayed
+    new = store.index(cfg, res.model_id, res.params_hash)
+    assert set(new) == {its[0]["asset_id"], its[1]["asset_id"]}
+    r = new[its[1]["asset_id"]]
+    assert r["replay_of"] == res_old.params_hash and r["output"] == {"v": 2} and r["usage"]["input_tokens"] == 3
+    assert runners.replay(res, old_dir, cfg)["already"] == 2  # idempotent
+
+    toml = (confdir / "candidates.toml").read_text()
+    (confdir / "candidates.toml").write_text(toml.replace("seed = 0", "seed = 1"))
+    with pytest.raises(ValueError, match="seed"):
+        runners.replay(runners.resolve("fake-a", confdir), old_dir, cfg)

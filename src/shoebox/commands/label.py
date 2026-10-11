@@ -31,6 +31,11 @@ def register(sub) -> None:
     v.add_argument("--candidate", required=True)
     v.set_defaults(func=cmd_resolve)
 
+    rp = lsub.add_parser("replay", help="rebuild the candidate's store from an older store of it (no inference)")
+    rp.add_argument("--candidate", required=True)
+    rp.add_argument("--from-hash", required=True, help="params_hash of the older store of this candidate")
+    rp.set_defaults(func=cmd_replay)
+
     ls = lsub.add_parser("list", help="list candidate names")
     ls.set_defaults(func=cmd_list)
 
@@ -53,7 +58,8 @@ def _resolve(name: str) -> runners.Resolved | None:
 
 
 def _line(t: runners.Tally) -> str:
-    return (f"ok {t.ok}  cached {t.cached}  skipped {t.skipped}  invalid {t.invalid}  error {t.error}"
+    retried = f"  truncated->retried {t.retried} (recovered {t.recovered})" if t.retried else ""
+    return (f"ok {t.ok}  cached {t.cached}  skipped {t.skipped}  invalid {t.invalid}  error {t.error}{retried}"
             f"  | {t.per_hour():.0f} img/h")
 
 
@@ -99,6 +105,26 @@ def cmd_one(args: argparse.Namespace) -> int:
         _err(f"refused: {e}")
         return 2
     print(json.dumps(rec, ensure_ascii=False))
+    return 0
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    res = _resolve(args.candidate)
+    if res is None:
+        return 2
+    cfg = config.load()
+    from shoebox import store
+
+    old_dir = store.store_dir(cfg, res.model_id, args.from_hash, res.kind)
+    if not (old_dir / "params.json").exists():
+        _err(f"no store at {old_dir}")
+        return 3
+    try:
+        counts = runners.replay(res, old_dir, cfg)
+    except ValueError as e:
+        _err(f"refused: {e}")
+        return 2
+    print(json.dumps({"candidate": res.name, "from": args.from_hash, "to": res.params_hash, **counts}))
     return 0
 
 

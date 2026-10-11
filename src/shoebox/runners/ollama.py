@@ -9,10 +9,16 @@ from pathlib import Path
 import httpx
 from jsonschema import Draft202012Validator
 
+from shoebox.runners import normalise_label
+
 # The only model endpoint allowed: no photo leaves this machine. The loopback address (not "localhost")
 # so a hosts-file entry cannot redirect it, and trust_env=False so HTTP(S)_PROXY / ALL_PROXY cannot either.
 HOST = "http://127.0.0.1:11434"
 KEEP_ALIVE = "15m"
+# Hashed into every Ollama candidate's params (via `fingerprint`): bump when parsing or normalisation changes,
+# so outputs made under different rules never share a key. 2: tags lowercased; cap hits marked `truncated`.
+RUNNER_VERSION = "ollama-runner-2"
+OPTIONS = ("temperature", "seed", "num_ctx", "num_predict", "repeat_penalty")
 TIMEOUT = httpx.Timeout(900.0, connect=5.0)
 
 
@@ -39,11 +45,11 @@ def runtime_version(cand: dict) -> str:
 
 
 def fingerprint(cand: dict) -> dict:
-    """The model's digest, so a re-pulled tag gets a new params_hash."""
+    """The model's digest, so a re-pulled tag gets a new params_hash, and the runner's parsing version."""
     names = {cand["model"], f"{cand['model']}:latest"}
     for m in _get("/api/tags").get("models", []):
         if m.get("name") in names or m.get("model") in names:
-            return {"model_digest": m["digest"]}
+            return {"model_digest": m["digest"], "runner": RUNNER_VERSION}
     raise RuntimeError(f"model {cand['model']} is not pulled in the local Ollama")
 
 
@@ -91,7 +97,7 @@ def _usage(resp: dict) -> dict:
 
 
 def run_one(cand: dict, item: dict, image_path: Path, cfg) -> dict:
-    fmt, base_v, strict_v = _schemas(cand["schema_text"])
+    fmt = _schemas(cand["schema_text"])[0]
     body = {
         "model": cand["model"],
         "messages": [{"role": "user", "content": cand["prompt_text"],
@@ -100,7 +106,7 @@ def run_one(cand: dict, item: dict, image_path: Path, cfg) -> dict:
         "think": bool(cand.get("think", False)),
         "stream": False,
         "keep_alive": KEEP_ALIVE,
-        "options": {k: cand[k] for k in ("temperature", "seed", "num_ctx", "num_predict") if k in cand},
+        "options": {k: cand[k] for k in OPTIONS if k in cand},
     }
     result = {"status": "error", "output": None, "raw": None, "error": None,
               "usage": {"input_tokens": None, "output_tokens": None, "thinking_tokens": None}, "usd": 0.0}
@@ -120,14 +126,38 @@ def run_one(cand: dict, item: dict, image_path: Path, cfg) -> dict:
 
     raw = (resp.get("message") or {}).get("content", "")
     result.update(usage=_usage(resp), raw=raw)
+    return {**result, **parse_output(cand, raw, capped=resp.get("done_reason") == "length")}
+
+
+def parse_output(cand: dict, raw: str, capped: bool = False) -> dict:
+    """{status, output, raw, error[, reason]} for the model's text. Tags are lowercased before validation (the
+    one documented normalisation); nothing else is coerced. Output that hit `num_predict` and fails is
+    `invalid` with reason `truncated`, which the framework retries once under the candidate's `retry` table."""
+    _, base_v, strict_v = _schemas(cand["schema_text"])
+    cap = f"truncated at num_predict={cand.get('num_predict')}: " if capped else ""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as e:
-        reason = " (truncated: done_reason=length)" if resp.get("done_reason") == "length" else ""
-        return {**result, "status": "invalid", "error": f"not JSON: {e}{reason}"}
+        return _invalid(raw, f"{cap}not JSON: {e}", capped)
+    parsed = normalise_label(parsed)
     errors = sorted(base_v.iter_errors(parsed), key=str) or sorted(strict_v.iter_errors(parsed), key=str)
     if errors:
         e = errors[0]
         where = "/".join(str(p) for p in e.absolute_path) or "(root)"
-        return {**result, "status": "invalid", "error": f"schema: {where}: {e.message}"[:500]}
-    return {**result, "status": "ok", "output": parsed, "raw": None}
+        return _invalid(raw, f"{cap}schema: {where}: {e.message}"[:500], capped)
+    return {"status": "ok", "output": parsed, "raw": raw if parsed != json.loads(raw) else None, "error": None}
+
+
+def _invalid(raw: str, error: str, capped: bool) -> dict:
+    out = {"status": "invalid", "output": None, "raw": raw, "error": error}
+    return {**out, "reason": "truncated"} if capped else out
+
+
+def reparse(cand: dict, rec: dict) -> dict:
+    """Re-apply this runner's parsing to a stored final record (a replay: no inference). An `ok` record's
+    output is re-validated; an `invalid` record's raw text is parsed again. Records from ollama-runner-1 mark a
+    cap hit only in the error text."""
+    if rec["status"] == "ok":
+        return parse_output(cand, rec["raw"] or json.dumps(rec["output"], ensure_ascii=False))
+    capped = rec.get("reason") == "truncated" or "done_reason=length" in (rec.get("error") or "")
+    return parse_output(cand, rec.get("raw") or "", capped=capped)

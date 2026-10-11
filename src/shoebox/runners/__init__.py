@@ -9,12 +9,13 @@ candidate names them, `prompt_text` and `schema_text` (the exact texts that were
 """
 
 import importlib
+import json
 import socket
 import subprocess
 import time
 import tomllib
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
@@ -26,7 +27,9 @@ from shoebox.config import REPO_ROOT, Config
 CONFIG_DIR = REPO_ROOT / "config"
 # Candidate keys that are file references (hashed by their text instead), notes, or run-budget
 # settings that never change a model's output (spend caps, cost estimates, prices).
-_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile"}
+# `retry` is the truncation-retry override table: it never changes the first attempt's output, and the retry
+# gets its own params_hash (see `resolve`).
+_NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry"}
 _NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
 # Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
 # Vally executor read; embedding vectors are not label-v1 records and go under `embeddings`.
@@ -41,6 +44,14 @@ class StopRun(Exception):
 
 class Skipped(Exception):
     """An item that cannot be labelled now (no derived image, or refused by preflight). Not a model failure."""
+
+
+def normalise_label(parsed):
+    """The one documented normalisation of a label (spec label-runners): string tags are lowercased, so a
+    proper noun ("Eiffel Tower") is kept, not rejected. Anything else is left for the schema to judge."""
+    if isinstance(parsed, dict) and isinstance(parsed.get("tags"), list):
+        return {**parsed, "tags": [t.lower() if isinstance(t, str) else t for t in parsed["tags"]]}
+    return parsed
 
 
 def get(runtime: str) -> ModuleType:
@@ -101,6 +112,7 @@ class Resolved:
     params: dict
     params_hash: str
     runner: ModuleType
+    retry: "Resolved | None" = None
 
     @property
     def runtime(self) -> str:
@@ -115,11 +127,24 @@ class Resolved:
 
 
 def resolve(name: str, config_dir: Path = CONFIG_DIR) -> Resolved:
-    """Load a candidate and compute its params and params_hash (may ask the runtime for its version)."""
+    """Load a candidate and compute its params and params_hash (may ask the runtime for its version).
+
+    A candidate with a `retry` table (e.g. `num_predict = 300`, `repeat_penalty = 1.1`) also resolves its
+    truncation retry: the candidate with those overrides, named `<name>~retry`, under its own params_hash.
+    """
     cands = load_candidates(config_dir)
     if name not in cands:
         raise KeyError(f"unknown candidate {name!r}; known: {', '.join(sorted(cands))}")
     cand = dict(cands[name])
+    res = _resolve_cand(name, cand, config_dir)
+    if isinstance(cand.get("retry"), dict):
+        retry = {k: v for k, v in cand.items() if k != "retry"} | cand["retry"]
+        res = replace(res, retry=_resolve_cand(f"{name}~retry", retry, config_dir))
+    return res
+
+
+def _resolve_cand(name: str, cand: dict, config_dir: Path) -> Resolved:
+    cand = {**cand, "name": name}
     runner = get(cand["runtime"])
     params = {k: v for k, v in cand.items() if k not in _NOT_HASHED and not k.startswith(_NOT_HASHED_PREFIXES)}
     if cand.get("prompt"):
@@ -178,6 +203,8 @@ def run_and_store(res: Resolved, item: dict, image: Path, cfg: Config) -> dict:
         "latency_ms": out.get("latency_ms"), "usd": out.get("usd", 0.0),
         "machine": machine(), "runtime": res.runtime, "ts": _now(),
     }
+    if out.get("reason"):
+        rec["reason"] = out["reason"]
     store.append(cfg, rec, res.kind)
     return rec
 
@@ -190,6 +217,8 @@ class Tally:
     cached: int = 0
     skipped: int = 0
     total: int = 0
+    retried: int = 0      # truncated first attempts sent to the retry candidate this run
+    recovered: int = 0    # of those, retries that came back ok
     skipped_items: list[tuple[str, str]] = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
@@ -258,7 +287,11 @@ def _pending(res: Resolved, items: list[dict], cfg: Config, tally: Tally) -> lis
 
 def run_items(res: Resolved, items: list[dict], cfg: Config,
               progress: Callable[[Tally, dict, dict], None] | None = None) -> Tally:
-    """Label every item not already final in the store. Re-running resumes from the first missing key."""
+    """Label every item not already final in the store. Re-running resumes from the first missing key.
+
+    Then, if the candidate has a retry, every item whose stored record is `invalid` with reason `truncated`
+    (from this run or an earlier one) is run once under the retry candidate, cache-aware like any run.
+    """
     tally = Tally()
     pending = _pending(res, items, cfg, tally)
     if pending:
@@ -269,7 +302,81 @@ def run_items(res: Resolved, items: list[dict], cfg: Config,
         setattr(tally, rec["status"], getattr(tally, rec["status"]) + 1)
         if progress:
             progress(tally, it, rec)
+    if res.retry:
+        done = store.index(cfg, res.model_id, res.params_hash, res.kind)
+        truncated = [it for it in items if (done.get(it["asset_id"]) or {}).get("reason") == "truncated"]
+        if truncated:
+            rt = run_items(res.retry, truncated, cfg, progress)
+            tally.retried, tally.recovered = rt.ran, rt.ok
     return tally
+
+
+def label_source(res: Resolved) -> dict:
+    """What a reader needs to find a candidate's labels: `{candidate, model_id, params_hash}`, plus
+    `retry_params_hash` when it has a truncation retry."""
+    src = {"candidate": res.name, "model_id": res.model_id, "params_hash": res.params_hash}
+    if res.retry:
+        src["retry_params_hash"] = res.retry.params_hash
+    return src
+
+
+def source_index(cfg: Config, source: dict, kind: str = "labels") -> dict[str, dict]:
+    """`{asset_id: record}` as evals should read a label source: its own records, except that a `truncated`
+    record is replaced by its retry's final record (marked `retry_of`), so the retry counts if it is valid and
+    the item counts as a failure if it is not. A truncated record whose retry has not run yet is returned
+    with `awaiting_retry: true`, so a consumer that needs final captions can wait for it."""
+    out = store.index(cfg, source["model_id"], source["params_hash"], kind)
+    if source.get("retry_params_hash"):
+        retried = store.index(cfg, source["model_id"], source["retry_params_hash"], kind)
+        for aid, rec in out.items():
+            if rec.get("reason") != "truncated":
+                continue
+            r = retried.get(aid)
+            out[aid] = {**r, "retry_of": source["params_hash"]} if store.is_final(r) else {**rec, "awaiting_retry": True}
+    return out
+
+
+def label_index(cfg: Config, res: Resolved) -> dict[str, dict]:
+    """`source_index` for a resolved label candidate."""
+    return source_index(cfg, label_source(res), res.kind)
+
+
+def replay(res: Resolved, old_dir: Path, cfg: Config) -> dict[str, int]:
+    """Rebuild this candidate's store from an older store of the same candidate without inference, by
+    re-applying the runner's current parsing (`runner.reparse`) to each stored final record.
+
+    Refuses unless the old params equal the new ones apart from the runner's parsing version (`runner`), so a
+    replay never stands in for a different model, prompt, schema, image or option. Records already final in
+    the new store are left alone; `error` records are not replayed (re-run them). Each replayed record keeps
+    the original usage, latency, machine and ts, and adds `replay_of` (the old params_hash) and `replayed_ts`.
+    """
+    if not hasattr(res.runner, "reparse"):
+        raise ValueError(f"runtime {res.cand['runtime']} has no reparse; replay is not supported")
+    old = json.loads((old_dir / "params.json").read_text())
+    old_hash = old["params_hash"]
+    if old_hash == res.params_hash:
+        raise ValueError("the old store has the current params_hash: nothing to replay")
+    diff = sorted(k for k in set(old["params"]) | set(res.params) if k != "runner"
+                  and old["params"].get(k) != res.params.get(k))
+    if diff or old["model_id"] != res.model_id:
+        raise ValueError(f"params differ beyond the runner version ({', '.join(diff) or 'model_id'}); "
+                         "re-run instead of replaying")
+    done = store.index(cfg, res.model_id, res.params_hash, res.kind)
+    counts = {"ok": 0, "invalid": 0, "already": 0, "changed": 0}
+    store.write_params(cfg, res.model_id, res.params_hash, _params_doc(res), res.kind)
+    for aid, rec in store.index_records(store.iter_dir(old_dir)).items():
+        if not store.is_final(rec):
+            continue
+        if store.is_final(done.get(aid)):
+            counts["already"] += 1
+            continue
+        out = res.runner.reparse(res.cand, rec)
+        new = {**{k: v for k, v in rec.items() if k != "reason"}, **out,
+               "params_hash": res.params_hash, "replay_of": old_hash, "replayed_ts": _now()}
+        store.append(cfg, new, res.kind)
+        counts[out["status"]] += 1
+        counts["changed"] += out["status"] != rec["status"] or out.get("output") != rec.get("output")
+    return counts
 
 
 def label_one(res: Resolved, asset_id: str, items: list[dict], cfg: Config) -> dict:

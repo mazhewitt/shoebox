@@ -61,16 +61,17 @@ def split_by_label(cfg, res, source: dict, items: list[dict]) -> tuple[list[dict
     may still come and would never be embedded. Already-embedded assets and ones with no derived image are
     left for the framework to count as cached or skipped.
     """
-    from shoebox.runners import derived_image
+    from shoebox.runners import derived_image, source_index
 
-    labels = store.index(cfg, source["model_id"], source["params_hash"])
+    labels = source_index(cfg, source)
     captions = embed.load_captions(cfg, source)
     done = store.index(cfg, res.model_id, res.params_hash, res.kind)
     profile = res.cand.get("profile", "infer-v1")
     ready, waiting = [], {}
     for it in items:
         aid = it["asset_id"]
-        if (not store.is_final(done.get(aid)) and not store.is_final(labels.get(aid))
+        label = labels.get(aid)
+        if (not store.is_final(done.get(aid)) and (not store.is_final(label) or label.get("awaiting_retry"))
                 and derived_image(cfg, profile, aid).exists()):
             waiting[aid] = it
         else:

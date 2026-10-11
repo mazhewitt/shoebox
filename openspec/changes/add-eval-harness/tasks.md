@@ -20,10 +20,12 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 
 ## 1. Fixes before more model runs
 
-- [ ] 1.1 Tags: lowercase tags in the runner before validation, and keep the schema pattern. Re-validate the stored invalid records as a replay. Verify with a test that a tag "Helsinki" is stored as "helsinki", and that the normalisation is part of the hashed runner version, so normalised and raw outputs never share a key.
-- [ ] 1.2 Truncation: mark outputs that hit `num_predict` as `invalid` with reason `truncated`, then retry once at `num_predict = 300` with a repeat penalty, under a new params_hash. Run it over the 57 E4B and the 17 12B invalids. Verify with a test feeding a capped output, and report how many retries recovered.
+- [x] 1.1 Tags: lowercase tags in the runner before validation, and keep the schema pattern. Re-validate the stored invalid records as a replay. Verify with a test that a tag "Helsinki" is stored as "helsinki", and that the normalisation is part of the hashed runner version, so normalised and raw outputs never share a key.
+  Done 2026-10-11: `ollama-runner-2` / `gemini-runner-2`; `shoebox label replay` rebuilt the 12B store (4a05141c… → a989aa84…, 2,011 ok, the 17 tag failures recovered) and the E4B store (ba2e8d52… → 5048543d…) with no inference.
+- [x] 1.2 Truncation: mark outputs that hit `num_predict` as `invalid` with reason `truncated`, then retry once at `num_predict = 300` with a repeat penalty, under a new params_hash. Run it over the 57 E4B and the 17 12B invalids. Verify with a test feeding a capped output, and report how many retries recovered.
+  Done 2026-10-11: candidates carry `retry = {num_predict = 300, repeat_penalty = 1.1}`; readers use `runners.source_index`. E4B: 57 of 57 truncated items recovered (median 121 output tokens). 12B had no truncations; its 17 invalids were tag-case and were fixed by 1.1.
 - [ ] 1.3 Orientation (D6a): build `infer-v2` with an orientation pass for untagged scans. Compare the three methods on 50 scans with Opus as the reference, record the result in `docs/profiles.md`, and choose one. Re-derive the scan items of `eval-1k` and the 45 targets, then re-embed. Verify with tests: the rotation is recorded, `infer-v1` images are unchanged, and a rotated fixture comes out upright.
-- [ ] 1.4 Search report: add a paired bootstrap (one resample index for both routes) on the RR and nDCG deltas with 95% CIs, and the minimum detectable difference. Verify with a synthetic test where a known delta is recovered.
+- [x] 1.4 Search report: add a paired bootstrap (one resample index for both routes) on the RR and nDCG deltas with 95% CIs, and the minimum detectable difference. Verify with a synthetic test where a known delta is recovered.
 - [ ] 1.5 Re-run pool5k image routes on `infer-v2` for the 45 targets, and report how much of the 0.98→0.65 drop came from orientation.
 
 ## 2. Eval corpus `eval-1k`
