@@ -21,7 +21,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 2. Inventory skip rules (sources/05)
 
-- [ ] 2.1 Add named skip reasons to `inventory.py`:
+- [x] 2.1 Add named skip reasons to `inventory.py`:
   - `.thumbnails`;
   - iPod/iTunes photo-cache folders;
   - `*.lrdata`;
