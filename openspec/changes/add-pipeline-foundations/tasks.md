@@ -94,7 +94,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2�
 
   Verify with fixtures for each rule and its near misses (same stem in another folder; `-edited` without its original).
 - [x] 6.3 Implement canonical selection in design D7's order, with the reason recorded. Verify with a unit test per rule step and a determinism test (two runs, identical output).
-- [ ] 6.4 Implement `shoebox dedup worklist`.
+- [x] 6.4 Implement `shoebox dedup worklist`.
   - One row per capture, plus a header (dedup version, source set, frame dates).
   - Eligibility per capture: every member must be eligible; ineligible captures are tagged local.
   - Output goes to `<shoebox_root>/worklists/`, with a summary (files → assets → captures → eligible; re-quoted USD at batch price) in `evals/runs/`.
