@@ -85,7 +85,7 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
 
 ## 8. Recommendation
 
-- [ ] 8.1 Write `evals/RECOMMENDATION.md` covering:
+- [x] 8.1 Write `evals/RECOMMENDATION.md` covering:
   - captioner, prompt and search method;
   - per-kind results and the reference's own audited error rate;
   - the cost and time projection;
@@ -94,6 +94,7 @@ Replanned on 2026-10-11 (see design "Replan"). Section 0 records what was built 
   - what failed.
 
   The owner records the decision.
+  Done 2026-10-11: `evals/RECOMMENDATION.md`. Owner chose Gemini `label-v2` via the Batch API for the back catalogue and 12B `label-v2` locally for new photos.
 
 ## 9. Deferred to before the bulk run
 
