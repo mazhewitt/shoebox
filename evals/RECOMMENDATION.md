@@ -73,9 +73,10 @@ The evidence is the `eval-1k` run (`evals/runs/2026-10-11_eval-1k-*.md`), scored
 ## Known gaps and follow-ups
 
 - **Gemini refusals:** Gemini's safety filter refused 2 of 1,000 ordinary family photos (PROHIBITED_CONTENT). In the bulk run those go to 12B.
-- **Tiny images:**
-  - E4B invents scenes for images under about 256 px (1.1% of `eval-1k`), e.g. a 72 px app icon described as "people in a park".
-  - Check 12B and Gemini on those images. Decide whether to upscale them or route them to Gemini.
+- **Tiny images** (measured 2026-10-11, `evals/runs/2026-10-11_tiny-images.md`, n = 24 under 384 px):
+  - E4B invents on 6 of the 11 images under 256 px (1.1% of `eval-1k`), e.g. a 72 px app icon described as "people in a park". It is not in the pipeline.
+  - Gemini holds up: 75% clean, against 84% overall. Rule: do nothing.
+  - 12B's wrong rate more than doubles (46% against 20%). Rule: route images under 256 px to the hosted candidate when eligible; otherwise caption them locally and mark the record `tiny`.
 - **Colour filter:**
   - Gemini's mono precision is 0.974, below the 0.98 gate, so its `colour_class` is not trusted for a black-and-white filter.
   - 12B passes the gate (1.00), but would have to run over the library to provide it.

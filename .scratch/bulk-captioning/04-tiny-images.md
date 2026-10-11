@@ -36,3 +36,9 @@ The owner caught photo "4a" on the review page: E4B described a 72×72 app icon 
 - Nothing. Stored outputs already exist for every arm.
 
 ## Comments
+
+**2026-10-11 (add-pipeline-foundations 9.1).** Measured on 24 tiny eval-1k images: 4 reused audit verdicts and 20 fresh blind Opus audits. Results are in `evals/runs/2026-10-11_tiny-images.md`.
+- Gemini: do nothing.
+- 12B: route images under 256 px to hosted when eligible, otherwise caption and mark `tiny`.
+- E4B: invents on 6 of 11; not in the pipeline.
+- The rule is implemented in 9.2.

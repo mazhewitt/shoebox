@@ -142,7 +142,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
 
 ## 9. Tiny images and the retro-check (bulk-captioning/04, sensitive-content-screen/01)
 
-- [ ] 9.1 List eval-1k assets under 256 px and under 384 px from the derive index.
+- [x] 9.1 List eval-1k assets under 256 px and under 384 px from the derive index.
   - Compare the stored captions of `e4b-bf16-v2`, `g12b-q4-v2`, `gemini-medium-v2` and `opus-v2`, using existing audit verdicts, plus a blind Opus audit of at most 20 images (non-quarantined only).
   - Decide the rule per model.
   - Verify with `evals/runs/<date>_tiny-images.md`, and with RECOMMENDATION.md "Known gaps" updated.
