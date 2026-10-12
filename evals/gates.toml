@@ -73,7 +73,7 @@ local_basis = "img/h measured on the M5 Max laptop for each local arm on eval-1k
 candidate = "nsfw-coreml-v1"
 threshold = 0.7
 set_on = "2026-10-11"
-basis = "owner review of the first 48 flags at 0.2: all 48 false positives (incl. b&w landscapes); owner chose 0.7. Misses are checked by the seeded 200 unflagged sample in the full-library review (9.4)."
+basis = "owner review of the first 48 flags at 0.2: all 48 false positives (incl. b&w landscapes); owner chose 0.7. Full-library review 2026-10-12: 7 of 174 flags private, 0 of 200 seeded unflagged samples; 0.7 confirmed."
 
 [colour_filter]
 # Black-and-white filter source per origin stratum (add-pipeline-foundations 7.3; evals/runs/2026-10-12_colour-heuristic.md).

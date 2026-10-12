@@ -31,4 +31,13 @@ Possible misses reported since: Claude subagents labelling the 7.2 colour sample
 sensitive body images; both scored below 0.7. One had already been ruled `include` by the owner (2026-10-11);
 the other was queued `pending` by the owner and is on the page.
 
-Owner verdicts and the threshold confirmation: (pending).
+Owner verdicts (2026-10-12, ingested from page `s-b7f60bcd8068`):
+
+| | Assets | include | private | exclude |
+|---|---|---|---|---|
+| Flagged (pending) | 174 | 167 | 7 | 0 |
+| Seeded random unflagged sample | 200 | 200 | 0 | 0 |
+
+One further same-pixel copy inherited its group's verdict. Precision of a flag at 0.7: 7 of 174 (4%). Misses in
+the unflagged sample: 0 of 200. Threshold 0.7 confirmed. `shoebox privacy check --provider gemini`: 0 pending;
+quarantined 7 (the `private` assets).

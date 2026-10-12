@@ -148,7 +148,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
   - Verify with `evals/runs/<date>_tiny-images.md`, and with RECOMMENDATION.md "Known gaps" updated.
 - [x] 9.2 Implement the chosen tiny-image rule as a candidate or profile rule, unless it is "do nothing". Verify with a test on a synthetic 72 px image.
 - [x] 9.3 Run the screen over every asset already sent to a hosted model or shown to Claude: the pilot-v0, pool5k and eval-1k label/judge/audit stores and Opus packets. Report the flagged count to the owner. Verify the union size and the flagged count are recorded (counts only).
-- [ ] 9.4 Run the screen over all of ImportantFiles, and build the first review page (flags plus a seeded random 200 unflagged). **Owner reviews it.**
+- [x] 9.4 Run the screen over all of ImportantFiles, and build the first review page (flags plus a seeded random 200 unflagged). **Owner reviews it.**
   - Ingest the verdicts.
   - Set the threshold recall-first from the verdicts, recorded in `evals/gates.toml` `[screen_nsfw]`. If it changed, re-run the screen.
   - Verify that `shoebox privacy check --provider gemini` reports zero `pending`.
