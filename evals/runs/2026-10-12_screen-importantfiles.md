@@ -23,11 +23,12 @@ about 48,000 img/h after records were written 200 at a time (`store.append_many`
 
 ## Review
 
-Review page `s-c4988221fd8b` (in `~/shoebox-review/screen/` on the Studio; Claude does not open it): the 173
-pending assets plus a seeded random 200 screened, unflagged assets to check for misses at 0.7.
+Review page `s-b7f60bcd8068` (in `~/shoebox-review/screen/` on the Studio; Claude does not open it): the 174
+pending assets plus a seeded random 200 screened, unflagged assets to check for misses at 0.7. (It replaced the
+first build, `s-c4988221fd8b`, to add the one possible miss below.)
 
 Possible misses reported since: Claude subagents labelling the 7.2 colour sample described 2 photos as
-sensitive body images; both scored below 0.7. They are not on the page above and are to be queued `pending`
-for the owner's review.
+sensitive body images; both scored below 0.7. One had already been ruled `include` by the owner (2026-10-11);
+the other was queued `pending` by the owner and is on the page.
 
 Owner verdicts and the threshold confirmation: (pending).

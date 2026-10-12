@@ -1,9 +1,9 @@
 # E2E: `shoebox label bulk` against a fake batch transport (task 10.1)
 
-- run: 2026-10-12T03:39:30; candidate gemini-batch-v2 (gemini-batch/gemini-3.8-flash, params dcfeb24f48fd37ec)
+- run: 2026-10-12T08:07:03; candidate gemini-batch-v2 (gemini-batch/gemini-3.8-flash, params dcfeb24f48fd37ec)
 - worklist created 2026-10-12T00:07:49+00:00; sources importantfiles
 - transport: in-process fake (no network; HttpTransport, the Gemini key and httpx were blocked)
-- verdict: FAIL (bulk exit 0)
+- verdict: PASS (bulk exit 0)
 
 ## Counts
 
@@ -17,11 +17,11 @@ stored synthetic labels (overlay only): ok 2343, invalid 0, error 0
 
 violations among sent ids (quarantined, privacy, unscreened, non-canonical, ineligible, already labelled): none
 
-real results tree: added 1, removed 0, changed 2
+real results tree: unchanged
 
 real spend log: byte-identical
 
-problems: the real results tree changed
+problems: none
 
 ## Re-quoted cost of the real run
 
