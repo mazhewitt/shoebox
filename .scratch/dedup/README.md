@@ -32,3 +32,10 @@ The pipeline today:
 Full value needs `sources/` complete, because cross-library duplicates only show up once every share and the Takeout are inventoried. The code can be built and tested now on ImportantFiles.
 
 **Raw ↔ processed scan pairing** (decision 25) is a different matcher, tolerant of crop, rotation and processing. It is post-MVP and not filed here.
+
+## Counts on ImportantFiles (2026-10-12, change add-pipeline-foundations)
+
+- Exact groups 16,354 (35,212 locations); same_pixels groups 288 (579 assets).
+- Captures 49,287: single 45,351, raw_jpeg_basename 3,251, motion_photo 311, same_pixels 250, scan_export_basename 123, live_photo 1; 1 linked edit.
+- Worklist: 52,955 assets → 49,287 captures → 48,218 eligible; hosted 46,874 (re-quoted $99.49 at batch price).
+- 50-group capture spot check: 0 false merges ([evals/runs/2026-10-12_capture-spotcheck.md](../../evals/runs/2026-10-12_capture-spotcheck.md)).

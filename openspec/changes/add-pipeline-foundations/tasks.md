@@ -99,7 +99,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2�
   - Eligibility per capture: every member must be eligible; ineligible captures are tagged local.
   - Output goes to `<shoebox_root>/worklists/`, with a summary (files → assets → captures → eligible; re-quoted USD at batch price) in `evals/runs/`.
   - Verify with tests on synthetic groups and a summary check that the counts add up.
-- [ ] 6.5 After 1.4: run 6.1–6.4 over ImportantFiles. A Claude 50-group stratified capture spot check on contact sheets (eligible, non-quarantined only) must find zero false merges, recorded in `evals/runs/`. Update `.scratch/dedup/README.md` with the counts.
+- [x] 6.5 After 1.4: run 6.1–6.4 over ImportantFiles. A Claude 50-group stratified capture spot check on contact sheets (eligible, non-quarantined only) must find zero false merges, recorded in `evals/runs/`. Update `.scratch/dedup/README.md` with the counts.
 
 ## 7. Library image vectors and colour filter (catalogue/12, 07)
 
