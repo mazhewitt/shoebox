@@ -155,7 +155,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2�
 
 ## 10. Integration check
 
-- [ ] 10.1 End to end on ImportantFiles: build the worklist and run the bulk caption command against the fake batch transport.
+- [x] 10.1 End to end on ImportantFiles: build the worklist and run the bulk caption command against the fake batch transport.
   - Verify that no request contains a quarantined, ineligible or already-labelled capture.
   - Verify that the summary's counts reconcile: files → assets → captures → eligible → reused → to send.
   - Verify the re-quoted USD for the real run is recorded in `evals/runs/`.
