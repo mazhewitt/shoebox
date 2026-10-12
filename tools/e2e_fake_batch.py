@@ -128,6 +128,12 @@ def snapshot_diff(before: dict, after: dict) -> dict[str, int]:
             "changed": sum(before[k] != after[k] for k in before.keys() & after.keys())}
 
 
+def diff_dirs(before: dict, after: dict) -> list[str]:
+    """The store dirs (`<kind>/<model_dir>`, no file names) holding any added, removed or changed entry."""
+    keys = (after.keys() ^ before.keys()) | {k for k in before.keys() & after.keys() if before[k] != after[k]}
+    return sorted({"/".join(Path(k).parts[:2]) if k != "." else "(results root)" for k in keys})
+
+
 def file_digest(p: Path) -> str | None:
     p = Path(p)
     return hashlib.sha256(p.read_bytes()).hexdigest() if p.exists() else None
@@ -329,6 +335,7 @@ class Result:
     real_results_diff: dict = field(default_factory=dict)
     spend_unchanged: bool = True
     report: Path | None = None
+    real_changed_dirs: list[str] = field(default_factory=list)
 
 
 def run_e2e(real_cfg: config.Config, worklist_path: Path, candidate: str, scratch: Path, runs_dir: Path,
@@ -400,10 +407,12 @@ def run_e2e(real_cfg: config.Config, worklist_path: Path, candidate: str, scratc
     elif not problems:
         problems.append(f"no run record (bulk exit {bulk_rc})")
 
-    real_diff = snapshot_diff(real_snap, snapshot(real_cfg.results_dir))
+    real_after = snapshot(real_cfg.results_dir)
+    real_diff = snapshot_diff(real_snap, real_after)
+    changed_dirs = diff_dirs(real_snap, real_after)
     spend_same = file_digest(real_spend) == real_spend_digest
     if any(real_diff.values()):
-        problems.append("the real results tree changed")
+        problems.append(f"the real results tree changed (in {', '.join(changed_dirs)})")
     if not spend_same:
         problems.append("the real spend log changed")
 
@@ -414,7 +423,7 @@ def run_e2e(real_cfg: config.Config, worklist_path: Path, candidate: str, scratc
     except privacy.PrivacyError as e:
         expired = str(e)
     out = Result(1 if (violations or problems or bulk_rc not in (0,)) else 0, bulk_rc, table, violations,
-                 problems, real_diff, spend_same)
+                 problems, real_diff, spend_same, real_changed_dirs=changed_dirs)
     runs_dir.mkdir(parents=True, exist_ok=True)
     day = (today or date.today()).isoformat()
     out.report = runs_dir / f"{day}_e2e-fake-batch.md"
@@ -460,7 +469,8 @@ def report_md(r: Result, candidate: str, res, header: dict, usd: float, note: st
         "labelled): " + (", ".join(f"{k} {v}" for k, v in sorted(r.violations.items())) or "none"),
         "",
         "real results tree: " + ("unchanged" if not any(r.real_results_diff.values()) else
-                                 ", ".join(f"{k} {v}" for k, v in r.real_results_diff.items())),
+                                 ", ".join(f"{k} {v}" for k, v in r.real_results_diff.items())
+                                 + f" (in {', '.join(r.real_changed_dirs)})"),
         "",
         f"real spend log: {'byte-identical' if r.spend_unchanged else 'CHANGED'}",
         "",

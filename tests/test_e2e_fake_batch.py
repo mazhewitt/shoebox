@@ -105,7 +105,7 @@ def test_run_that_writes_the_real_tree_fails(lib, monkeypatch):
     """An overlay with no writable dirs symlinks results/ whole, so the run writes the real tree: caught."""
     monkeypatch.setattr(e2e, "writable_paths", lambda cfg, res: [])
     r = run(lib)
-    assert r.rc == 1 and "the real results tree changed" in r.problems
+    assert r.rc == 1 and any(p.startswith("the real results tree changed") for p in r.problems)
 
 
 def test_http_transport_construction_inside_the_run_is_forbidden(lib, monkeypatch):
@@ -148,3 +148,9 @@ def test_unscreened_queue_row_is_counted_and_not_sent(lib):
     r = run(lib)
     assert r.rc == 0, r.problems
     assert r.table["unscreened"] == 1 and r.table["requests_sent"] == 1, r.table
+
+
+def test_diff_dirs_names_store_dirs_only():
+    before = {"labels/m/ph/part-0000.jsonl": (8, 1, 1), "embeddings/e/ph/part-0000.jsonl": (8, 1, 1)}
+    after = {**before, "embeddings/e/ph/part-0000.jsonl": (8, 2, 2), "screen/s/ph/part-0001.jsonl": (8, 1, 1)}
+    assert e2e.diff_dirs(before, after) == ["embeddings/e", "screen/s"]
