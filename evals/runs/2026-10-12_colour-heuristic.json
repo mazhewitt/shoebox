@@ -1,0 +1,537 @@
+{
+ "audit_sample": {
+  "frame": {
+   "confusion": {
+    "colour": {
+     "colour": 111,
+     "toned": 2
+    },
+    "mono": {
+     "colour": 1,
+     "mono": 35
+    },
+    "none": {
+     "colour": 2
+    },
+    "toned": {
+     "colour": 13
+    },
+    "unknown": {
+     "colour": 30,
+     "mono": 2,
+     "toned": 1
+    }
+   },
+   "lenient_toned": {
+    "fn": 5,
+    "fp": 14,
+    "n": 197,
+    "precision": 0.7143,
+    "predicted": 49,
+    "recall": 0.875,
+    "tp": 35
+   },
+   "overall": {
+    "fn": 2,
+    "fp": 1,
+    "n": 197,
+    "precision": 0.9722,
+    "predicted": 36,
+    "recall": 0.9459,
+    "tp": 35
+   },
+   "per_stratum": {
+    "camera": {
+     "fn": 0,
+     "fp": 1,
+     "n": 76,
+     "precision": 0.5,
+     "predicted": 2,
+     "recall": 1.0,
+     "tp": 1
+    },
+    "phone": {
+     "fn": 0,
+     "fp": 0,
+     "n": 44,
+     "precision": null,
+     "predicted": 0,
+     "recall": null,
+     "tp": 0
+    },
+    "received": {
+     "fn": 2,
+     "fp": 0,
+     "n": 30,
+     "precision": 1.0,
+     "predicted": 9,
+     "recall": 0.8182,
+     "tp": 9
+    },
+    "scan": {
+     "fn": 0,
+     "fp": 0,
+     "n": 47,
+     "precision": 1.0,
+     "predicted": 25,
+     "recall": 1.0,
+     "tp": 25
+    }
+   }
+  },
+  "missing_frame_guess": 2,
+  "n_trusted": 197,
+  "predicted_mono": 36,
+  "records": 200,
+  "reference_mono": 37
+ },
+ "combination": {
+  "confusion": {
+   "mono": {
+    "mono": 2
+   },
+   "other": {
+    "colour": 1
+   }
+  },
+  "lenient_toned": {
+   "fn": 0,
+   "fp": 0,
+   "n": 3,
+   "precision": 1.0,
+   "predicted": 2,
+   "recall": 1.0,
+   "tp": 2
+  },
+  "overall": {
+   "fn": 0,
+   "fp": 0,
+   "n": 3,
+   "precision": 1.0,
+   "predicted": 2,
+   "recall": 1.0,
+   "tp": 2
+  },
+  "per_stratum": {
+   "camera": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "phone": {
+    "fn": 0,
+    "fp": 0,
+    "n": 0,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "received": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   },
+   "scan": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   }
+  },
+  "rows_with_gemini": 3
+ },
+ "comparisons": {
+  "g12b-q4-v2": {
+   "precision": 1.0,
+   "source": "/Users/mazhewitt/projects/shoebox/evals/runs/2026-10-11_eval-1k-caption-audit.json"
+  },
+  "gemini-medium-v2": {
+   "precision": 0.9737,
+   "source": "/Users/mazhewitt/projects/shoebox/evals/runs/2026-10-11_eval-1k-caption-audit.json"
+  }
+ },
+ "coverage": {
+  "labelled": 152,
+  "total": 152
+ },
+ "date": "2026-10-12",
+ "dev": {
+  "audit_rows": 0,
+  "combination": {
+   "confusion": {
+    "mono": {
+     "mono": 1
+    }
+   },
+   "lenient_toned": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   },
+   "overall": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   },
+   "per_stratum": {
+    "camera": {
+     "fn": 0,
+     "fp": 0,
+     "n": 0,
+     "precision": null,
+     "predicted": 0,
+     "recall": null,
+     "tp": 0
+    },
+    "phone": {
+     "fn": 0,
+     "fp": 0,
+     "n": 0,
+     "precision": null,
+     "predicted": 0,
+     "recall": null,
+     "tp": 0
+    },
+    "received": {
+     "fn": 0,
+     "fp": 0,
+     "n": 0,
+     "precision": null,
+     "predicted": 0,
+     "recall": null,
+     "tp": 0
+    },
+    "scan": {
+     "fn": 0,
+     "fp": 0,
+     "n": 1,
+     "precision": 1.0,
+     "predicted": 1,
+     "recall": 1.0,
+     "tp": 1
+    }
+   },
+   "rows_with_gemini": 1
+  },
+  "dev_n": 147,
+  "dev_strata": {
+   "camera": "insufficient",
+   "phone": "insufficient",
+   "received": "insufficient",
+   "scan": "pass"
+  },
+  "grid": [
+   {
+    "feasible": true,
+    "mono_c95": 0.5,
+    "precision": 0.9697,
+    "predicted": 33,
+    "recall": 0.8205,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "insufficient",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": true,
+    "mono_c95": 1.0,
+    "precision": 0.9714,
+    "predicted": 35,
+    "recall": 0.8718,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "insufficient",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": true,
+    "mono_c95": 1.5,
+    "precision": 0.973,
+    "predicted": 37,
+    "recall": 0.9231,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "insufficient",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": true,
+    "mono_c95": 2.0,
+    "precision": 0.9737,
+    "predicted": 38,
+    "recall": 0.9487,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "insufficient",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 2.5,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 3.0,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 3.5,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 4.0,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 5.0,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 6.0,
+    "precision": 0.975,
+    "predicted": 40,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   },
+   {
+    "feasible": false,
+    "mono_c95": 8.0,
+    "precision": 0.9512,
+    "predicted": 41,
+    "recall": 1.0,
+    "strata": {
+     "camera": "insufficient",
+     "phone": "insufficient",
+     "received": "fail",
+     "scan": "pass"
+    }
+   }
+  ],
+  "with_audit_sample": false
+ },
+ "filter": {
+  "camera": "unavailable",
+  "phone": "unavailable",
+  "received": "heuristic",
+  "scan": "heuristic"
+ },
+ "frozen_hash": "2228f47c8e77df69",
+ "gate": 0.98,
+ "min_pred": 10,
+ "report": "2026-10-12_colour-heuristic",
+ "strata": {
+  "camera": {
+   "fn": 0,
+   "fp": 0,
+   "n": 45,
+   "precision": 1.0,
+   "predicted": 1,
+   "recall": 1.0,
+   "status": "insufficient",
+   "tp": 1
+  },
+  "phone": {
+   "fn": 0,
+   "fp": 0,
+   "n": 24,
+   "precision": null,
+   "predicted": 0,
+   "recall": null,
+   "status": "insufficient",
+   "tp": 0
+  },
+  "received": {
+   "fn": 2,
+   "fp": 0,
+   "n": 38,
+   "precision": 1.0,
+   "predicted": 17,
+   "recall": 0.8947,
+   "status": "pass",
+   "tp": 17
+  },
+  "scan": {
+   "fn": 0,
+   "fp": 0,
+   "n": 43,
+   "precision": 1.0,
+   "predicted": 30,
+   "recall": 1.0,
+   "status": "pass",
+   "tp": 30
+  }
+ },
+ "test": {
+  "confusion": {
+   "colour": {
+    "colour": 61
+   },
+   "mono": {
+    "mono": 48
+   },
+   "toned": {
+    "colour": 19,
+    "toned": 4
+   },
+   "unknown": {
+    "colour": 16,
+    "mono": 2
+   }
+  },
+  "lenient_toned": {
+   "fn": 2,
+   "fp": 19,
+   "n": 150,
+   "precision": 0.7324,
+   "predicted": 71,
+   "recall": 0.963,
+   "tp": 52
+  },
+  "overall": {
+   "fn": 2,
+   "fp": 0,
+   "n": 150,
+   "precision": 1.0,
+   "predicted": 48,
+   "recall": 0.96,
+   "tp": 48
+  },
+  "per_stratum": {
+   "camera": {
+    "fn": 0,
+    "fp": 0,
+    "n": 45,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   },
+   "phone": {
+    "fn": 0,
+    "fp": 0,
+    "n": 24,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "received": {
+    "fn": 2,
+    "fp": 0,
+    "n": 38,
+    "precision": 1.0,
+    "predicted": 17,
+    "recall": 0.8947,
+    "tp": 17
+   },
+   "scan": {
+    "fn": 0,
+    "fp": 0,
+    "n": 43,
+    "precision": 1.0,
+    "predicted": 30,
+    "recall": 1.0,
+    "tp": 30
+   }
+  }
+ },
+ "thresholds": {
+  "colour_c95": 30.0,
+  "colour_low_c95": 15.0,
+  "colour_low_hue_r": 0.75,
+  "mono_c95": 2.0,
+  "mono_sure_c95": 2.0,
+  "toned_c50": 6.0,
+  "toned_hue_r": 0.92
+ },
+ "toned": {
+  "default": "separate: toned does not match black-and-white searches",
+  "lenient_toned_test": {
+   "fn": 2,
+   "fp": 19,
+   "n": 150,
+   "precision": 0.7324,
+   "predicted": 71,
+   "recall": 0.963,
+   "tp": 52
+  }
+ }
+}

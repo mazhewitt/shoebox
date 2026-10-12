@@ -1,0 +1,233 @@
+{
+ "audit_rows": 0,
+ "combination": {
+  "confusion": {
+   "mono": {
+    "mono": 1
+   }
+  },
+  "lenient_toned": {
+   "fn": 0,
+   "fp": 0,
+   "n": 1,
+   "precision": 1.0,
+   "predicted": 1,
+   "recall": 1.0,
+   "tp": 1
+  },
+  "overall": {
+   "fn": 0,
+   "fp": 0,
+   "n": 1,
+   "precision": 1.0,
+   "predicted": 1,
+   "recall": 1.0,
+   "tp": 1
+  },
+  "per_stratum": {
+   "camera": {
+    "fn": 0,
+    "fp": 0,
+    "n": 0,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "phone": {
+    "fn": 0,
+    "fp": 0,
+    "n": 0,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "received": {
+    "fn": 0,
+    "fp": 0,
+    "n": 0,
+    "precision": null,
+    "predicted": 0,
+    "recall": null,
+    "tp": 0
+   },
+   "scan": {
+    "fn": 0,
+    "fp": 0,
+    "n": 1,
+    "precision": 1.0,
+    "predicted": 1,
+    "recall": 1.0,
+    "tp": 1
+   }
+  },
+  "rows_with_gemini": 1
+ },
+ "dev_items": 148,
+ "dev_n": 147,
+ "dev_strata": {
+  "camera": "insufficient",
+  "phone": "insufficient",
+  "received": "insufficient",
+  "scan": "pass"
+ },
+ "gate": 0.98,
+ "grid": [
+  {
+   "feasible": true,
+   "mono_c95": 0.5,
+   "precision": 0.9697,
+   "predicted": 33,
+   "recall": 0.8205,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "insufficient",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": true,
+   "mono_c95": 1.0,
+   "precision": 0.9714,
+   "predicted": 35,
+   "recall": 0.8718,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "insufficient",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": true,
+   "mono_c95": 1.5,
+   "precision": 0.973,
+   "predicted": 37,
+   "recall": 0.9231,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "insufficient",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": true,
+   "mono_c95": 2.0,
+   "precision": 0.9737,
+   "predicted": 38,
+   "recall": 0.9487,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "insufficient",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 2.5,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 3.0,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 3.5,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 4.0,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 5.0,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 6.0,
+   "precision": 0.975,
+   "predicted": 40,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  },
+  {
+   "feasible": false,
+   "mono_c95": 8.0,
+   "precision": 0.9512,
+   "predicted": 41,
+   "recall": 1.0,
+   "strata": {
+    "camera": "insufficient",
+    "phone": "insufficient",
+    "received": "fail",
+    "scan": "pass"
+   }
+  }
+ ],
+ "hash": "2228f47c8e77df69",
+ "min_pred": 10,
+ "thresholds": {
+  "colour_c95": 30.0,
+  "colour_low_c95": 15.0,
+  "colour_low_hue_r": 0.75,
+  "mono_c95": 2.0,
+  "mono_sure_c95": 2.0,
+  "toned_c50": 6.0,
+  "toned_hue_r": 0.92
+ },
+ "with_audit_sample": false
+}

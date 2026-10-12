@@ -80,7 +80,7 @@ The evidence is the `eval-1k` run (`evals/runs/2026-10-11_eval-1k-*.md`), scored
 - **Colour filter:**
   - Gemini's mono precision is 0.974, below the 0.98 gate, so its `colour_class` is not trusted for a black-and-white filter.
   - 12B passes the gate (1.00), but would have to run over the library to provide it.
-  - Alternatively, use the frame's colour heuristic, once that has been measured.
+  - The frame's colour heuristic, with `mono_c95` tuned to 2.0 and frozen, passes on scans (precision 1.00, 30 of 30 on the test half) and on received photos (1.00, 17 of 17; recall 0.89). Phone and camera photos have too few black-and-white pictures to measure, so the filter is unavailable there. Toned (sepia) photos stay separate. See [the report](runs/2026-10-12_colour-heuristic.md) and `[colour_filter]` in `gates.toml`.
 - **Orientation:**
   - About 4% of scans are stored sideways or upside down.
   - Gemini's `rotate_cw` caught 5 of 8, and the local models fewer. Nothing is rotated automatically. A UI rotate action, or a later model, can use the stored value.

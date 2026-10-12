@@ -104,11 +104,11 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2�
 ## 7. Library image vectors and colour filter (catalogue/12, 07)
 
 - [ ] 7.1 Run `shoebox embed run` with `eg2-bf16` over every derived, non-`pending` image asset, one vector per asset. Record img/h and coverage in `.scratch/catalogue/12` Comments. Verify every derived asset has a vector passing `embed.check_vector`, or a listed error.
-- [ ] 7.2 Score the frame's `colour_guess` against the Opus reference.
+- [x] 7.2 Score the frame's `colour_guess` against the Opus reference.
   - First on the eval-1k 200-photo audit sample.
   - Then on a mono-stratified sample: about 150 `mono`/`toned` plus 150 near-threshold, labelled by Opus blind, eligible and non-quarantined only.
   - Verify the report gives mono precision and recall per stratum.
-- [ ] 7.3 Tune the `classify_colour` thresholds on a dev half for mono precision ≥ 0.98 per stratum, freeze them, and score the test half once.
+- [x] 7.3 Tune the `classify_colour` thresholds on a dev half for mono precision ≥ 0.98 per stratum, freeze them, and score the test half once.
   - Record the filter source (or "unavailable" per stratum) and the `toned` default in `evals/gates.toml` and `evals/RECOMMENDATION.md`.
   - Verify with `evals/runs/<date>_colour-heuristic.md` and with tests for the frozen thresholds.
 

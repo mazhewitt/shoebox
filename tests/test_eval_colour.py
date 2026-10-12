@@ -2,6 +2,7 @@
 
 import itertools
 import json
+from pathlib import Path
 
 import pytest
 
@@ -445,3 +446,18 @@ def test_cli_draw_privacy_error_exits_1(tmp_path, monkeypatch, capsys):
     assert main(["eval", "colour-draw", "--frame", str(frame), "--sets-dir", str(tmp_path / "sets")]) == 1
     assert "pixel hash" in capsys.readouterr().err
     assert not (tmp_path / "sets" / colour.SET_NAME).exists()
+
+
+def test_frozen_repo_thresholds_are_the_recorded_ones():
+    """The thresholds the 7.3 test half was scored with (evals/runs/2026-10-12_colour-heuristic.md); changing
+    them needs a new tune/freeze and a new test-half score, not an edit."""
+    import tomllib
+
+    root = Path(__file__).parents[1]
+    t, _ = colour.load_frozen(root / "evals" / "colour-thresholds.json")
+    assert colour.thresholds_hash(t) == "2228f47c8e77df69"
+    assert t.mono_c95 == 2.0
+    gates = tomllib.loads((root / "evals" / "gates.toml").read_text())
+    assert gates["colour_filter"]["heuristic_hash"] == "2228f47c8e77df69"
+    assert gates["colour_filter"]["source"] == {"scan": "heuristic", "received": "heuristic",
+                                                "phone": "unavailable", "camera": "unavailable"}

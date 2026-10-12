@@ -1,0 +1,65 @@
+{
+  "buckets": {
+    "mono": {
+      "available": {
+        "camera": 1156,
+        "phone": 1004,
+        "received": 2507,
+        "scan": 3487
+      },
+      "drawn": {
+        "camera": 25,
+        "phone": 25,
+        "received": 41,
+        "scan": 59
+      },
+      "shortfall": {},
+      "target": 150
+    },
+    "near": {
+      "available": {
+        "camera": 13121,
+        "phone": 8001,
+        "received": 5361,
+        "scan": 3151
+      },
+      "drawn": {
+        "camera": 63,
+        "phone": 37,
+        "received": 25,
+        "scan": 25
+      },
+      "shortfall": {},
+      "target": 150
+    }
+  },
+  "candidates": 38592,
+  "dropped": {
+    "caption_audit_group": 20,
+    "caption_audit_sample": 161,
+    "not_derived": 75,
+    "not_in_bucket": 10073,
+    "same_group": 2703
+  },
+  "frame_assets": 51624,
+  "n": 300,
+  "rules": {
+    "allocation": "largest remainder over available per origin stratum, floor 25, capped",
+    "eligibility": "one image row per asset (latest frame), derived infer-v1 ok, privacy.filter_items(provider=claude), not in the caption-audit sample, one per capture group",
+    "mono": "colour_guess in (mono, toned), not near",
+    "near": "colour_guess unknown, colour with chroma_p95 < 45.0, or mono with chroma_p95 >= 2.0",
+    "reference": "opus-v2 label records (label-v2; colour_guess never shown), colour_class with confidence >= 0.5",
+    "split": "dev/test by seeded sha256 of the capture group (group_id or asset_id), 50/50"
+  },
+  "seed": 20261011,
+  "skipped": {
+    "copy_restricted": 119,
+    "held_back": 554,
+    "never_send": 4,
+    "quarantined": 127
+  },
+  "splits": {
+    "dev": 148,
+    "test": 152
+  }
+}

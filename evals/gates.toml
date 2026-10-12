@@ -74,3 +74,11 @@ candidate = "nsfw-coreml-v1"
 threshold = 0.7
 set_on = "2026-10-11"
 basis = "owner review of the first 48 flags at 0.2: all 48 false positives (incl. b&w landscapes); owner chose 0.7. Misses are checked by the seeded 200 unflagged sample in the full-library review (9.4)."
+
+[colour_filter]
+# Black-and-white filter source per origin stratum (add-pipeline-foundations 7.3; evals/runs/2026-10-12_colour-heuristic.md).
+heuristic_thresholds = "evals/colour-thresholds.json"   # mono_c95 2.0
+heuristic_hash = "2228f47c8e77df69"
+source = { scan = "heuristic", received = "heuristic", phone = "unavailable", camera = "unavailable" }
+basis = "test half (152 photos, blind Opus reference): scan precision 1.00 (30/30), received 1.00 (17/17, recall 0.89); phone and camera have fewer than 10 predicted-mono photos (unmeasurable), so no filter there"
+toned = "separate: toned photos do not match black-and-white searches (lenient toned-as-mono precision 0.73)"
