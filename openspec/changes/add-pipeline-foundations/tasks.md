@@ -134,7 +134,7 @@ Order: group 1 starts first, because the full derive is the long pole. Groups 2â
     - crash mid-poll â†’ no resubmit;
     - parse parity with sync on canned responses.
 - [x] 8.5 Re-check the batch price and discount on the Gemini pricing page, and update `price_date` in the candidate. Verify `require_current_price` passes.
-- [ ] 8.6 **Owner approval required (about $0.03).** Run the live smoke batch: 20 eval-1k images through `gemini-batch-v2`. Verify every label validates, spend is logged, and a field-by-field comparison with `gemini-medium-v2` on the same ids is in `evals/runs/`.
+- [x] 8.6 **Owner approval required (about $0.03).** Run the live smoke batch: 20 eval-1k images through `gemini-batch-v2`. Verify every label validates, spend is logged, and a field-by-field comparison with `gemini-medium-v2` on the same ids is in `evals/runs/`.
 - [ ] 8.7 Implement `shoebox label fallback`. It runs `g12b-q4-v2` on final `refused` or retry-failed `truncated` records of the primary chain, and is idempotent.
   - Verify with tests for the reason filter and the idempotence.
   - Verify by running it on the 2 refused eval-1k images, rebuilding `eg2-blend` from the ordered source list, and checking test nDCG@20 doesn't drop (a short `evals/runs/` note).

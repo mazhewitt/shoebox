@@ -3559,3 +3559,5 @@
 {"candidate": "gemini-judge-v2", "n": 1, "price_date": "2026-10-10", "run": "80c1f3c06a8b", "ts": "2026-10-11T15:33:55+00:00", "usd": 0.00149925}
 {"candidate": "gemini-batch-v2", "n": 16, "price_date": "2026-10-11", "run": "batches/8ytj031cgqbz1g9nb3wj3md6p49sx4019krg", "ts": "2026-10-12T08:28:13+00:00", "usd": 0.02079113}
 {"candidate": "gemini-batch-v2", "n": 4, "price_date": "2026-10-11", "run": "batches/bt5kqovorp5a4q2cm18h09p7fh9mwjh53d9y", "ts": "2026-10-12T08:29:16+00:00", "usd": 0.00529987}
+{"candidate": "gemini-batch-v2", "n": 4, "price_date": "2026-10-11", "run": "batches/2y4tiftbov9zz8696rsa82un9vgh4mifpk08", "ts": "2026-10-12T09:36:46+00:00", "usd": 0.00562237}
+{"candidate": "gemini-batch-v2", "n": 16, "price_date": "2026-10-11", "run": "batches/euo6en2dxficsmyve0b4f7puinzk903dw7ge", "ts": "2026-10-12T09:37:48+00:00", "usd": 0.02185613}
