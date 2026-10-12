@@ -677,6 +677,16 @@ def test_openapi_schema_for_response_schema():
     assert conf["type"] == "OBJECT" and conf["properties"]["medium"] == {"type": "NUMBER", "minimum": 0, "maximum": 1}
     assert s["properties"]["tags"]["type"] == "ARRAY" and s["properties"]["tags"]["items"]["type"] == "STRING"
     assert gemini.openapi_schema({"type": ["integer", "null"]}, non_null=()) == {"type": "INTEGER", "nullable": True}
+    # enum is string-only in responseSchema (the Batch API rejected rotate_cw's [0, 90, 180, 270] with a 400)
+    v2 = gemini.openapi_schema(json.loads((Path(__file__).parents[1] / "config/schemas/label-v2.json").read_text()))
+    rot = v2["properties"]["rotate_cw"]
+    assert rot["type"] == "INTEGER" and "enum" not in rot
+    def enums(n):
+        if isinstance(n, dict):
+            yield from ([n] if "enum" in n else [])
+            for v in n.values():
+                yield from enums(v)
+    assert all(e["type"] == "STRING" and all(isinstance(v, str) for v in e["enum"]) for e in enums(v2))
 
 
 def test_response_schema_field_in_the_request():

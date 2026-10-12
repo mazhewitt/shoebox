@@ -202,7 +202,8 @@ _OPENAPI_KEYWORDS = {"type", "format", "description", "nullable", "enum", "items
 def openapi_schema(schema: dict, non_null: tuple[str, ...] = ("caption",)) -> dict:
     """`gemini_schema(schema)` in the OpenAPI subset of `responseSchema` (the Batch API's structured-output
     field): a ["x", "null"] type becomes type X with `nullable`, an untyped enum is a STRING, objects keep their
-    field order in `propertyOrdering`, and keywords outside the subset (additionalProperties, $id) are dropped.
+    field order in `propertyOrdering`, and keywords outside the subset (additionalProperties, $id), and enums of a
+non-string type, are dropped.
     The original schema still validates every output."""
 
     def walk(node):
@@ -229,6 +230,8 @@ def openapi_schema(schema: dict, non_null: tuple[str, ...] = ("caption",)) -> di
                 out[k] = walk(v)
             elif k == "anyOf":
                 out[k] = [walk(n) for n in v]
+            elif k == "enum" and out.get("type") != "STRING":
+                continue  # enum takes strings only (live 400 on rotate_cw); local validation keeps it exact
             else:
                 out[k] = v
         return {k: out[k] for k in sorted(out, key=lambda k: (k != "type", k != "nullable"))}
