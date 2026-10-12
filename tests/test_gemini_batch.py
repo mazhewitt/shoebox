@@ -132,8 +132,10 @@ def stored(b, res=None):
 def test_candidate_copies_medium_v2_but_is_its_own_store_key():
     med, bat = runners.resolve("gemini-medium-v2"), runners.resolve("gemini-batch-v2")
     for k in ("model", "media_resolution", "thinking_level", "prompt_text", "schema_text", "max_output_tokens",
-              "schema_field", "profile"):
+              "profile"):
         assert med.params[k] == bat.params[k], k
+    # same schema, sent in the field each endpoint honours (batch ignores responseJsonSchema)
+    assert (med.params["schema_field"], bat.params["schema_field"]) == ("responseJsonSchema", "responseSchema")
     assert bat.params["runtime"] == "gemini-batch" and "price_batch_discount" not in bat.params
     assert bat.cand["price_batch_discount"] == 0.5
     assert gemini_batch.BATCH_RUNNER_VERSION in bat.params["runtime_version"]

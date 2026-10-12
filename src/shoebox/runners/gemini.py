@@ -51,7 +51,7 @@ THINKING_LEVEL = {
     "medium": "MEDIUM",
     "high": "HIGH",
 }  # 3.8 Flash rejects "minimal"
-SCHEMA_FIELDS = ("responseJsonSchema", "responseFormat")
+SCHEMA_FIELDS = ("responseJsonSchema", "responseFormat", "responseSchema")
 RETRY_STATUS = {429, 500, 503}
 MAX_INLINE_BYTES = 20 * 1024 * 1024  # the stricter of the documented inline limits
 
@@ -194,6 +194,48 @@ def gemini_schema(schema: dict, non_null: tuple[str, ...] = ("caption",)) -> dic
     return adapted
 
 
+# OpenAPI Schema keywords `responseSchema` takes (API reference, Schema); `type` is upper-cased.
+_OPENAPI_KEYWORDS = {"type", "format", "description", "nullable", "enum", "items", "minItems", "maxItems",
+                     "minimum", "maximum", "properties", "required", "propertyOrdering", "anyOf"}
+
+
+def openapi_schema(schema: dict, non_null: tuple[str, ...] = ("caption",)) -> dict:
+    """`gemini_schema(schema)` in the OpenAPI subset of `responseSchema` (the Batch API's structured-output
+    field): a ["x", "null"] type becomes type X with `nullable`, an untyped enum is a STRING, objects keep their
+    field order in `propertyOrdering`, and keywords outside the subset (additionalProperties, $id) are dropped.
+    The original schema still validates every output."""
+
+    def walk(node):
+        if not isinstance(node, dict):
+            return node
+        out = {}
+        t = node.get("type")
+        if isinstance(t, list):
+            kinds = [k for k in t if k != "null"]
+            t = kinds[0] if len(kinds) == 1 else None
+            if "null" in node["type"]:
+                out["nullable"] = True
+        if t is None and "enum" in node:
+            t = "string"
+        if t is not None:
+            out["type"] = t.upper()
+        for k, v in node.items():
+            if k == "type" or k not in _OPENAPI_KEYWORDS:
+                continue
+            if k == "properties":
+                out[k] = {name: walk(sub) for name, sub in v.items()}
+                out.setdefault("propertyOrdering", list(v))
+            elif k in ("items",):
+                out[k] = walk(v)
+            elif k == "anyOf":
+                out[k] = [walk(n) for n in v]
+            else:
+                out[k] = v
+        return {k: out[k] for k in sorted(out, key=lambda k: (k != "type", k != "nullable"))}
+
+    return walk(gemini_schema(schema, non_null))
+
+
 def build_request(cand: dict, prompt: str, schema: dict, jpeg: bytes) -> dict:
     """The full generateContent body. Image first, then the instructions (Google's advice for one image)."""
     gen: dict = {
@@ -205,6 +247,8 @@ def build_request(cand: dict, prompt: str, schema: dict, jpeg: bytes) -> dict:
     field = cand.get("schema_field", "responseJsonSchema")
     if field == "responseJsonSchema":
         gen["responseJsonSchema"] = gemini_schema(schema)
+    elif field == "responseSchema":
+        gen["responseSchema"] = openapi_schema(schema)
     elif field == "responseFormat":
         gen["responseFormat"] = {
             "text": {"mimeType": "APPLICATION_JSON", "schema": gemini_schema(schema)}

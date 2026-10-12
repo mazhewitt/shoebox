@@ -662,3 +662,34 @@ def test_preflight_fails_closed_on_missing_frame(env, monkeypatch):
     with pytest.raises(privacy.PrivacyError, match=r"source\(s\): x \("):
         gemini.preflight(CAND, [env.item], env.cfg)
     assert not env.requests
+
+
+def test_openapi_schema_for_response_schema():
+    """`responseSchema` takes the OpenAPI subset: upper-case types, `nullable` for a null type, no
+    `additionalProperties`; enums are typed; `propertyOrdering` keeps the schema's field order."""
+    s = gemini.openapi_schema(SCHEMA)
+    assert "additionalProperties" not in json.dumps(s) and "$id" not in json.dumps(s)
+    assert s["type"] == "OBJECT" and s["propertyOrdering"] == list(SCHEMA["properties"])
+    assert s["required"] == SCHEMA["required"]
+    assert s["properties"]["caption"] == {"type": "STRING", "description": SCHEMA["properties"]["caption"]["description"]}
+    assert s["properties"]["medium"] == {"type": "STRING", "enum": SCHEMA["properties"]["medium"]["enum"]}
+    conf = s["properties"]["confidence"]
+    assert conf["type"] == "OBJECT" and conf["properties"]["medium"] == {"type": "NUMBER", "minimum": 0, "maximum": 1}
+    assert s["properties"]["tags"]["type"] == "ARRAY" and s["properties"]["tags"]["items"]["type"] == "STRING"
+    assert gemini.openapi_schema({"type": ["integer", "null"]}, non_null=()) == {"type": "INTEGER", "nullable": True}
+
+
+def test_response_schema_field_in_the_request():
+    body = gemini.build_request({"schema_field": "responseSchema", "thinking_level": "low", "media_resolution": "medium"}, "p",
+                                SCHEMA, b"\xff\xd8")
+    gen = body["generationConfig"]
+    assert gen["responseMimeType"] == "application/json" and "responseJsonSchema" not in gen
+    assert gen["responseSchema"] == gemini.openapi_schema(SCHEMA)
+
+
+def test_batch_candidate_uses_response_schema():
+    """The Batch API drops `responseJsonSchema` (live smoke 2026-10-12: 20 of 20 outputs ignored the schema's
+    shape); its documented structured-output field is `responseSchema`."""
+    from shoebox import runners
+
+    assert runners.resolve("gemini-batch-v2").cand["schema_field"] == "responseSchema"
