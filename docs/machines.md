@@ -35,6 +35,8 @@ Secrets are in `secrets/shoebox.sops.yaml`, encrypted with SOPS + age and commit
 - `ADUKI_NAS_USERNAME` / `ADUKI_NAS_PASSWORD`: the owner's **DSM admin** account, for DSM admin checks only (share permissions, Hyper Backup scope, Cloud Sync status) via the DSM Web API. **Never use it to mount shares or read photos.** Every pipeline read goes through the `shoebox` user's mounts above, so the read-only guarantee on `ImportantFiles` holds.
   - **One exception (owner, 2026-10-13): Takeout extraction on the NAS.** An SSH session under this account may run `7z` to test and extract Google Takeout zips, reading only `ImportantFiles/Takeout/*.zip` and writing only under `shoebox/originals/takeout/`. Nothing else: no other reads of photos, no writes anywhere else (above all never under `ImportantFiles`, which syncs to Drive), no deletes. The extracted tree is then verified from the Studio through the `shoebox` user's mount (`shoebox takeout verify`), so the manifest and the read-only checks stay in Shoebox's own code.
 
+On macOS, sops looks for the age key in `~/Library/Application Support/sops/age/keys.txt`, not `~/.config`. Each Mac sets `export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"` in `~/.zshrc` (done on the Studio, 2026-10-13); without it decryption fails with "no identity matched".
+
 Use the secrets without reading them: `sops exec-env secrets/shoebox.sops.yaml 'uv run shoebox …'`. Never `sops decrypt` the file to the terminal and never echo a value. Add or change one with `sops set secrets/shoebox.sops.yaml '["KEY"]' '"value"'`. Don't add YAML comments: SOPS encrypts them.
 
 ## Laptop (M5 Max, 128 GB): mounts
