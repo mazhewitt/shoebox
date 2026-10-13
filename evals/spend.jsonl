@@ -3812,3 +3812,4 @@
 {"candidate": "gemini-batch-v2", "n": 17, "price_date": "2026-10-11", "run": "batches/xpahya3vpzue4er75hkwz5a4o7ak3yk9o8t1", "ts": "2026-10-12T10:46:00+00:00", "usd": 0.02311575}
 {"candidate": "gemini-batch-v2", "n": 19, "price_date": "2026-10-11", "run": "batches/9uoc7zuq13qf5mbu27l5r052gt7gz1jazamd", "ts": "2026-10-12T10:46:03+00:00", "usd": 0.02585663}
 {"candidate": "gemini-batch-v2", "n": 22, "price_date": "2026-10-11", "run": "batches/99y99p6n2obq4vbcdobv7klkwduneg1ttqho", "ts": "2026-10-12T10:46:07+00:00", "usd": 0.03048375}
+{"candidate": "opus-api-v2", "n": 5, "price_date": "2026-10-13", "provider": "anthropic", "run": "msgbatch_01W5yVWY9epfM3znh9aBMCgK", "ts": "2026-10-13T17:24:24+00:00", "usd": 0.060166}
