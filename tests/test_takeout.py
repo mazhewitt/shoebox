@@ -1,4 +1,4 @@
-"""`shoebox takeout verify` (add-takeout-landing D1-D5) on synthetic zips."""
+"""`shoebox takeout verify` (add-takeout-landing D1-D8) on synthetic zips."""
 
 import json
 import os
@@ -13,6 +13,7 @@ from shoebox import config, ids, takeout
 
 TS = "20261012T083010Z"
 CLEANUP = f"export {TS} for owner verified on the NAS; safe to delete from Drive"
+COLUMNS = ["zip", "entry", "path", "size", "crc32", "blake3"]
 
 
 @pytest.fixture
@@ -24,9 +25,17 @@ def env(tmp_path):
     return cfg, zips
 
 
+def zname(n: int, ts: str = TS) -> str:
+    return f"takeout-{ts}-{n:03d}.zip"
+
+
+def stem(n: int, ts: str = TS) -> str:
+    return zname(n, ts)[:-4]
+
+
 def make_zip(zips: Path, n: int, entries: dict[str, bytes], ts: str = TS,
              method=zipfile.ZIP_DEFLATED) -> Path:
-    p = zips / f"takeout-{ts}-{n:03d}.zip"
+    p = zips / zname(n, ts)
     with zipfile.ZipFile(p, "w", compression=method) as z:
         z.writestr("Takeout/", b"")  # a directory entry: not a file
         for name, data in entries.items():
@@ -56,6 +65,12 @@ def zip_rows(cfg) -> dict[str, dict]:
     return rows
 
 
+def manifest(cfg) -> list[dict]:
+    t = pq.read_table(mdir(cfg) / "manifest.parquet")
+    assert t.column_names == COLUMNS
+    return t.to_pylist()
+
+
 def snapshot(d: Path) -> dict:
     return {str(p): (p.stat().st_size, p.stat().st_mtime_ns) for p in d.rglob("*")}
 
@@ -72,16 +87,18 @@ def test_good_zip(env, capsys):
     before = snapshot(zips)
     code, out, _ = run(cfg, zips, capsys)
     assert code == 0
-    assert files(tree(cfg)) == ["Takeout/Google Photos/a/IMG_SECRET1.jpg",
-                                "Takeout/Google Photos/a/IMG_SECRET1.jpg.json",
-                                "Takeout/Google Photos/b/IMG_SECRET2.jpg"]
-    assert (tree(cfg) / "Takeout/Google Photos/b/IMG_SECRET2.jpg").read_bytes() == b"two" * 500
+    assert files(tree(cfg)) == [f"{stem(1)}/Takeout/Google Photos/a/IMG_SECRET1.jpg",
+                                f"{stem(1)}/Takeout/Google Photos/a/IMG_SECRET1.jpg.json",
+                                f"{stem(2)}/Takeout/Google Photos/b/IMG_SECRET2.jpg"]
+    assert (tree(cfg) / stem(2) / "Takeout/Google Photos/b/IMG_SECRET2.jpg").read_bytes() == b"two" * 500
     assert {r["status"] for r in zip_rows(cfg).values()} == {"done"}
-    t = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
+    t = manifest(cfg)
     assert len(t) == 3
     row = next(r for r in t if r["path"].endswith("IMG_SECRET2.jpg"))
+    assert row["entry"] == "Takeout/Google Photos/b/IMG_SECRET2.jpg"
+    assert row["path"] == f"{stem(2)}/Takeout/Google Photos/b/IMG_SECRET2.jpg"
     p = tree(cfg) / row["path"]
-    assert row["blake3"] == ids.asset_id(p) and row["size"] == 1500 and row["zip"].endswith("-002.zip")
+    assert row["blake3"] == ids.asset_id(p) and row["size"] == 1500 and row["zip"] == zname(2)
     assert not os.access(p, os.W_OK)  # chmod a-w
     assert CLEANUP in out
     assert "SECRET" not in out  # counts only
@@ -102,19 +119,19 @@ def test_corrupt_entry_crc(env, capsys):
     assert code != 0
     rows = zip_rows(cfg)
     assert rows[bad.name]["status"] == "failed"
-    assert rows[f"takeout-{TS}-002.zip"]["status"] == "done"
-    assert files(tree(cfg)) == ["Takeout/y/c.jpg"]  # no partial file of the bad zip (a.jpg was fine, still gone)
+    assert rows[zname(2)]["status"] == "done"
+    assert files(tree(cfg)) == [f"{stem(2)}/Takeout/y/c.jpg"]  # no partial file of the bad zip
     assert CLEANUP not in out
 
 
 def test_unopenable_zip(env, capsys):
     cfg, zips = env
-    (zips / f"takeout-{TS}-001.zip").write_bytes(b"not a zip at all")
+    (zips / zname(1)).write_bytes(b"not a zip at all")
     make_zip(zips, 2, {"Takeout/y/c.jpg": b"C"})
     code, out, _ = run(cfg, zips, capsys)
     assert code != 0
-    assert zip_rows(cfg)[f"takeout-{TS}-001.zip"]["status"] == "failed"
-    assert files(tree(cfg)) == ["Takeout/y/c.jpg"]
+    assert zip_rows(cfg)[zname(1)]["status"] == "failed"
+    assert files(tree(cfg)) == [f"{stem(2)}/Takeout/y/c.jpg"]
     assert CLEANUP not in out
 
 
@@ -135,8 +152,8 @@ def test_resume_after_interrupt(env, capsys, monkeypatch):
     monkeypatch.setattr(takeout, "_copy_entry", flaky)
     code, out, _ = run(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out
-    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "failed"
-    assert "Takeout/b/2.jpg" not in files(tree(cfg))
+    assert zip_rows(cfg)[zname(2)]["status"] == "failed"
+    assert f"{stem(2)}/Takeout/b/2.jpg" not in files(tree(cfg))
 
     opened = []
     real_extract = takeout._extract_zip
@@ -148,43 +165,75 @@ def test_resume_after_interrupt(env, capsys, monkeypatch):
     monkeypatch.setattr(takeout, "_extract_zip", spy)
     code, out, _ = run(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    assert opened == [f"takeout-{TS}-002.zip"]
-    t = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
-    assert sorted(r["path"] for r in t) == ["Takeout/a/1.jpg", "Takeout/b/2.jpg", "Takeout/b/3.jpg",
-                                            "Takeout/c/4.jpg"]
+    assert opened == [zname(2)]
+    assert sorted(r["path"] for r in manifest(cfg)) == [
+        f"{stem(1)}/Takeout/a/1.jpg", f"{stem(2)}/Takeout/b/2.jpg", f"{stem(2)}/Takeout/b/3.jpg",
+        f"{stem(3)}/Takeout/c/4.jpg"]
 
 
 def test_resume_redoes_done_zip_with_missing_file(env, capsys):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100})
     assert run(cfg, zips, capsys)[0] == 0
-    (tree(cfg) / "Takeout/a/1.jpg").unlink()
+    (tree(cfg) / stem(1) / "Takeout/a/1.jpg").unlink()
     code, out, _ = run(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    assert files(tree(cfg)) == ["Takeout/a/1.jpg"]
+    assert files(tree(cfg)) == [f"{stem(1)}/Takeout/a/1.jpg"]
 
 
-def test_duplicate_identical_recorded_once(env, capsys):
+def test_same_entry_in_two_zips_both_kept(env, capsys):
+    """Takeout numbers duplicate names per zip: the same entry path in two zips is two different photos (D3)."""
     cfg, zips = env
-    make_zip(zips, 1, {"Takeout/archive_browser.html": b"same"})
-    make_zip(zips, 2, {"Takeout/archive_browser.html": b"same", "Takeout/x.jpg": b"x"})
+    make_zip(zips, 1, {"Takeout/Photos from 2019/2023-07-30(23).jpg": b"first"})
+    make_zip(zips, 2, {"Takeout/Photos from 2019/2023-07-30(23).jpg": b"second!"})
     code, out, _ = run(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    t = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
-    dup = [r for r in t if r["path"] == "Takeout/archive_browser.html"]
-    assert len(dup) == 1 and dup[0]["zip"] == f"takeout-{TS}-001.zip,takeout-{TS}-002.zip"
-    assert len(t) == 2
+    assert (tree(cfg) / stem(1) / "Takeout/Photos from 2019/2023-07-30(23).jpg").read_bytes() == b"first"
+    assert (tree(cfg) / stem(2) / "Takeout/Photos from 2019/2023-07-30(23).jpg").read_bytes() == b"second!"
+    rows = manifest(cfg)
+    assert sorted((r["zip"], r["size"]) for r in rows) == [(zname(1), 5), (zname(2), 7)]
+    assert {r["entry"] for r in rows} == {"Takeout/Photos from 2019/2023-07-30(23).jpg"}
 
 
-def test_duplicate_different_bytes_is_error(env, capsys):
+def test_trailing_space_album_stored_smb_safe(env, capsys):
     cfg, zips = env
-    make_zip(zips, 1, {"Takeout/archive_browser.html": b"first"})
-    make_zip(zips, 2, {"Takeout/archive_browser.html": b"second", "Takeout/x.jpg": b"x"})
+    make_zip(zips, 1, {"Takeout/Google Photos/Europa park /x.jpg": b"x" * 10,
+                       "Takeout/Google Photos/Trip./y.jpg": b"y"})
+    code, out, _ = run(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    assert files(tree(cfg)) == [f"{stem(1)}/Takeout/Google Photos/Europa park/x.jpg",
+                                f"{stem(1)}/Takeout/Google Photos/Trip/y.jpg"]
+    row = next(r for r in manifest(cfg) if r["path"].endswith("x.jpg"))
+    assert row["entry"] == "Takeout/Google Photos/Europa park /x.jpg"
+    assert row["path"] == f"{stem(1)}/Takeout/Google Photos/Europa park/x.jpg"
+
+
+def test_trailing_space_twin_in_one_zip_is_conflict(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/Album /x.jpg": b"1", "Takeout/Album/x.jpg": b"2"})
+    make_zip(zips, 2, {"Takeout/ok.jpg": b"ok"})
     code, out, _ = run(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out
-    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "failed"
-    assert (tree(cfg) / "Takeout/archive_browser.html").read_bytes() == b"first"
-    assert files(tree(cfg)) == ["Takeout/archive_browser.html"]
+    assert zip_rows(cfg)[zname(1)]["status"] == "failed"
+    assert files(tree(cfg)) == [f"{stem(2)}/Takeout/ok.jpg"]
+
+
+def test_case_only_twin_in_one_zip_is_conflict(env, capsys):
+    """The NAS share is case-insensitive: IMG.JPG and img.jpg in one zip folder would be one file."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG.JPG": b"1" * 10, "Takeout/img.jpg": b"2" * 20})
+    code, out, _ = run(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    assert zip_rows(cfg)[zname(1)]["status"] == "failed"
+
+
+def test_case_only_across_zips_both_kept(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG.JPG": b"1" * 10})
+    make_zip(zips, 2, {"Takeout/img.jpg": b"2" * 20})
+    code, out, _ = run(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    assert len(manifest(cfg)) == 2
 
 
 @pytest.mark.parametrize("damage", ["delete", "resize"])
@@ -192,7 +241,7 @@ def test_reconcile_catches_missing_or_resized(env, capsys, damage):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100, "Takeout/a/2.jpg": b"2" * 100})
     assert run(cfg, zips, capsys)[0] == 0
-    p = tree(cfg) / "Takeout/a/1.jpg"
+    p = tree(cfg) / stem(1) / "Takeout/a/1.jpg"
     os.chmod(p, 0o644)
     if damage == "delete":
         p.unlink()
@@ -200,8 +249,17 @@ def test_reconcile_catches_missing_or_resized(env, capsys, damage):
         p.write_bytes(b"short")
     problems = takeout.reconcile(mdir(cfg), tree(cfg))
     assert problems and all("1.jpg" not in m for m in problems)  # counts/kinds, no names
-    (tree(cfg) / "Takeout/a/extra.jpg").write_bytes(b"e")
+    (tree(cfg) / stem(1) / "Takeout/a/extra.jpg").write_bytes(b"e")
     assert any("not in the manifest" in m for m in takeout.reconcile(mdir(cfg), tree(cfg)))
+
+
+def test_reconcile_unexpected_top_level_folder(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/a/1.jpg": b"1"})
+    assert run(cfg, zips, capsys)[0] == 0
+    (tree(cfg) / "Takeout").mkdir()  # e.g. a leftover merged extract
+    code, out, _ = run(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out and "unexpected top-level" in out
 
 
 @pytest.mark.parametrize("damage", ["delete", "resize"])
@@ -210,12 +268,13 @@ def test_verify_reports_reconcile_mismatch(env, capsys, monkeypatch, damage):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100})
     assert run(cfg, zips, capsys)[0] == 0
-    p = tree(cfg) / "Takeout/a/1.jpg"
+    p = tree(cfg) / stem(1) / "Takeout/a/1.jpg"
     os.chmod(p, 0o644)
     p.unlink() if damage == "delete" else p.write_bytes(b"short")
     monkeypatch.setattr(takeout, "_intact", lambda tree, rows: True)
     code, out, _ = run(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out and "reconcile mismatch" in out and "1.jpg" not in out
+
 
 def test_dest_under_source_root_refused(env, capsys, tmp_path):
     cfg, zips = env
@@ -235,11 +294,11 @@ def test_separate_exports_and_filter(env, capsys):
     code, out, _ = run(cfg, zips, capsys, export="20261012T083009Z")
     assert code == 0
     root = cfg.shoebox_root / "originals" / "takeout" / "owner"
-    assert files(root / "20261012T083009Z") == ["Takeout/archive_browser.html"]
+    assert files(root / "20261012T083009Z") == [f"{stem(1, '20261012T083009Z')}/Takeout/archive_browser.html"]
     assert not (root / TS).exists()
     code, out, _ = run(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    assert files(root / TS) == ["Takeout/a.jpg"]
+    assert files(root / TS) == [f"{stem(1)}/Takeout/a.jpg"]
 
 
 def test_cli_registered(env, monkeypatch):
@@ -255,8 +314,8 @@ def test_failed_redo_removes_files_from_earlier_run(env, capsys, monkeypatch):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/x": b"x", "Takeout/y": b"y", "Takeout/z": b"z"})
     assert run(cfg, zips, capsys)[0] == 0
-    os.chmod(tree(cfg) / "Takeout/x", 0o644)
-    (tree(cfg) / "Takeout/x").unlink()
+    os.chmod(tree(cfg) / stem(1) / "Takeout/x", 0o644)
+    (tree(cfg) / stem(1) / "Takeout/x").unlink()
     real = takeout._copy_entry
 
     def flaky(zf, info, tmp):
@@ -267,42 +326,22 @@ def test_failed_redo_removes_files_from_earlier_run(env, capsys, monkeypatch):
     monkeypatch.setattr(takeout, "_copy_entry", flaky)
     code, out, _ = run(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out
-    assert zip_rows(cfg)[f"takeout-{TS}-001.zip"]["status"] == "failed"
+    assert zip_rows(cfg)[zname(1)]["status"] == "failed"
     assert files(tree(cfg)) == []
 
 
-def test_failed_zip_keeps_files_owned_by_another_done_zip(env, capsys):
+def test_failed_zip_leaves_other_zips_alone(env, capsys):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/archive_browser.html": b"same"})
     make_zip(zips, 2, {"Takeout/archive_browser.html": b"same", "Takeout/q.jpg": b"q" * 10},
              method=zipfile.ZIP_STORED)
-    p = zips / f"takeout-{TS}-002.zip"
+    p = zips / zname(2)
     data = bytearray(p.read_bytes())
     data[data.index(b"q" * 10) + 3] ^= 0xFF
     p.write_bytes(bytes(data))
     code, _, _ = run(cfg, zips, capsys)
     assert code != 0
-    assert files(tree(cfg)) == ["Takeout/archive_browser.html"]
-
-
-def test_case_only_duplicate_is_a_duplicate(env, capsys):
-    """The NAS share is case-insensitive: IMG.JPG and img.jpg are one file on disk."""
-    cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG.JPG": b"1" * 10})
-    make_zip(zips, 2, {"Takeout/img.jpg": b"2" * 20})
-    code, out, _ = run(cfg, zips, capsys)
-    assert code != 0 and CLEANUP not in out
-    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "failed"
-    assert (tree(cfg) / "Takeout/IMG.JPG").read_bytes() == b"1" * 10
-
-
-def test_case_only_duplicate_identical_recorded_once(env, capsys):
-    cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG.JPG": b"same"})
-    make_zip(zips, 2, {"Takeout/img.jpg": b"same"})
-    code, out, _ = run(cfg, zips, capsys)
-    assert code == 0 and CLEANUP in out
-    assert len(pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()) == 1
+    assert files(tree(cfg)) == [f"{stem(1)}/Takeout/archive_browser.html"]
 
 
 def test_reconcile_counts_zip_entries_independently(env, capsys):
@@ -310,7 +349,7 @@ def test_reconcile_counts_zip_entries_independently(env, capsys):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100, "Takeout/a/2.jpg": b"2" * 100})
     assert run(cfg, zips, capsys)[0] == 0
-    part = mdir(cfg) / "parts" / f"takeout-{TS}-001.zip.jsonl"
+    part = mdir(cfg) / "parts" / f"{zname(1)}.jsonl"
     lines = part.read_text().splitlines()
     gone = json.loads(lines[-1])["path"]
     part.write_text(lines[0] + "\n")
@@ -321,24 +360,28 @@ def test_reconcile_counts_zip_entries_independently(env, capsys):
     assert "zip file entries 2 != manifest rows 1" in out
 
 
-# --- verify-only mode (--extracted, design D7): the tree was extracted on the NAS by 7-Zip ------------------
+# --- verify-only mode (--extracted, design D7/D8): the tree was extracted on the NAS by 7-Zip ---------------
 
 
 def nas_extract(zips: Path, cfg, nfd: bool = False) -> None:
-    """Simulate `7z x -y -aos`: extract every zip of the export into the tree, first writer wins."""
+    """Simulate ~/mnt/shoebox/logs/takeout-perzip.sh: `7z x -y -aoa` of each zip into <export>/<zip stem>, then
+    strip trailing spaces/dots from names, deepest first, skipping a rename whose target exists."""
     t = tree(cfg)
     t.mkdir(parents=True, exist_ok=True)
     for zp in sorted(zips.glob(f"takeout-{TS}-*.zip")):
+        d = t / zp.name[:-4]
         with zipfile.ZipFile(zp) as zf:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
                 name = unicodedata.normalize("NFD", info.filename) if nfd else info.filename
-                dest = t / name
-                if dest.exists():
-                    continue
+                dest = d / name
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(zf.read(info))
+    for p in sorted(t.rglob("*"), key=lambda p: -len(p.parts)):
+        n = p.name.rstrip(" .")
+        if n != p.name and n and not (p.parent / n).exists():
+            p.rename(p.parent / n)
 
 
 def run_x(cfg, zips, capsys, **kw):
@@ -361,13 +404,13 @@ def test_x_all_good(env, capsys):
     code, out, _ = run_x(cfg, zips, capsys, workers=3)
     assert code == 0 and CLEANUP in out
     assert {r["status"] for r in zip_rows(cfg).values()} == {"verified"}
-    t = pq.read_table(mdir(cfg) / "manifest.parquet")
-    assert t.column_names == ["zip", "path", "size", "crc32", "blake3"]
-    rows = t.to_pylist()
+    rows = manifest(cfg)
     assert len(rows) == 3
     row = next(r for r in rows if r["path"].endswith("IMG_SECRET2.jpg"))
+    assert row["path"] == f"{stem(2)}/Takeout/Google Photos/b/IMG_SECRET2.jpg"
+    assert row["entry"] == "Takeout/Google Photos/b/IMG_SECRET2.jpg"
     p = tree(cfg) / row["path"]
-    assert row["blake3"] == ids.asset_id(p) and row["size"] == 1500 and row["zip"].endswith("-002.zip")
+    assert row["blake3"] == ids.asset_id(p) and row["size"] == 1500 and row["zip"] == zname(2)
     assert not os.access(p, os.W_OK)
     assert "SECRET" not in out
     assert snapshot(zips) == before
@@ -379,7 +422,7 @@ def test_x_damaged_file_fails_its_zip(env, capsys, damage, field):
     cfg, zips = env
     two_zips(zips)
     nas_extract(zips, cfg)
-    p = tree(cfg) / "Takeout/Google Photos/b/IMG_SECRET2.jpg"
+    p = tree(cfg) / stem(2) / "Takeout/Google Photos/b/IMG_SECRET2.jpg"
     if damage == "delete":
         p.unlink()
     elif damage == "resize":
@@ -391,32 +434,93 @@ def test_x_damaged_file_fails_its_zip(env, capsys, damage, field):
     code, out, _ = run_x(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out and "SECRET" not in out
     rows = zip_rows(cfg)
-    assert rows[f"takeout-{TS}-001.zip"]["status"] == "verified"
-    bad = rows[f"takeout-{TS}-002.zip"]
+    assert rows[zname(1)]["status"] == "verified"
+    bad = rows[zname(2)]
     assert bad["status"] == "failed" and bad[field] == 1
     assert sum(bad[k] for k in ("missing", "size_mismatch", "crc_mismatch")) == 1
+
+
+def test_x_file_in_another_zips_folder_is_missing(env, capsys):
+    """Per-zip layout: a file present only under another zip's folder does not satisfy this zip's entry."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/a.jpg": b"a"})
+    make_zip(zips, 2, {"Takeout/a.jpg": b"a"})
+    nas_extract(zips, cfg)
+    (tree(cfg) / stem(2) / "Takeout/a.jpg").unlink()
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out and zip_rows(cfg)[zname(2)]["missing"] == 1
 
 
 def test_x_extra_file_is_reconcile_error(env, capsys):
     cfg, zips = env
     two_zips(zips)
     nas_extract(zips, cfg)
-    (tree(cfg) / "Takeout/stray_SECRET.jpg").write_bytes(b"x")
+    (tree(cfg) / stem(1) / "Takeout/stray_SECRET.jpg").write_bytes(b"x")
     code, out, _ = run_x(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out and "reconcile mismatch" in out and "SECRET" not in out
+
+
+@pytest.mark.parametrize("item", ["dir", "file"])
+def test_x_unexpected_top_level_is_reconcile_error(env, capsys, item):
+    cfg, zips = env
+    two_zips(zips)
+    nas_extract(zips, cfg)
+    if item == "dir":
+        (tree(cfg) / "Takeout").mkdir()  # an empty leftover of a merged extract
+    else:
+        (tree(cfg) / "notes.txt").write_bytes(b"n")
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out and "unexpected top-level" in out
 
 
 def test_x_synology_metadata_ignored(env, capsys):
     cfg, zips = env
     two_zips(zips)
     nas_extract(zips, cfg)
-    ea = tree(cfg) / "Takeout/Google Photos/a/@eaDir/IMG_SECRET1.jpg@SynoEAStream"
+    ea = tree(cfg) / stem(1) / "Takeout/Google Photos/a/@eaDir/IMG_SECRET1.jpg@SynoEAStream"
     ea.parent.mkdir()
     ea.write_bytes(b"meta")
-    (tree(cfg) / "Takeout/.DS_Store").write_bytes(b"ds")
+    (tree(cfg) / stem(1) / "Takeout/.DS_Store").write_bytes(b"ds")
+    (tree(cfg) / "@eaDir").mkdir()
+    (tree(cfg) / ".DS_Store").write_bytes(b"ds")
     code, out, _ = run_x(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    assert "2 ignored" in out
+    assert "3 ignored" in out
+
+
+def test_x_same_entry_in_two_zips_different_bytes(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/Photos from 2019/2023-07-30(23).jpg": b"first",
+                       "Takeout/Photos from 2019/2023-07-30(23).jpg.supplemental-metadata(23).json": b"{1}"})
+    make_zip(zips, 2, {"Takeout/Photos from 2019/2023-07-30(23).jpg": b"second!",
+                       "Takeout/Photos from 2019/2023-07-30(23).jpg.supplemental-metadata(23).json": b"{2}"})
+    nas_extract(zips, cfg)
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    rows = manifest(cfg)
+    assert len(rows) == 4 and {r["zip"] for r in rows} == {zname(1), zname(2)}
+    assert {r["size"] for r in rows if r["path"].endswith(".jpg")} == {5, 7}
+
+
+def test_x_trailing_space_album(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/Google Photos/Europa park /x.jpg": b"x" * 10})
+    nas_extract(zips, cfg)
+    assert files(tree(cfg)) == [f"{stem(1)}/Takeout/Google Photos/Europa park/x.jpg"]
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    (row,) = manifest(cfg)
+    assert row["entry"] == "Takeout/Google Photos/Europa park /x.jpg"
+    assert row["path"] == f"{stem(1)}/Takeout/Google Photos/Europa park/x.jpg"
+
+
+def test_x_trailing_space_twin_in_one_zip_is_conflict(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/Album /x.jpg": b"1", "Takeout/Album/x.jpg": b"2"})
+    nas_extract(zips, cfg)  # the rename of "Album " is skipped: "Album" exists
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    assert zip_rows(cfg)[zname(1)]["conflicts"] == 1
 
 
 def test_x_nfd_name_on_disk_matches_nfc_entry(env, capsys):
@@ -426,50 +530,35 @@ def test_x_nfd_name_on_disk_matches_nfc_entry(env, capsys):
     nas_extract(zips, cfg, nfd=True)
     code, out, _ = run_x(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
-    assert len(pq.read_table(mdir(cfg) / "manifest.parquet")) == 1
+    assert len(manifest(cfg)) == 1
 
 
 def test_x_nfd_entry_name_matches_nfc_on_disk(env, capsys):
     cfg, zips = env
     make_zip(zips, 1, {unicodedata.normalize("NFD", "Takeout/Café.jpg"): b"c" * 50})
-    t = tree(cfg) / "Takeout"
+    t = tree(cfg) / stem(1) / "Takeout"
     t.mkdir(parents=True)
     (t / unicodedata.normalize("NFC", "Café.jpg")).write_bytes(b"c" * 50)
     code, out, _ = run_x(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
 
 
-def test_x_case_and_nfc_collision_identical_is_one_row(env, capsys):
+def test_x_case_and_nfc_twin_in_one_zip_is_conflict(env, capsys):
     cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG_É.JPG": b"same"})
-    make_zip(zips, 2, {unicodedata.normalize("NFD", "Takeout/img_é.jpg"): b"same", "Takeout/x": b"x"})
-    nas_extract(zips, cfg)
-    code, out, _ = run_x(cfg, zips, capsys)
-    assert code == 0 and CLEANUP in out
-    rows = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
-    assert len(rows) == 2
-    dup = next(r for r in rows if r["path"] != "Takeout/x")
-    assert dup["zip"] == f"takeout-{TS}-001.zip,takeout-{TS}-002.zip"
-
-
-def test_x_case_collision_different_is_error(env, capsys):
-    cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG.JPG": b"1" * 10})
-    make_zip(zips, 2, {"Takeout/img.jpg": b"2" * 20})
+    make_zip(zips, 1, {"Takeout/IMG_É.JPG": b"same", unicodedata.normalize("NFD", "Takeout/img_é.jpg"): b"same"})
+    make_zip(zips, 2, {"Takeout/x": b"x"})
     nas_extract(zips, cfg)
     code, out, _ = run_x(cfg, zips, capsys)
     assert code != 0 and CLEANUP not in out
     rows = zip_rows(cfg)
-    assert rows[f"takeout-{TS}-001.zip"]["status"] == "verified"
-    assert rows[f"takeout-{TS}-002.zip"]["status"] == "failed"
-    assert rows[f"takeout-{TS}-002.zip"]["conflicts"] == 1
+    assert rows[zname(1)]["conflicts"] == 1 and rows[zname(2)]["status"] == "verified"
 
 
 def test_x_resume_skips_verified_zips(env, capsys, monkeypatch):
     cfg, zips = env
     two_zips(zips)
     nas_extract(zips, cfg)
-    p = tree(cfg) / "Takeout/Google Photos/b/IMG_SECRET2.jpg"
+    p = tree(cfg) / stem(2) / "Takeout/Google Photos/b/IMG_SECRET2.jpg"
     good = p.read_bytes()
     p.unlink()
     assert run_x(cfg, zips, capsys)[0] != 0
@@ -485,7 +574,7 @@ def test_x_resume_skips_verified_zips(env, capsys, monkeypatch):
     code, out, _ = run_x(cfg, zips, capsys)
     assert code == 0 and CLEANUP in out
     assert hashed == ["IMG_SECRET2.jpg"]
-    assert len(pq.read_table(mdir(cfg) / "manifest.parquet")) == 3
+    assert len(manifest(cfg)) == 3
 
 
 def test_x_refuses_missing_tree(env, capsys):
@@ -515,29 +604,8 @@ def test_x_cli(env):
     assert args.extracted and args.workers == 4
 
 
-def test_x_resume_skip_still_checks_collisions(env, capsys):
-    """A verified zip skipped on resume must not merge into a key another zip now owns with other content."""
-    cfg, zips = env
-    make_zip(zips, 2, {"Takeout/X.jpg": b"BBBB"})
-    nas_extract(zips, cfg)
-    (zips / f"takeout-{TS}-001.zip").write_bytes(b"not a zip yet")
-    assert run_x(cfg, zips, capsys)[0] != 0  # 001 unreadable; 002 verified
-    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "verified"
-    (zips / f"takeout-{TS}-001.zip").unlink()
-    make_zip(zips, 1, {"Takeout/X.jpg": b"AAAA"})
-    p = tree(cfg) / "Takeout/X.jpg"
-    p.chmod(0o644)
-    p.write_bytes(b"AAAA")  # 7z -aoa overwrote it
-    code, out, _ = run_x(cfg, zips, capsys)
-    assert code != 0 and CLEANUP not in out
-    rows = zip_rows(cfg)
-    assert rows[f"takeout-{TS}-001.zip"]["status"] == "verified"
-    assert rows[f"takeout-{TS}-002.zip"]["status"] == "failed"
-    assert rows[f"takeout-{TS}-002.zip"]["conflicts"] == 1
-
-
 def _case_sensitive_walk(monkeypatch, alias_of: dict[str, str]):
-    """Simulate the NAS's case-sensitive btrfs, where `7z x -aos` writes both IMG_E.JPG and img_e.jpg: the walk
+    """Simulate the NAS's case-sensitive btrfs, where a second spelling can exist next to the first: the walk
     also reports each alias name (on this case-insensitive host the alias opens the same bytes)."""
     real = os.walk
 
@@ -548,25 +616,13 @@ def _case_sensitive_walk(monkeypatch, alias_of: dict[str, str]):
     monkeypatch.setattr(takeout.os, "walk", walk)
 
 
-def test_x_case_collision_identical_both_on_disk_passes(env, capsys, monkeypatch):
-    cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
-    make_zip(zips, 2, {"Takeout/img_e.jpg": b"same"})
-    nas_extract(zips, cfg)
-    _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
-    code, out, _ = run_x(cfg, zips, capsys)
-    assert code == 0 and CLEANUP in out, out
-    rows = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
-    assert len(rows) == 1 and rows[0]["zip"] == f"takeout-{TS}-001.zip,takeout-{TS}-002.zip"
-
-
 def test_x_case_alias_not_named_by_any_entry_is_extra(env, capsys, monkeypatch):
     cfg, zips = env
     make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
     nas_extract(zips, cfg)
     _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
     code, out, _ = run_x(cfg, zips, capsys)
-    assert code != 0 and CLEANUP not in out and "not claimed" in out
+    assert code != 0 and CLEANUP not in out and "not in the manifest" in out
 
 
 @pytest.mark.parametrize("argv,expect", [
@@ -600,14 +656,38 @@ def test_x_cli_extracted_needs_export(env, monkeypatch, capsys):
     assert args.func(args) == 2 and "--extracted needs --export TS" in capsys.readouterr().err
 
 
-def test_x_case_alias_with_other_bytes_is_reconcile_error(env, capsys, monkeypatch):
+def test_resume_redoes_zip_with_merged_layout_part(env, capsys, monkeypatch):
+    """A part file from the merged layout (no `entry` column) is not trusted at resume: the zip is redone."""
     cfg, zips = env
-    make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
-    make_zip(zips, 2, {"Takeout/img_e.jpg": b"same"})
-    nas_extract(zips, cfg)
-    _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
-    real = takeout._hash_file
-    monkeypatch.setattr(takeout, "_hash_file",  # the alias's bytes differ on the NAS (same size)
-                        lambda p: (0, "0" * 64) if p.name == "img_e.jpg" else real(p))
-    code, out, _ = run_x(cfg, zips, capsys)
-    assert code != 0 and CLEANUP not in out and "not claimed" in out
+    make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100})
+    assert run(cfg, zips, capsys)[0] == 0
+    part = takeout._part_path(mdir(cfg), zname(1))
+    old = [json.loads(line) for line in part.read_text().splitlines()]
+    part.write_text("".join(json.dumps({k: v for k, v in r.items() if k != "entry"}) + "\n" for r in old))
+    opened = []
+    real_extract = takeout._extract_zip
+
+    def spy(zip_path, *a, **k):
+        opened.append(zip_path.name)
+        return real_extract(zip_path, *a, **k)
+
+    monkeypatch.setattr(takeout, "_extract_zip", spy)
+    code, out, _ = run(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    assert opened == [zname(1)]
+    assert [r["entry"] for r in manifest(cfg)] == ["Takeout/a/1.jpg"]
+
+
+def test_reconcile_matches_nfd_listing(env, capsys, monkeypatch):
+    """D7: the SMB mount may list NFD names for NFC zip entries; reconcile must still match them."""
+    cfg, zips = env
+    make_zip(zips, 1, {unicodedata.normalize("NFC", "Takeout/Café.jpg"): b"c" * 10})
+    assert run(cfg, zips, capsys)[0] == 0
+    real_walk = os.walk
+
+    def nfd_walk(top, *a, **k):
+        for d, dirs, names in real_walk(top, *a, **k):
+            yield d, dirs, [unicodedata.normalize("NFD", n) for n in names]
+
+    monkeypatch.setattr(takeout.os, "walk", nfd_walk)
+    assert takeout.reconcile(mdir(cfg), tree(cfg)) == []

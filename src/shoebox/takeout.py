@@ -1,7 +1,8 @@
-"""Google Takeout landing (add-takeout-landing D1-D5): test, extract and hash the zips in one read-only pass.
+"""Google Takeout landing (add-takeout-landing D1-D8): test, extract and hash the zips in one read-only pass.
 
 The zips are read where they landed (a source root); everything is written under
-`<shoebox_root>/originals/takeout/<account>/`: `<export>/` holds the merged tree and `<export>.manifest/` holds
+`<shoebox_root>/originals/takeout/<account>/`: `<export>/<zip stem>/` holds each zip's own tree (D3; zips are not
+merged, the same entry path in two zips is two files) with SMB-safe names (D8), and `<export>.manifest/` holds
 `zips.jsonl` (per-zip status, latest row wins), `parts/<zip>.jsonl` (that zip's entries, kept so a resume
 loses no rows), `tmp/` (in-flight entries) and `manifest.parquet` (one row per file).
 Nothing printed to stdout names an entry.
@@ -18,7 +19,7 @@ import unicodedata
 import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -30,21 +31,24 @@ from shoebox.config import Config, check_write_location
 
 _CHUNK = 1024 * 1024
 _ZIP_NAME = re.compile(r"^takeout-(\d{8}T\d{6}Z)-.*\.zip$")
-_SCHEMA = pa.schema([("zip", pa.string()), ("path", pa.string()), ("size", pa.int64()),
+_SCHEMA = pa.schema([("zip", pa.string()), ("entry", pa.string()), ("path", pa.string()), ("size", pa.int64()),
                      ("crc32", pa.int64()), ("blake3", pa.string())])
+_IGNORED_DIRS = {"@eaDir", "@SynoEAStream", "@SynoResource", "#recycle"}
+_IGNORED_FILES = {".DS_Store"}
 
 
 class ZipFailed(Exception):
-    """The zip cannot be fully extracted (unreadable, CRC, unsafe entry, conflicting duplicate)."""
+    """The zip cannot be fully extracted (unreadable, CRC, unsafe entry, conflicting names)."""
 
 
 @dataclass
 class Entry:
-    path: str
+    zip: str
+    entry: str  # the zip's own entry name
+    path: str  # the name on disk, relative to the export folder: <zip stem>/<SMB-safe entry path>
     size: int
     crc32: int
     blake3: str
-    zips: list[str] = field(default_factory=list)
 
 
 def export_of(zip_name: str) -> str | None:
@@ -54,6 +58,10 @@ def export_of(zip_name: str) -> str | None:
 
 def default_dest(cfg: Config, account: str) -> Path:
     return cfg.shoebox_root / "originals" / "takeout" / account
+
+
+def zip_stem(zip_name: str) -> str:
+    return zip_name.removesuffix(".zip")
 
 
 def _copy_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo, tmp: Path) -> str:
@@ -68,10 +76,25 @@ def _copy_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo, tmp: Path) -> str:
 
 
 def _safe_relpath(name: str) -> str:
+    """D8: the entry's path as stored on disk, each component `c.rstrip(" .")` (SMB cannot show a name ending
+    in a space or a dot). Refuses absolute paths, `..` and components that strip to nothing."""
     p = PurePosixPath(name)
     if p.is_absolute() or ".." in p.parts or "\\" in name or not p.parts:
         raise ZipFailed("unsafe entry path")
-    return str(p)
+    parts = [c.rstrip(" .") for c in p.parts]
+    if not all(parts):
+        raise ZipFailed("unsafe entry path")
+    return "/".join(parts)
+
+
+def _disk_rel(zip_name: str, entry: str) -> str:
+    return f"{zip_stem(zip_name)}/{_safe_relpath(entry)}"
+
+
+def _nkey(rel: str) -> str:
+    """Name-matching key: zip entry names and names on the SMB mount may differ in Unicode normalisation (NFC
+    vs NFD), and the share is case-insensitive, so two names with one key are one file there."""
+    return unicodedata.normalize("NFC", rel).casefold()
 
 
 def _read_only(path: Path) -> None:
@@ -82,18 +105,14 @@ def _read_only(path: Path) -> None:
         pass  # best effort over SMB (D4)
 
 
-def _remove(path: Path) -> None:
-    try:
-        os.chmod(path, 0o644)
-    except OSError:
-        pass
-    path.unlink(missing_ok=True)
+def _remove_tree(path: Path) -> None:
+    """Remove a zip's own folder (read-only files included)."""
+    def retry(func, p, _exc):
+        os.chmod(p, 0o755 if os.path.isdir(p) else 0o644)
+        func(p)
 
-
-def _key(rel: str) -> str:
-    """Duplicate key: the destination (SMB share, APFS) is case-insensitive, so paths differing only in case
-    are the same file."""
-    return rel.casefold()
+    if path.exists():
+        shutil.rmtree(path, onexc=retry)
 
 
 def _zip_file_paths(zip_path: Path) -> list[str]:
@@ -102,13 +121,11 @@ def _zip_file_paths(zip_path: Path) -> list[str]:
         return [i.filename for i in zf.infolist() if not i.is_dir()]
 
 
-def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, known: dict[str, Entry],
-                 progress=None, previous: list[str] = ()) -> tuple[list[Entry], int]:
-    """Extract every file entry of one zip. Returns its entries and the bytes read. On any failure removes
-    every file of this zip from the tree (this run's, an earlier run's in `previous`, and any infolist path)
-    unless another done zip in `known` owns it, then raises ZipFailed."""
-    written: list[Path] = []
+def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, progress=None) -> tuple[list[Entry], int]:
+    """Extract every file entry of one zip into `<tree>/<zip stem>/`. Returns its entries and the bytes read.
+    On any failure removes the zip's folder (this run's files and any earlier run's), then raises ZipFailed."""
     rows: list[Entry] = []
+    seen: set[str] = set()
     nbytes = 0
     tmp = tmp_dir / f"{zip_path.name}.entry"
     try:
@@ -117,44 +134,25 @@ def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, known: dict[str, Ent
                 for info in zf.infolist():
                     if info.is_dir():
                         continue
-                    rel = _safe_relpath(info.filename)
+                    rel = _disk_rel(zip_path.name, info.filename)
+                    if _nkey(rel) in seen:
+                        raise ZipFailed("two entries of the zip map to one name on disk")
+                    seen.add(_nkey(rel))
                     digest = _copy_entry(zf, info, tmp)
                     nbytes += info.file_size
                     if progress:
                         progress(nbytes)
-                    prior = known.get(_key(rel))
-                    if prior is not None and prior.zips and zip_path.name not in prior.zips:
-                        if prior.blake3 != digest or prior.size != info.file_size:
-                            raise ZipFailed("duplicate entry path with different bytes")
-                        tmp.unlink()
-                        rows.append(Entry(rel, info.file_size, info.CRC, digest, [zip_path.name]))
-                        continue
                     dest = tree / rel
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(tmp, dest)
-                    written.append(dest)
                     _read_only(dest)
-                    rows.append(Entry(rel, info.file_size, info.CRC, digest, [zip_path.name]))
+                    rows.append(Entry(zip_path.name, info.filename, rel, info.file_size, info.CRC, digest))
         except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, EOFError, RuntimeError,
                 NotImplementedError) as e:
             raise ZipFailed(type(e).__name__) from e
-        paths = [_key(r.path) for r in rows]
-        if len(set(paths)) != len(paths):
-            raise ZipFailed("duplicate entry path within the zip")
     except ZipFailed:
-        stale = [str(p.relative_to(tree).as_posix()) for p in written] + list(previous)
-        try:
-            stale += _zip_file_paths(zip_path)
-        except (zipfile.BadZipFile, OSError, EOFError, RuntimeError, ValueError):
-            pass
-        for rel in stale:
-            try:
-                rel = _safe_relpath(rel)
-            except ZipFailed:
-                continue
-            if _key(rel) not in known:
-                _remove(tree / rel)
         tmp.unlink(missing_ok=True)
+        _remove_tree(tree / zip_stem(zip_path.name))
         raise
     return rows, nbytes
 
@@ -185,15 +183,17 @@ def _read_part(mdir: Path, zip_name: str) -> list[Entry]:
     p = _part_path(mdir, zip_name)
     if not p.exists():
         return []
-    return [Entry(r["path"], r["size"], r["crc32"], r["blake3"], [zip_name])
-            for r in map(json.loads, p.read_text().splitlines())]
+    rows = [json.loads(line) for line in p.read_text().splitlines()]
+    if any("entry" not in r for r in rows):
+        return []  # a part from the merged layout (before D3/D8): the zip is redone
+    return [Entry(zip_name, r["entry"], r["path"], r["size"], r["crc32"], r["blake3"]) for r in rows]
 
 
 def _write_part(mdir: Path, zip_name: str, rows: list[Entry]) -> None:
     p = _part_path(mdir, zip_name)
     tmp = p.with_suffix(".tmp")
-    tmp.write_text("".join(json.dumps({"path": r.path, "size": r.size, "crc32": r.crc32, "blake3": r.blake3})
-                           + "\n" for r in rows))
+    tmp.write_text("".join(json.dumps({"entry": r.entry, "path": r.path, "size": r.size, "crc32": r.crc32,
+                                       "blake3": r.blake3}) + "\n" for r in rows))
     os.replace(tmp, p)
 
 
@@ -207,47 +207,85 @@ def _intact(tree: Path, rows: list[Entry]) -> bool:
     return True
 
 
-def _merge(known: dict[str, Entry], rows: list[Entry]) -> None:
-    for r in rows:
-        prior = known.get(_key(r.path))
-        if prior is None:
-            known[_key(r.path)] = Entry(r.path, r.size, r.crc32, r.blake3, list(r.zips))
-        else:
-            prior.zips.extend(z for z in r.zips if z not in prior.zips)
-
-
-def _write_manifest(mdir: Path, known: dict[str, Entry]) -> None:
-    rows = sorted(known.values(), key=lambda e: e.path)
-    table = pa.table({"zip": [",".join(sorted(e.zips)) for e in rows], "path": [e.path for e in rows],
-                      "size": [e.size for e in rows], "crc32": [e.crc32 for e in rows],
-                      "blake3": [e.blake3 for e in rows]}, schema=_SCHEMA)
+def _write_manifest(mdir: Path, rows: list[Entry]) -> None:
+    rows = sorted(rows, key=lambda e: e.path)
+    table = pa.table({"zip": [e.zip for e in rows], "entry": [e.entry for e in rows],
+                      "path": [e.path for e in rows], "size": [e.size for e in rows],
+                      "crc32": [e.crc32 for e in rows], "blake3": [e.blake3 for e in rows]}, schema=_SCHEMA)
     tmp = mdir / "manifest.parquet.tmp"
     pq.write_table(table, tmp)
     os.replace(tmp, mdir / "manifest.parquet")
 
 
-def reconcile(mdir: Path, tree: Path, expected_files: int | None = None) -> list[str]:
-    """D5: manifest rows = files on disk (= zip file entries, when given) and every size matches.
-    Returns mismatch descriptions (counts only, no names); empty when it reconciles."""
+def _ignored(rel: str) -> bool:
+    parts = PurePosixPath(rel).parts
+    return parts[-1] in _IGNORED_FILES or any(p in _IGNORED_DIRS for p in parts[:-1])
+
+
+def _index_tree(tree: Path) -> tuple[dict[str, list[str]], int]:
+    """Files under the export folder by `_nkey`: (key -> on-disk relpaths, ignored count). On the NAS's
+    case-sensitive filesystem IMG.JPG and img.jpg can both exist: both land under one key."""
+    index: dict[str, list[str]] = {}
+    ignored = 0
+    for dirpath, _dirnames, filenames in os.walk(tree):
+        rel_dir = Path(dirpath).relative_to(tree).as_posix()
+        for name in filenames:
+            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
+            if _ignored(rel):
+                ignored += 1
+            else:
+                index.setdefault(_nkey(rel), []).append(rel)
+    return index, ignored
+
+
+def reconcile(mdir: Path, tree: Path, expected: dict[str, int] | None = None) -> list[str]:
+    """D5 per zip folder: the zip's file entries (when given: zip name -> count) = files under its folder
+    (minus ignored Synology metadata) = its manifest rows; every size matches; and the export folder holds
+    nothing at the top level but zip folders. Returns mismatch descriptions (counts only, no entry names)."""
     rows = pq.read_table(mdir / "manifest.parquet").to_pylist()
-    on_disk = {str(p.relative_to(tree).as_posix()): p for p in tree.rglob("*") if p.is_file()} \
-        if tree.exists() else {}
+    index, _ = _index_tree(tree) if tree.exists() else ({}, 0)
+    on_disk = {rel for rels in index.values() for rel in rels}
+    zip_names = sorted({r["zip"] for r in rows} | set(expected or {}))
+    stems = {zip_stem(z): z for z in zip_names}
+    rows_of = dict.fromkeys(zip_names, 0)
+    for r in rows:
+        rows_of[r["zip"]] += 1
+    disk_of = dict.fromkeys(zip_names, 0)
+    for rel in on_disk:
+        top, _, rest = rel.partition("/")
+        if rest and top in stems:
+            disk_of[stems[top]] += 1
+    unexpected = 0
+    if tree.exists():
+        unexpected = sum(1 for p in tree.iterdir() if p.name not in _IGNORED_DIRS | _IGNORED_FILES
+                         and not (p.is_dir() and p.name in stems))
     problems = []
-    listed = {r["path"] for r in rows}
-    missing = sum(1 for r in rows if r["path"] not in on_disk)
-    resized = sum(1 for r in rows if r["path"] in on_disk and on_disk[r["path"]].stat().st_size != r["size"])
-    extra = sum(1 for p in on_disk if p not in listed)
-    if expected_files is not None and expected_files != len(rows):
-        problems.append(f"zip file entries {expected_files} != manifest rows {len(rows)}")
-    if len(on_disk) != len(rows):
-        problems.append(f"files on disk {len(on_disk)} != manifest rows {len(rows)}")
+    for z in zip_names:
+        if expected is not None and expected.get(z, 0) != rows_of[z]:
+            problems.append(f"{z}: zip file entries {expected.get(z, 0)} != manifest rows {rows_of[z]}")
+        if disk_of[z] != rows_of[z]:
+            problems.append(f"{z}: files on disk {disk_of[z]} != manifest rows {rows_of[z]}")
+    # match by NFC: the manifest path follows the zip entry, the SMB mount may list NFD names (D7)
+    disk_nfc = {unicodedata.normalize("NFC", p): p for p in on_disk}
+    listed = {unicodedata.normalize("NFC", r["path"]) for r in rows}
+    found = [(r, disk_nfc.get(unicodedata.normalize("NFC", r["path"]))) for r in rows]
+    missing = sum(1 for _, p in found if p is None)
+    resized = sum(1 for r, p in found if p is not None and (tree / p).stat().st_size != r["size"])
+    extra = sum(1 for p in disk_nfc if p not in listed)
     if missing:
         problems.append(f"{missing} manifest file(s) missing from the tree")
     if resized:
         problems.append(f"{resized} file(s) with a size other than the manifest")
     if extra:
         problems.append(f"{extra} file(s) in the tree not in the manifest")
+    if unexpected:
+        problems.append(f"{unexpected} unexpected top-level item(s) in the export folder (not a zip folder)")
     return problems
+
+
+def _expected_files(zip_paths: list[Path]) -> dict[str, int]:
+    """D5, counted independently of the part files: file entries per zip, from the central directories."""
+    return {zp.name: len(_zip_file_paths(zp)) for zp in zip_paths}
 
 
 def _check_dest(cfg: Config, zips_dir: Path, dest_root: Path) -> None:
@@ -294,13 +332,13 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
         stale.unlink()
 
     state = _latest_status(mdir)
-    known: dict[str, Entry] = {}
+    known: list[Entry] = []
     todo: list[Path] = []
     for zp in zip_paths:
         done = state.get(zp.name, {}).get("status") == "done"
         rows = _read_part(mdir, zp.name) if done else []
-        if done and _intact(tree, rows):
-            _merge(known, rows)
+        if done and rows and _intact(tree, rows):
+            known.extend(rows)
         else:
             todo.append(zp)
 
@@ -320,11 +358,10 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
                "ts": datetime.now(UTC).isoformat(timespec="seconds")}
         try:
             row["size"] = zp.stat().st_size
-            previous = [r.path for r in _read_part(mdir, zp.name)]
             _remove_part(mdir, zp.name)
-            rows, nbytes = _extract_zip(zp, tree, mdir / "tmp", known, progress, previous)
+            rows, nbytes = _extract_zip(zp, tree, mdir / "tmp", progress)
             _write_part(mdir, zp.name, rows)
-            _merge(known, rows)
+            known.extend(rows)
             row.update(entries=len(rows), status="done")
             secs = max(time.monotonic() - t0, 1e-6)
             print(f"  [{idx}/{total}] done: {len(rows)} file(s), {nbytes / 1e6:.0f} MB, "
@@ -337,18 +374,14 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
     shutil.rmtree(mdir / "tmp", ignore_errors=True)
 
     _write_manifest(mdir, known)
-    entries = sum(len(_read_part(mdir, zp.name)) for zp in zip_paths
-                  if _latest_status(mdir).get(zp.name, {}).get("status") == "done")
-    dups = entries - len(known)
     problems: list[str] = []
     if not failed:
         try:
             problems = reconcile(mdir, tree, _expected_files(zip_paths))
-        except (zipfile.BadZipFile, OSError, ZipFailed) as e:
+        except (zipfile.BadZipFile, OSError) as e:
             problems = [f"could not recount the zip entries ({type(e).__name__})"]
     done = total - failed
-    print(f"export {ts}: {done}/{total} zip(s) done, {failed} failed; {entries} file entries, "
-          f"{dups} identical duplicate(s), {len(known)} manifest rows")
+    print(f"export {ts}: {done}/{total} zip(s) done, {failed} failed; {len(known)} manifest rows")
     for p in problems:
         print(f"reconcile mismatch: {p}")
     if failed or problems:
@@ -357,53 +390,18 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
     return 0
 
 
-def _expected_files(zip_paths: list[Path]) -> int:
-    """D5, counted independently of the part files: distinct file entry paths across the zips' central
-    directories (identical duplicates are one manifest row)."""
-    return len({_key(_safe_relpath(n)) for zp in zip_paths for n in _zip_file_paths(zp)})
-
-
 def _remove_part(mdir: Path, zip_name: str) -> None:
     _part_path(mdir, zip_name).unlink(missing_ok=True)
 
 
 # --- verify-only mode (D7): the tree was extracted on the NAS (7-Zip), Shoebox proves it ------------------
 
-_IGNORED_DIRS = {"@eaDir", "@SynoEAStream", "@SynoResource", "#recycle"}
-_IGNORED_FILES = {".DS_Store"}
 _COUNTS = ("missing", "size_mismatch", "crc_mismatch", "conflicts")
 
 
-def _nkey(rel: str) -> str:
-    """Lookup key for the verify-only mode: zip entry names and names on the SMB mount may differ in Unicode
-    normalisation (NFC vs NFD), and the share is case-insensitive."""
-    return unicodedata.normalize("NFC", rel).casefold()
-
-
-def _ignored(rel: str) -> bool:
-    parts = PurePosixPath(rel).parts
-    return parts[-1] in _IGNORED_FILES or any(p in _IGNORED_DIRS for p in parts[:-1])
-
-
-def _index_tree(tree: Path) -> tuple[dict[str, list[str]], int]:
-    """Files under the tree by `_nkey`: (key -> on-disk relpaths, ignored count). On the NAS's case-sensitive
-    filesystem `7z x -aos` writes IMG.JPG and img.jpg from two zips as two files: both land under one key."""
-    index: dict[str, list[str]] = {}
-    ignored = 0
-    for dirpath, _dirnames, filenames in os.walk(tree):
-        rel_dir = Path(dirpath).relative_to(tree).as_posix()
-        for name in filenames:
-            rel = name if rel_dir == "." else f"{rel_dir}/{name}"
-            if _ignored(rel):
-                ignored += 1
-            else:
-                index.setdefault(_nkey(rel), []).append(rel)
-    return index, ignored
-
-
-def _pick(rels: list[str], name: str) -> str:
-    """The on-disk file for a zip entry: the one with the entry's own (NFC) name, else the first."""
-    nfc = unicodedata.normalize("NFC", name)
+def _pick(rels: list[str], rel: str) -> str:
+    """The on-disk file for a zip entry: the one with the expected (NFC) name, else the first."""
+    nfc = unicodedata.normalize("NFC", rel)
     return next((r for r in rels if unicodedata.normalize("NFC", r) == nfc), rels[0])
 
 
@@ -423,34 +421,29 @@ def _central_directory(zip_path: Path) -> list[zipfile.ZipInfo]:
 
 
 def _check_zip_on_disk(zip_name: str, infos: list[zipfile.ZipInfo], tree: Path, index: dict[str, list[str]],
-                       known: dict[str, Entry], pool: ThreadPoolExecutor) -> tuple[list[Entry], dict[str, int]]:
-    """Check every file entry of one zip against the tree. Returns its rows and the per-kind failure counts."""
+                       pool: ThreadPoolExecutor) -> tuple[list[Entry], dict[str, int]]:
+    """Check every file entry of one zip against its own folder. Returns its rows and the per-kind failure
+    counts."""
     counts = dict.fromkeys(_COUNTS, 0)
     rows: list[Entry] = []
     seen: set[str] = set()
     pending = []
     for info in infos:
         try:
-            key = _nkey(_safe_relpath(info.filename))
+            want = _disk_rel(zip_name, info.filename)
         except ZipFailed:
             counts["conflicts"] += 1
             continue
-        if key in seen:
+        key = _nkey(want)
+        if key in seen:  # two entries of this zip map to one name on disk (D8 strip, case or NFC)
             counts["conflicts"] += 1
             continue
         seen.add(key)
-        prior = known.get(key)
-        if prior is not None and zip_name not in prior.zips:
-            if prior.crc32 != info.CRC or prior.size != info.file_size:
-                counts["conflicts"] += 1
-            else:
-                rows.append(Entry(prior.path, prior.size, prior.crc32, prior.blake3, [zip_name]))
-            continue
         rels = index.get(key)
         if not rels:
             counts["missing"] += 1
             continue
-        rel = _pick(rels, info.filename)
+        rel = _pick(rels, want)
         path = tree / rel
         try:
             size = path.stat().st_size
@@ -470,29 +463,15 @@ def _check_zip_on_disk(zip_name: str, infos: list[zipfile.ZipInfo], tree: Path, 
         if crc != info.CRC:
             counts["crc_mismatch"] += 1
             continue
-        rows.append(Entry(rel, info.file_size, info.CRC, digest, [zip_name]))
+        rows.append(Entry(zip_name, info.filename, rel, info.file_size, info.CRC, digest))
     return rows, counts
-
-
-def _collides(known: dict[str, Entry], rows: list[Entry]) -> bool:
-    """Would merging these rows put other content (CRC/size) under a key another zip already owns?"""
-    return any((p := known.get(_nkey(r.path))) is not None and (p.crc32, p.size) != (r.crc32, r.size)
-               for r in rows)
-
-
-def _merge_n(known: dict[str, Entry], rows: list[Entry]) -> None:
-    for r in rows:
-        prior = known.get(_nkey(r.path))
-        if prior is None:
-            known[_nkey(r.path)] = Entry(r.path, r.size, r.crc32, r.blake3, list(r.zips))
-        else:
-            prior.zips.extend(z for z in r.zips if z not in prior.zips)
 
 
 def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, dest_root: Path | None = None,
                      workers: int = 8, err=None) -> int:
-    """D7: prove a tree extracted elsewhere (7-Zip on the NAS) against the zips' central directories. Reads no
-    zip data; streams each extracted file once for CRC-32 + BLAKE3. Returns the exit status."""
+    """D7: prove a tree extracted elsewhere (7-Zip on the NAS, one folder per zip) against the zips' central
+    directories. Reads no zip data; streams each extracted file once for CRC-32 + BLAKE3. Returns the exit
+    status."""
     err = err or sys.stderr
     zips_dir = Path(zips_dir).expanduser()
     dest_root = Path(dest_root).expanduser() if dest_root else default_dest(cfg, account)
@@ -512,8 +491,8 @@ def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, des
     print(f"export {export}: {total} zip(s); indexing the tree", file=err)
     index, ignored = _index_tree(tree)
     state = _latest_status(mdir)
-    known: dict[str, Entry] = {}
-    cd: dict[str, list[zipfile.ZipInfo] | None] = {}
+    known: list[Entry] = []
+    expected: dict[str, int] = {}
     failed = skipped = 0
     with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
         for idx, zp in enumerate(zip_paths, 1):
@@ -521,22 +500,22 @@ def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, des
                    "ts": datetime.now(UTC).isoformat(timespec="seconds")}
             try:
                 row["size"] = zp.stat().st_size
-                cd[zp.name] = infos = _central_directory(zp)
+                infos = _central_directory(zp)
             except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, EOFError, ValueError) as e:
-                cd[zp.name] = None
                 row["reason"] = type(e).__name__
                 failed += 1
                 print(f"  [{idx}/{total}] FAILED ({row['reason']})", file=err)
                 _append_status(mdir, row)
                 continue
+            expected[zp.name] = len(infos)
             if state.get(zp.name, {}).get("status") == "verified":
                 prev = _read_part(mdir, zp.name)
-                if len(prev) == len(infos) and _intact(tree, prev) and not _collides(known, prev):
-                    _merge_n(known, prev)
+                if prev and len(prev) == len(infos) and _intact(tree, prev):
+                    known.extend(prev)
                     skipped += 1
                     continue
             t0 = time.monotonic()
-            rows, counts = _check_zip_on_disk(zp.name, infos, tree, index, known, pool)
+            rows, counts = _check_zip_on_disk(zp.name, infos, tree, index, pool)
             row.update(counts, entries=len(infos))
             nbytes = sum(r.size for r in rows)
             secs = max(time.monotonic() - t0, 1e-6)
@@ -549,7 +528,7 @@ def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, des
                 for r in rows:
                     _read_only(tree / r.path)
                 _write_part(mdir, zp.name, rows)
-                _merge_n(known, rows)
+                known.extend(rows)
                 print(f"  [{idx}/{total}] verified: {len(rows)} file(s), {nbytes / 1e6:.0f} MB, "
                       f"{nbytes / 1e6 / secs:.1f} MB/s", file=err)
             _append_status(mdir, row)
@@ -557,58 +536,13 @@ def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, des
     _write_manifest(mdir, known)
     problems: list[str] = []
     if not failed:
-        problems = _reconcile_extracted(mdir, tree, cd, index)
-    entries = sum(len(v) for v in cd.values() if v)
+        problems = reconcile(mdir, tree, expected)
     print(f"export {export}: {total - failed}/{total} zip(s) verified ({skipped} already), {failed} failed; "
-          f"{entries} file entries, {len(known)} manifest rows, {ignored} ignored NAS metadata file(s)")
+          f"{sum(expected.values())} file entries, {len(known)} manifest rows, {ignored} ignored NAS metadata "
+          f"file(s)")
     for p in problems:
         print(f"reconcile mismatch: {p}")
     if failed or problems:
         return 1
     print(f"export {export} for {account} verified on the NAS; safe to delete from Drive")
     return 0
-
-
-def _reconcile_extracted(mdir: Path, tree: Path, cd: dict[str, list[zipfile.ZipInfo] | None],
-                         index: dict[str, list[str]]) -> list[str]:
-    """D5 for the verify-only mode: unique file entries across the zips = files on disk (minus ignored) =
-    manifest rows, and every size matches. A second on-disk file under a row's key (case-sensitive NAS: a
-    case/NFC duplicate written by both zips) counts as that row only if some zip entry names it and its bytes
-    are the row's (size + BLAKE3); otherwise it is unclaimed. Counts only."""
-    rows = pq.read_table(mdir / "manifest.parquet").to_pylist()
-    expected = {_nkey(i.filename) for infos in cd.values() if infos for i in infos}
-    names = {unicodedata.normalize("NFC", i.filename) for infos in cd.values() if infos for i in infos}
-    by_key = {_nkey(r["path"]): r for r in rows}
-    colliding = aliases = 0
-    for key, rels in index.items():
-        row = by_key.get(key)
-        for rel in rels:
-            if row is None or rel == row["path"]:
-                continue
-            colliding += 1
-            try:
-                same = ((tree / rel).stat().st_size == row["size"]
-                        and unicodedata.normalize("NFC", rel) in names
-                        and _hash_file(tree / rel)[1] == row["blake3"])
-            except OSError:
-                same = False
-            aliases += same
-    colliding -= aliases
-    on_disk = sum(len(v) for v in index.values()) - aliases
-    problems = []
-    if len(expected) != len(rows):
-        problems.append(f"zip file entries {len(expected)} != manifest rows {len(rows)}")
-    if on_disk != len(rows):
-        problems.append(f"files on disk {on_disk} != manifest rows {len(rows)}")
-    extra = colliding + sum(len(v) for k, v in index.items() if k not in expected)
-    if extra:
-        problems.append(f"{extra} file(s) in the tree not claimed by any zip entry")
-    resized = 0
-    for r in rows:
-        try:
-            resized += (tree / r["path"]).stat().st_size != r["size"]
-        except OSError:
-            resized += 1
-    if resized:
-        problems.append(f"{resized} manifest file(s) missing or with another size")
-    return problems
