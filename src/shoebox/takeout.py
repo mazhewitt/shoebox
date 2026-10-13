@@ -87,10 +87,23 @@ def _remove(path: Path) -> None:
     path.unlink(missing_ok=True)
 
 
+def _key(rel: str) -> str:
+    """Duplicate key: the destination (SMB share, APFS) is case-insensitive, so paths differing only in case
+    are the same file."""
+    return rel.casefold()
+
+
+def _zip_file_paths(zip_path: Path) -> list[str]:
+    """The zip's file entry paths from the central directory (no data read)."""
+    with zipfile.ZipFile(zip_path) as zf:
+        return [i.filename for i in zf.infolist() if not i.is_dir()]
+
+
 def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, known: dict[str, Entry],
-                 progress=None) -> tuple[list[Entry], int]:
-    """Extract every file entry of one zip. Returns its entries and the bytes read. On any failure removes the
-    files this zip wrote and raises ZipFailed."""
+                 progress=None, previous: list[str] = ()) -> tuple[list[Entry], int]:
+    """Extract every file entry of one zip. Returns its entries and the bytes read. On any failure removes
+    every file of this zip from the tree (this run's, an earlier run's in `previous`, and any infolist path)
+    unless another done zip in `known` owns it, then raises ZipFailed."""
     written: list[Path] = []
     rows: list[Entry] = []
     nbytes = 0
@@ -106,7 +119,7 @@ def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, known: dict[str, Ent
                     nbytes += info.file_size
                     if progress:
                         progress(nbytes)
-                    prior = known.get(rel)
+                    prior = known.get(_key(rel))
                     if prior is not None and prior.zips and zip_path.name not in prior.zips:
                         if prior.blake3 != digest or prior.size != info.file_size:
                             raise ZipFailed("duplicate entry path with different bytes")
@@ -122,12 +135,22 @@ def _extract_zip(zip_path: Path, tree: Path, tmp_dir: Path, known: dict[str, Ent
         except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, EOFError, RuntimeError,
                 NotImplementedError) as e:
             raise ZipFailed(type(e).__name__) from e
-        paths = [r.path for r in rows]
+        paths = [_key(r.path) for r in rows]
         if len(set(paths)) != len(paths):
             raise ZipFailed("duplicate entry path within the zip")
     except ZipFailed:
-        for p in written:
-            _remove(p)
+        stale = [str(p.relative_to(tree).as_posix()) for p in written] + list(previous)
+        try:
+            stale += _zip_file_paths(zip_path)
+        except (zipfile.BadZipFile, OSError, EOFError, RuntimeError, ValueError):
+            pass
+        for rel in stale:
+            try:
+                rel = _safe_relpath(rel)
+            except ZipFailed:
+                continue
+            if _key(rel) not in known:
+                _remove(tree / rel)
         tmp.unlink(missing_ok=True)
         raise
     return rows, nbytes
@@ -183,9 +206,9 @@ def _intact(tree: Path, rows: list[Entry]) -> bool:
 
 def _merge(known: dict[str, Entry], rows: list[Entry]) -> None:
     for r in rows:
-        prior = known.get(r.path)
+        prior = known.get(_key(r.path))
         if prior is None:
-            known[r.path] = Entry(r.path, r.size, r.crc32, r.blake3, list(r.zips))
+            known[_key(r.path)] = Entry(r.path, r.size, r.crc32, r.blake3, list(r.zips))
         else:
             prior.zips.extend(z for z in r.zips if z not in prior.zips)
 
@@ -294,8 +317,9 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
                "ts": datetime.now(UTC).isoformat(timespec="seconds")}
         try:
             row["size"] = zp.stat().st_size
+            previous = [r.path for r in _read_part(mdir, zp.name)]
             _remove_part(mdir, zp.name)
-            rows, nbytes = _extract_zip(zp, tree, mdir / "tmp", known, progress)
+            rows, nbytes = _extract_zip(zp, tree, mdir / "tmp", known, progress, previous)
             _write_part(mdir, zp.name, rows)
             _merge(known, rows)
             row.update(entries=len(rows), status="done")
@@ -313,7 +337,12 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
     entries = sum(len(_read_part(mdir, zp.name)) for zp in zip_paths
                   if _latest_status(mdir).get(zp.name, {}).get("status") == "done")
     dups = entries - len(known)
-    problems = reconcile(mdir, tree) if not failed else []
+    problems: list[str] = []
+    if not failed:
+        try:
+            problems = reconcile(mdir, tree, _expected_files(zip_paths))
+        except (zipfile.BadZipFile, OSError, ZipFailed) as e:
+            problems = [f"could not recount the zip entries ({type(e).__name__})"]
     done = total - failed
     print(f"export {ts}: {done}/{total} zip(s) done, {failed} failed; {entries} file entries, "
           f"{dups} identical duplicate(s), {len(known)} manifest rows")
@@ -323,6 +352,12 @@ def _verify_export(cfg: Config, ts: str, zip_paths: list[Path], account: str, de
         return 1
     print(f"export {ts} for {account} verified on the NAS; safe to delete from Drive")
     return 0
+
+
+def _expected_files(zip_paths: list[Path]) -> int:
+    """D5, counted independently of the part files: distinct file entry paths across the zips' central
+    directories (identical duplicates are one manifest row)."""
+    return len({_key(_safe_relpath(n)) for zp in zip_paths for n in _zip_file_paths(zp)})
 
 
 def _remove_part(mdir: Path, zip_name: str) -> None:

@@ -246,3 +246,75 @@ def test_cli_registered(env, monkeypatch):
 
     args = cli.build_parser().parse_args(["takeout", "verify", "--zips", "/x", "--account", "owner"])
     assert args.func.__name__ == "cmd_verify"
+
+
+def test_failed_redo_removes_files_from_earlier_run(env, capsys, monkeypatch):
+    """A done zip whose tree was damaged is redone; if the redo fails, none of its files may stay behind,
+    including those written by the earlier run."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/x": b"x", "Takeout/y": b"y", "Takeout/z": b"z"})
+    assert run(cfg, zips, capsys)[0] == 0
+    os.chmod(tree(cfg) / "Takeout/x", 0o644)
+    (tree(cfg) / "Takeout/x").unlink()
+    real = takeout._copy_entry
+
+    def flaky(zf, info, tmp):
+        if info.filename == "Takeout/y":
+            raise OSError("SMB hiccup")
+        return real(zf, info, tmp)
+
+    monkeypatch.setattr(takeout, "_copy_entry", flaky)
+    code, out, _ = run(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    assert zip_rows(cfg)[f"takeout-{TS}-001.zip"]["status"] == "failed"
+    assert files(tree(cfg)) == []
+
+
+def test_failed_zip_keeps_files_owned_by_another_done_zip(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/archive_browser.html": b"same"})
+    make_zip(zips, 2, {"Takeout/archive_browser.html": b"same", "Takeout/q.jpg": b"q" * 10},
+             method=zipfile.ZIP_STORED)
+    p = zips / f"takeout-{TS}-002.zip"
+    data = bytearray(p.read_bytes())
+    data[data.index(b"q" * 10) + 3] ^= 0xFF
+    p.write_bytes(bytes(data))
+    code, _, _ = run(cfg, zips, capsys)
+    assert code != 0
+    assert files(tree(cfg)) == ["Takeout/archive_browser.html"]
+
+
+def test_case_only_duplicate_is_a_duplicate(env, capsys):
+    """The NAS share is case-insensitive: IMG.JPG and img.jpg are one file on disk."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG.JPG": b"1" * 10})
+    make_zip(zips, 2, {"Takeout/img.jpg": b"2" * 20})
+    code, out, _ = run(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "failed"
+    assert (tree(cfg) / "Takeout/IMG.JPG").read_bytes() == b"1" * 10
+
+
+def test_case_only_duplicate_identical_recorded_once(env, capsys):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG.JPG": b"same"})
+    make_zip(zips, 2, {"Takeout/img.jpg": b"same"})
+    code, out, _ = run(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    assert len(pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()) == 1
+
+
+def test_reconcile_counts_zip_entries_independently(env, capsys):
+    """A truncated part file plus its file gone from the tree: disk = manifest rows, but the zips say more."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100, "Takeout/a/2.jpg": b"2" * 100})
+    assert run(cfg, zips, capsys)[0] == 0
+    part = mdir(cfg) / "parts" / f"takeout-{TS}-001.zip.jsonl"
+    lines = part.read_text().splitlines()
+    gone = json.loads(lines[-1])["path"]
+    part.write_text(lines[0] + "\n")
+    os.chmod(tree(cfg) / gone, 0o644)
+    (tree(cfg) / gone).unlink()
+    code, out, _ = run(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    assert "zip file entries 2 != manifest rows 1" in out
