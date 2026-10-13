@@ -24,15 +24,17 @@ zip gives the CRC test, the extract and the hash. A zip whose entries fail CRC, 
 recorded `failed`, its partial output removed, and the command exits non-zero at the end.
 
 ### D3. Layout and per-zip state
-`<shoebox_root>/originals/takeout/<account>/<export>/` holds the merged tree (Takeout zips of one export share one
-`Takeout/` root). `<shoebox_root>/originals/takeout/<account>/<export>.manifest/` holds `zips.jsonl` (one row per
+`<shoebox_root>/originals/takeout/<account>/<export>/<zip stem>/` holds each zip's own tree (each has a `Takeout/`
+root). Zips are NOT merged into one tree: Takeout numbers duplicate names per zip, so `Photos from 2019/2023-07-30(23).jpg`
+in one zip is a different photo from the same path in another, and each has its own `...supplemental-metadata(23).json`
+(found 2026-10-13: a merged extract lost 841 such photos and sidecars). One folder per zip keeps every file and keeps
+each sidecar next to its own photo; byte-identical copies across zips are left to dedup. `<shoebox_root>/originals/takeout/<account>/<export>.manifest/` holds `zips.jsonl` (one row per
 zip: name, size, entries, status, ts) and `manifest.parquet` (one row per entry: zip, entry path, size, crc32,
 blake3). `<export>` is the timestamp in the zip names (`20261012T083010Z`); a zip with another timestamp from the
 same request (here the `archive_browser.html` zip) goes under its own export.
 
 Resume: a zip with a `done` row in `zips.jsonl` and every one of its manifest entries present on disk with the
-recorded size is skipped. A duplicate entry path across zips is an error unless the bytes are identical (then it is
-recorded once with both zips).
+recorded size is skipped. Paths are per zip, so the same entry path in two zips is two files, not a duplicate.
 
 ### D4. Read-only tree
 After a zip is extracted its files are chmod `a-w` (best effort over SMB; the effective guard is that the tree is
@@ -68,3 +70,14 @@ Synology metadata (`@eaDir`, `@SynoEAStream`, `@SynoResource`, `#recycle`) and `
 counted. Verified files are chmod `a-w` (best effort). Reads run on `--workers` threads (default 8) because per-file
 open latency over SMB dominates. Write guards, counts-only stdout and the cleanup line are as in the self-extract
 mode; the command refuses if the export's tree does not exist.
+
+### D8. SMB-safe names
+The Studio reads the tree over SMB, which cannot show a name ending in a space or a dot (Synology presents a mangled
+8.3 name such as `C0VYM3~Y`). Google keeps album names as typed, so 5 album folders of this export end in a space.
+Every path component is stored as `smb_name(c) = c.rstrip(" .")`; the NAS extraction renames such names after 7-Zip
+(`shoebox/logs/takeout-perzip.sh`, which logs and skips a rename whose target exists), and the self-extract mode writes
+them that way. The verify maps each zip entry through `smb_name` per component before looking it up; two entries of one
+zip that map to the same name are a `conflicts` error. `manifest.parquet` gains an `entry` column holding the zip's own
+entry name, so the original album name is kept; `path` is the name on disk, relative to the export folder (it starts with
+the zip stem).
+
