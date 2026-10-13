@@ -32,10 +32,11 @@ CONFIG_DIR = REPO_ROOT / "config"
 # gets its own params_hash (see `resolve`).
 # `label_sources` is the ordered label-source chain a bulk run reuses labels from (design D8): where to look,
 # not how to label.
+# `budget_provider` names the spend budget a hosted candidate counts against (privacy.check_budget).
 # `tiny_max_side` / `tiny_action` are the tiny-image rule (task 9.2, `tiny_rule`): which images a candidate
 # routes elsewhere or marks, not how it labels them.
 _NOT_HASHED = {"name", "description", "notes", "prompt", "schema", "profile", "retry", "label_sources",
-               "tiny_max_side", "tiny_action"}
+               "tiny_max_side", "tiny_action", "budget_provider"}
 TINY_ACTIONS = ("route_hosted_else_mark",)
 _NOT_HASHED_PREFIXES = ("est_", "price_", "max_usd")
 # Store kind (`results/<kind>/...`) per runtime: label-v1 records go under `labels`, which the sheet and the
