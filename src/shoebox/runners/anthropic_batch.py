@@ -221,7 +221,9 @@ def usd_for(usage: dict, bcand: dict) -> float:
 def estimate(bcand: dict, n: int, cache_hits: bool = False) -> privacy.Estimate:
     """Pre-flight cost for n requests at the batch-priced `bcand`. Default: the worst case, every request
     writing the prompt (`est_prompt_tokens`) to the 1h cache, used by the run-cap and budget checks. With
-    `cache_hits`: the expected cost, one write then reads (a quote only; batch caching is best effort)."""
+    `cache_hits`: the expected cost, a quote only (batch caching is best effort): only the cacheable system
+    prompt (`est_cached_prompt_tokens`) is written once then read; the rest of `est_prompt_tokens` (the
+    structured-output schema, outside the cached system block) is billed at base on every request."""
     base = privacy.estimate(bcand, n)
     if bcand.get("prompt_placement") != "system-cached" or n <= 0:
         return base
@@ -229,7 +231,8 @@ def estimate(bcand: dict, n: int, cache_hits: bool = False) -> privacy.Estimate:
     w1h = _mult(bcand, "price_cache_write_1h_multiplier")
     prompt = int(bcand.get("est_prompt_tokens", 1000))
     if cache_hits:
-        extra = prompt * pin * ((w1h - 1) + (n - 1) * (_mult(bcand, "price_cache_read_multiplier") - 1))
+        cached = min(int(bcand.get("est_cached_prompt_tokens", prompt)), prompt)
+        extra = cached * pin * ((w1h - 1) + (n - 1) * (_mult(bcand, "price_cache_read_multiplier") - 1))
     else:
         extra = n * prompt * pin * (w1h - 1)
     return privacy.Estimate(base.n, base.input_tokens, base.output_tokens, base.usd + extra)

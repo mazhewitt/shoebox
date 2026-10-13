@@ -583,7 +583,9 @@ def test_worst_case_estimate_covers_any_actual_and_the_expected_quote_is_lower(a
     assert worst == pytest.approx(1400 * B_IN + 3300 * B_IN * 2 + 400 * B_OUT)
     assert ab.estimate(bc, 5).usd == pytest.approx(5 * worst)
     hits = ab.estimate(bc, 5, cache_hits=True).usd
-    assert hits == pytest.approx(5 * (1400 * B_IN + 400 * B_OUT) + 3300 * B_IN * (2 + 4 * 0.05))
+    # only the cached system prompt (2100) is written once then read; the schema (1200) is base every request
+    assert bc["est_cached_prompt_tokens"] == 2100
+    assert hits == pytest.approx(5 * (1400 * B_IN + 1200 * B_IN + 400 * B_OUT) + 2100 * B_IN * (2 + 4 * 0.05))
     assert hits < 5 * worst
     # the run cap uses the worst case: room for 2.5 worst-case requests sends 2
     res = replace(a.res, cand={**a.res.cand, "max_usd_per_run": 2.5 * worst})

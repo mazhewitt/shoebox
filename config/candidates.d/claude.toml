@@ -41,6 +41,9 @@ max_usd_per_run = 10.0
 est_image_tokens = 1400
 est_prompt_tokens = 3300          # label-v2.md plus the structured-output schema: the 2026-10-13 smoke
                                   # billed ~4,600 input tokens per photo, ~1,300 of them the image
+est_cached_prompt_tokens = 2100   # the part of est_prompt_tokens in the cached system block (label-v2.md);
+                                  # the ~1,200 schema tokens are outside it and billed at base every request.
+                                  # Used only by the expected ("assuming hits") quote.
 est_output_tokens = 400
 est_thinking_tokens = 0           # no extended thinking requested
 price_input_usd_per_mtok = 4.0
