@@ -14,7 +14,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from shoebox import config, privacy, runners, store, worklist
+from shoebox import config, privacy, runners, store
 from shoebox.runners import anthropic_batch
 
 CANDIDATE = "opus-api-v2"
@@ -35,10 +35,13 @@ def main(argv=None, transport=None) -> int:
     el = privacy.filter_items(items, cfg, provider=anthropic_batch.PROVIDER)
     done = store.index(cfg, res.model_id, res.params_hash, res.kind)
     todo = [it for it in el.allowed if not store.is_final(done.get(it["asset_id"]))]
-    usd, _ = worklist.batch_usd(res.cand, len(todo))
+    bcand = anthropic_batch.batch_priced(res.cand)
+    usd = anthropic_batch.estimate(bcand, len(todo)).usd  # worst case: no cache hits
+    expected = anthropic_batch.estimate(bcand, len(todo), cache_hits=True).usd
     provider = res.cand.get("budget_provider", privacy.PROJECT_PROVIDER)
     print(json.dumps({"items": len(items), "eligible": len(el.allowed), "refused": dict(Counter(s.reason for s in el.skipped)),
                       "already_final": len(el.allowed) - len(todo), "to_send": len(todo), "quote_usd": round(usd, 4),
+                      "quote_expected_usd": round(expected, 4),
                       "run_cap_usd": res.cand.get("max_usd_per_run"), "budget_provider": provider,
                       "budget_spent_usd": round(privacy.spent_total(provider=provider), 4),
                       "budget_usd": privacy.limits().budget(provider)}))

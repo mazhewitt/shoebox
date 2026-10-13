@@ -145,13 +145,28 @@ def anthropic_schema(schema: dict, non_null: tuple[str, ...] = ("caption",)) -> 
     return adapted
 
 
+# The user turn's text when the prompt is in the cached system block (`prompt_placement = "system-cached"`).
+USER_TEXT = "Label this photo."
+CACHE_CONTROL = {"type": "ephemeral", "ttl": "1h"}  # the 1-hour TTL the batch docs recommend
+
+
 def build_params(cand: dict, prompt: str, schema: dict, jpeg: bytes) -> dict:
-    """One request's `params`: the image first, then the instructions."""
+    """One request's `params`: the image first, then the instructions. With `prompt_placement =
+    "system-cached"` the prompt is a system block marked for the 1-hour prompt cache (identical in every
+    request, so later requests read it at the cache price) and the user turn is the image then `USER_TEXT`;
+    without it, the prompt follows the image in the user turn (the layout of the first smoke run)."""
     image = {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
                                          "data": base64.b64encode(jpeg).decode("ascii")}}
-    params = {"model": cand["model"], "max_tokens": int(cand["max_tokens"]),
-              "messages": [{"role": "user", "content": [image, {"type": "text", "text": prompt}]}],
-              "output_config": {"format": {"type": "json_schema", "schema": anthropic_schema(schema)}}}
+    params = {"model": cand["model"], "max_tokens": int(cand["max_tokens"])}
+    placement = cand.get("prompt_placement")
+    if placement == "system-cached":
+        params["system"] = [{"type": "text", "text": prompt, "cache_control": dict(CACHE_CONTROL)}]
+        params["messages"] = [{"role": "user", "content": [image, {"type": "text", "text": USER_TEXT}]}]
+    elif placement is None:
+        params["messages"] = [{"role": "user", "content": [image, {"type": "text", "text": prompt}]}]
+    else:
+        raise AnthropicError(f"unknown prompt_placement {placement!r}; expected 'system-cached' or none")
+    params["output_config"] = {"format": {"type": "json_schema", "schema": anthropic_schema(schema)}}
     if cand.get("temperature") is not None:
         params["temperature"] = cand["temperature"]
     return params
@@ -166,17 +181,61 @@ def batch_priced(cand: dict) -> dict:
             "price_output_usd_per_mtok": pout * 1e6 * float(disc)}
 
 
+def _mult(cand: dict, key: str) -> float:
+    if cand.get(key) is None:
+        raise privacy.PrivacyError(f"candidate has no {key}: hosted runs need explicit prices")
+    return float(cand[key])
+
+
 def usage_of(message: dict) -> dict:
-    """Token counts; cache tokens (unused here) are counted as input, which can only overstate the cost."""
+    """Token counts. `input_tokens` is the total input (uncached + cache writes + cache reads, as for every
+    other runner); the API's own split is kept beside it: `uncached_input_tokens` (the API's `input_tokens`,
+    after the last cache breakpoint), `cache_creation_input_tokens`, `cache_read_input_tokens` and the
+    `cache_creation` TTL breakdown when the API sends one."""
     u = message.get("usage") or {}
-    inp = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
-                                             "cache_read_input_tokens"))
-    return {"input_tokens": inp, "output_tokens": u.get("output_tokens"), "thinking_tokens": None}
+    unc, cw, cr = (int(u.get(k) or 0) for k in ("input_tokens", "cache_creation_input_tokens",
+                                                 "cache_read_input_tokens"))
+    out = {"input_tokens": unc + cw + cr, "output_tokens": u.get("output_tokens"), "thinking_tokens": None,
+           "uncached_input_tokens": unc, "cache_creation_input_tokens": cw, "cache_read_input_tokens": cr}
+    if isinstance(u.get("cache_creation"), dict):
+        out["cache_creation"] = {k: int(v or 0) for k, v in u["cache_creation"].items()}
+    return out
 
 
 def usd_for(usage: dict, bcand: dict) -> float:
+    """Exact cost from the token split at the batch-priced base rates and the candidate's cache multipliers.
+    Cache writes without a TTL breakdown (or beyond it) are billed as 1h writes, the dearer kind."""
     pin, pout = privacy.price(bcand)
-    return (usage.get("input_tokens") or 0) * pin + (usage.get("output_tokens") or 0) * pout
+    w5, w1h, rd = (_mult(bcand, k) for k in ("price_cache_write_5m_multiplier", "price_cache_write_1h_multiplier",
+                                             "price_cache_read_multiplier"))
+    if "uncached_input_tokens" not in usage:  # a usage without the split (error records): all uncached
+        return (usage.get("input_tokens") or 0) * pin + (usage.get("output_tokens") or 0) * pout
+    cw = int(usage.get("cache_creation_input_tokens") or 0)
+    tt = usage.get("cache_creation") or {}
+    t5 = min(cw, int(tt.get("ephemeral_5m_input_tokens") or 0))
+    inp = (usage["uncached_input_tokens"] + t5 * w5 + (cw - t5) * w1h
+           + int(usage.get("cache_read_input_tokens") or 0) * rd)
+    return inp * pin + (usage.get("output_tokens") or 0) * pout
+
+
+def estimate(bcand: dict, n: int, cache_hits: bool = False) -> privacy.Estimate:
+    """Pre-flight cost for n requests at the batch-priced `bcand`. Default: the worst case, every request
+    writing the prompt (`est_prompt_tokens`) to the 1h cache, used by the run-cap and budget checks. With
+    `cache_hits`: the expected cost, a quote only (batch caching is best effort): only the cacheable system
+    prompt (`est_cached_prompt_tokens`) is written once then read; the rest of `est_prompt_tokens` (the
+    structured-output schema, outside the cached system block) is billed at base on every request."""
+    base = privacy.estimate(bcand, n)
+    if bcand.get("prompt_placement") != "system-cached" or n <= 0:
+        return base
+    pin, _ = privacy.price(bcand)
+    w1h = _mult(bcand, "price_cache_write_1h_multiplier")
+    prompt = int(bcand.get("est_prompt_tokens", 1000))
+    if cache_hits:
+        cached = min(int(bcand.get("est_cached_prompt_tokens", prompt)), prompt)
+        extra = cached * pin * ((w1h - 1) + (n - 1) * (_mult(bcand, "price_cache_read_multiplier") - 1))
+    else:
+        extra = n * prompt * pin * (w1h - 1)
+    return privacy.Estimate(base.n, base.input_tokens, base.output_tokens, base.usd + extra)
 
 
 def parse_message(message: dict, schema: dict) -> tuple[str, dict | None, str | None, str | None, str | None]:
@@ -498,13 +557,13 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
         run_usd = tally.usd + sum(float(j["est_usd"]) for j in run.open if j["job_id"] in run.mine)
         already = privacy.spent_total(provider=provider) + run.committed_usd() - run_usd
         room = min(float(cand.get("max_usd_per_run") or 0.0), lim.budget(provider) - already)
-        per = privacy.estimate(run.bcand, 1).usd
+        per = estimate(run.bcand, 1).usd
         fit = max(1, min(len(chunk), int((room - run_usd) / per) + 1 if per > 0 else len(chunk)))
-        while fit > 1 and run_usd + privacy.estimate(run.bcand, fit).usd > room:
+        while fit > 1 and run_usd + estimate(run.bcand, fit).usd > room:
             fit -= 1
         short = fit < len(chunk)  # the rest waits for the next run (or the next budget)
         chunk = chunk[:fit]
-        est = privacy.estimate(run.bcand, fit)
+        est = estimate(run.bcand, fit)
         try:
             privacy.check_budget(
                 run.bcand, privacy.Estimate(est.n, est.input_tokens, est.output_tokens, run_usd + est.usd),
