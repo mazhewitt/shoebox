@@ -350,6 +350,9 @@ def _register_colour(esub) -> None:
 
     d = esub.add_parser("colour-draw", help=f"mono-stratified sample -> evals/sets/{colour.SET_NAME}/items.jsonl")
     common(d)
+    d.add_argument("--set", default=colour.SET_NAME, help="set to write; excludes every other colour-* set's assets")
+    d.add_argument("--strata", default=None, help="comma list of origin strata (e.g. phone,camera); "
+                                                  "--n-mono/--n-near are then per stratum")
     d.add_argument("--seed", type=int, default=colour.DEFAULT_SEED)
     d.add_argument("--n-mono", type=int, default=colour.N_MONO)
     d.add_argument("--n-near", type=int, default=colour.N_NEAR)
@@ -359,14 +362,19 @@ def _register_colour(esub) -> None:
 
     t = esub.add_parser("colour-tune", help="grid-search ColourThresholds on the dev half and freeze them")
     common(t)
+    t.add_argument("--sets", default=colour.SET_NAME, help="comma list: tune on the union of their dev halves "
+                   f"(v2: {colour.SET_NAME},{colour.PC_SET_NAME} --frozen evals/{colour.FROZEN_V2_PATH})")
     t.add_argument("--with-audit", action="store_true", help="also tune on the caption-audit sample (flagged)")
     t.add_argument("--min-pred", type=int, default=colour.MIN_PRED)
     t.add_argument("--gates", type=Path, default=evals / "gates.toml")
     t.add_argument("--frozen", type=Path, default=evals / colour.FROZEN_PATH)
+    t.add_argument("--out-dir", type=Path, default=evals / "runs", help="test reports checked for a prior score")
     t.set_defaults(func=_colour_tune)
 
     s = esub.add_parser("colour-test", help="score the frozen thresholds once on the test half")
     common(s)
+    s.add_argument("--set", default=colour.SET_NAME, help="score this set's test half (the one gated score); "
+                   "the frozen file's other tuning sets' test halves are reported as already-seen secondaries")
     s.add_argument("--min-pred", type=int, default=colour.MIN_PRED)
     s.add_argument("--gates", type=Path, default=evals / "gates.toml")
     s.add_argument("--frozen", type=Path, default=evals / colour.FROZEN_PATH)
@@ -430,14 +438,19 @@ def _colour_draw(args) -> int:
         frame_rows = colour.read_frame(_frame(cfg, args.frame))
         derived = {a for a, r in derive.load_index(cfg, args.profile).items() if r.get("status") == "ok"}
         exclude = {r["asset_id"] for r in search.read_jsonl(args.sets_dir / args.audit_set / ca.SAMPLE_FILE)}
-        items, meta = colour.draw(frame_rows, derived, exclude, cfg, args.seed, args.n_mono, args.n_near, args.floor)
+        previous = sorted(p.parent.name for p in args.sets_dir.glob("colour-*/items.jsonl") if p.parent.name != args.set)
+        prior = {it["asset_id"] for n in previous for it in search.read_jsonl(args.sets_dir / n / "items.jsonl")}
+        strata = tuple(x.strip() for x in args.strata.split(",") if x.strip()) if args.strata else None
+        items, meta = colour.draw(frame_rows, derived, exclude, cfg, args.seed, args.n_mono, args.n_near, args.floor,
+                                  strata=strata, prior=prior, key_prefix="m" if args.set == colour.SET_NAME else "p")
+        meta["previous_sets"] = previous
     except privacy.PrivacyError as e:
         print(f"shoebox eval colour-draw: privacy check refused the draw: {e}", file=sys.stderr)
         return 1
     except (ValueError, FileNotFoundError) as e:
         print(f"shoebox eval colour-draw: {e}", file=sys.stderr)
         return 2
-    out = args.sets_dir / colour.SET_NAME
+    out = args.sets_dir / args.set
     out.mkdir(parents=True, exist_ok=True)
     judge.write_jsonl(out / "items.jsonl", items)
     (out / colour.SAMPLE_META).write_text(json.dumps(meta, indent=2, sort_keys=True) + "\n")
@@ -448,13 +461,17 @@ def _colour_draw(args) -> int:
     return 0
 
 
-def _colour_rows(args, cfg, split: str):
+def _colour_rows(args, cfg, split: str, sets: list[str] | None = None, frame_rows=None):
     from shoebox.evals import colour, search
 
-    frame_rows = colour.read_frame(_frame(cfg, args.frame))
-    items = [it for it in search.read_jsonl(args.sets_dir / colour.SET_NAME / "items.jsonl")
-             if it.get("split") == split]
-    refs = colour.load_labels(cfg, colour.REFERENCE_CANDIDATE)
+    frame_rows = frame_rows if frame_rows is not None else colour.read_frame(_frame(cfg, args.frame))
+    items, seen = [], set()
+    for name in sets or [colour.SET_NAME]:
+        for it in search.read_jsonl(args.sets_dir / name / "items.jsonl"):
+            if it.get("split") == split and it["asset_id"] not in seen:
+                seen.add(it["asset_id"])
+                items.append(it)
+    refs = colour.load_refs(cfg)
     gem = colour.load_labels(cfg, colour.GEMINI_CANDIDATE)
     labelled = sum((refs.get(it["asset_id"]) or {}).get("status") == "ok" for it in items)
     return (colour.labelled_rows(items, colour.rows_for(items, frame_rows), refs, gem), (labelled, len(items)),
@@ -467,18 +484,30 @@ def _colour_tune(args) -> int:
     cfg = _cfg()
     try:
         gate = _mono_gate(args.gates)
-        rows, (_lab, n_items), frame_rows, gem = _colour_rows(args, cfg, "dev")
+        sets = [x.strip() for x in args.sets.split(",") if x.strip()]
+        if sets != [colour.SET_NAME] and args.frozen.name == colour.FROZEN_PATH:
+            raise ValueError(f"{args.frozen} holds the recorded v1 thresholds (sets {colour.SET_NAME}); freeze "
+                             f"tuning on {sets} elsewhere, e.g. --frozen evals/{colour.FROZEN_V2_PATH}")
+        if args.frozen.is_file():
+            _old, odoc = colour.load_frozen(args.frozen)
+            for name in odoc.get("sets") or [colour.SET_NAME]:
+                seen = colour.prior_test(args.out_dir, odoc["hash"], colour.LEDGER_PATH, name)
+                if seen:
+                    raise ValueError(f"{args.frozen} (hash {odoc['hash']}) was already scored on {name}'s test half "
+                                     f"({seen}); re-tuning it would re-spend that seen half. Freeze elsewhere")
+        rows, (_lab, n_items), frame_rows, gem = _colour_rows(args, cfg, "dev", sets)
         n_audit = 0
         if args.with_audit:
             recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
             extra = colour.audit_rows(recs, frows, gem)
             n_audit, rows = len(extra), rows + extra
         if not rows:
-            raise ValueError(f"no dev rows with a trusted {colour.REFERENCE_CANDIDATE} colour_class yet")
+            raise ValueError(f"no dev rows with a trusted {'/'.join(colour.REFERENCE_CANDIDATES)} colour_class yet")
         tuned = colour.tune(rows, gate, args.min_pred)
+        multi = {"sets": sets, "version": 2} if sets != [colour.SET_NAME] else {}
         doc = colour.freeze(args.frozen, tuned, {"dev_items": n_items, "with_audit_sample": args.with_audit,
                                                  "audit_rows": n_audit, "grid": tuned["grid"],
-                                                 "combination": tuned["combination"]})
+                                                 "combination": tuned["combination"], **multi})
     except (ValueError, FileNotFoundError, KeyError) as e:
         print(f"shoebox eval colour-tune: {e}", file=sys.stderr)
         return 2
@@ -500,7 +529,19 @@ def _colour_test(args) -> int:
     try:
         gate = _mono_gate(args.gates)
         _t, doc = colour.load_frozen(args.frozen)
-        rows, cov, frame_rows, _gem = _colour_rows(args, cfg, "test")
+        tuned_on = doc.get("sets") or [colour.SET_NAME]
+        if args.set not in tuned_on:
+            raise ValueError(f"{args.frozen} was not tuned with {args.set} (sets {tuned_on}); scoring it would spend "
+                             f"{args.set}'s fresh test half. Tune v2 first (--frozen evals/{colour.FROZEN_V2_PATH})")
+        if doc.get("version", 1) >= 2 and args.set == colour.SET_NAME:
+            raise ValueError(f"{colour.SET_NAME}'s test half was already scored and seen before v2 tuning; score "
+                             f"v2 on a fresh set (--set {colour.PC_SET_NAME})")
+        rows, cov, frame_rows, _gem = _colour_rows(args, cfg, "test", [args.set])
+        secondary = {}
+        for name in doc.get("sets") or []:
+            if name != args.set:
+                srows, scov, _fr, _g = _colour_rows(args, cfg, "test", [name], frame_rows)
+                secondary[name] = colour.secondary(srows, args.frozen, gate, args.min_pred, scov)
         try:
             recs, frows = _colour_audit_inputs(args, cfg, frame_rows)
             audit = colour.audit(recs, frows)
@@ -511,7 +552,8 @@ def _colour_test(args) -> int:
         dev = {k: doc.get(k) for k in ("grid", "dev_strata", "dev_n", "with_audit_sample", "audit_rows",
                                         "combination")}
         rep = colour.test_report(rows, args.frozen, args.out_dir, day, gate, args.min_pred, args.force_rescore,
-                                 audit, dev, colour.comparisons(cj), cov)
+                                 audit, dev, colour.comparisons(cj), cov, set_name=args.set,
+                                 secondary=secondary or None)
     except (colour.AlreadyScored, colour.NotReady) as e:
         print(f"shoebox eval colour-test: {e}", file=sys.stderr)
         return 1
