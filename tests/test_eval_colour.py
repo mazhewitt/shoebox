@@ -502,6 +502,15 @@ def test_draw_restricts_strata_per_stratum_counts_and_excludes_previous_sets(tmp
         colour.draw(rows, set(), set(), cfg_for(tmp_path), strata=("phone", "selfie"))
 
 
+def test_draw_with_strata_measures_shortfall_against_the_per_stratum_target(tmp_path):
+    rows = corpus(40)
+    kw = {"seed": 3, "n_mono": 500, "n_near": 500, "floor": 1, "strata": ("phone", "camera")}
+    _items, meta = colour.draw(rows, {r["asset_id"] for r in rows}, set(), cfg_for(tmp_path), **kw)
+    for b in ("mono", "near"):
+        m = meta["buckets"][b]
+        assert m["shortfall"] == {s: 500 - m["available"][s] for s in ("phone", "camera")}
+
+
 def test_v2_freeze_and_test_on_a_new_set_with_already_seen_secondary(tmp_path):
     rows = eval_rows()
     fpath, runs, led = tmp_path / "colour-thresholds-v2.json", tmp_path / "runs", tmp_path / "ledger.jsonl"
@@ -578,6 +587,12 @@ def test_cli_second_sample_v2_tune_and_test(tmp_path, monkeypatch, capsys):
     assert doc["sets"] == ["colour-mono", "colour-mono-pc"] and doc["version"] == 2
     assert doc["dev_n"] == sum(it["split"] == "dev" for it in first + pc)
     runs = tmp_path / "runs"
+    v1doc = {k: v for k, v in doc.items() if k not in ("sets", "version")}
+    v1.write_text(json.dumps(v1doc) + "\n")
+    capsys.readouterr()
+    assert main(["eval", "colour-test", *common, "--set", "colour-mono-pc", "--frozen", str(v1), "--min-pred", "2",
+                 "--out-dir", str(runs)]) == 2
+    assert "not tuned" in capsys.readouterr().err and not runs.exists()
     assert main(["eval", "colour-test", *common, "--frozen", str(v2), "--out-dir", str(runs)]) == 2
     assert "already scored" in capsys.readouterr().err and not runs.exists()
     test = ["eval", "colour-test", *common, "--set", "colour-mono-pc", "--frozen", str(v2), "--min-pred", "2",
@@ -589,3 +604,7 @@ def test_cli_second_sample_v2_tune_and_test(tmp_path, monkeypatch, capsys):
     assert sec["already_seen"] and sec["test"]["overall"]["n"] == sum(it["split"] == "test" for it in first)
     capsys.readouterr()
     assert main(test) == 1 and "already scored" in capsys.readouterr().err
+    before = v2.read_text()
+    assert main(["eval", "colour-tune", *common, "--sets", "colour-mono,colour-mono-pc", "--frozen", str(v2),
+                 "--min-pred", "3", "--out-dir", str(runs)]) == 2
+    assert "already scored" in capsys.readouterr().err and v2.read_text() == before

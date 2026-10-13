@@ -368,6 +368,7 @@ def _register_colour(esub) -> None:
     t.add_argument("--min-pred", type=int, default=colour.MIN_PRED)
     t.add_argument("--gates", type=Path, default=evals / "gates.toml")
     t.add_argument("--frozen", type=Path, default=evals / colour.FROZEN_PATH)
+    t.add_argument("--out-dir", type=Path, default=evals / "runs", help="test reports checked for a prior score")
     t.set_defaults(func=_colour_tune)
 
     s = esub.add_parser("colour-test", help="score the frozen thresholds once on the test half")
@@ -487,6 +488,13 @@ def _colour_tune(args) -> int:
         if sets != [colour.SET_NAME] and args.frozen.name == colour.FROZEN_PATH:
             raise ValueError(f"{args.frozen} holds the recorded v1 thresholds (sets {colour.SET_NAME}); freeze "
                              f"tuning on {sets} elsewhere, e.g. --frozen evals/{colour.FROZEN_V2_PATH}")
+        if args.frozen.is_file():
+            _old, odoc = colour.load_frozen(args.frozen)
+            for name in odoc.get("sets") or [colour.SET_NAME]:
+                seen = colour.prior_test(args.out_dir, odoc["hash"], colour.LEDGER_PATH, name)
+                if seen:
+                    raise ValueError(f"{args.frozen} (hash {odoc['hash']}) was already scored on {name}'s test half "
+                                     f"({seen}); re-tuning it would re-spend that seen half. Freeze elsewhere")
         rows, (_lab, n_items), frame_rows, gem = _colour_rows(args, cfg, "dev", sets)
         n_audit = 0
         if args.with_audit:
@@ -521,6 +529,10 @@ def _colour_test(args) -> int:
     try:
         gate = _mono_gate(args.gates)
         _t, doc = colour.load_frozen(args.frozen)
+        tuned_on = doc.get("sets") or [colour.SET_NAME]
+        if args.set not in tuned_on:
+            raise ValueError(f"{args.frozen} was not tuned with {args.set} (sets {tuned_on}); scoring it would spend "
+                             f"{args.set}'s fresh test half. Tune v2 first (--frozen evals/{colour.FROZEN_V2_PATH})")
         if doc.get("version", 1) >= 2 and args.set == colour.SET_NAME:
             raise ValueError(f"{colour.SET_NAME}'s test half was already scored and seen before v2 tuning; score "
                              f"v2 on a fresh set (--set {colour.PC_SET_NAME})")

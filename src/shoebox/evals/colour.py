@@ -336,7 +336,8 @@ def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed
                                                 min(n, sum(sizes.values())), floor_min=floor, cap=sizes)
                      if sum(sizes.values()) else dict.fromkeys(STRATA, 0))
         meta_b[b] = {"target": n, "available": sizes, "drawn": alloc,
-                     "shortfall": {s: floor - sizes[s] for s in use if sizes[s] < floor}}
+                     "shortfall": ({s: n - sizes[s] for s in use if sizes[s] < n} if strata is not None else
+                                   {s: floor - sizes[s] for s in use if sizes[s] < floor})}
         for s in use:
             for r in pools[b][s][:alloc[s]]:
                 g = queries.group_key(r)
