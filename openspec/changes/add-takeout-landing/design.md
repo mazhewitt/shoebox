@@ -47,3 +47,21 @@ manifest row's size matches the file. Any mismatch fails the command.
 `synced = false`, `hosted_consent = true`, `hosted_models = ["gemini", "claude"]`, `added = 2026-10-13`, and the
 same never-send / held-back handling as other sources (no held-back paths unless the owner names some). The
 inventory then runs over it; `add-pipeline-foundations` D5 keeps hosted sends closed until that frame exists.
+
+### D7. Verify-only mode for a tree extracted on the NAS
+Extracting over SMB from the Studio ran at about 15 MB/s, so the owner extracts on the NAS with 7-Zip 16.02
+(`7z x -y -aos -o<tree> <zip>` per zip, into the D3 tree). `shoebox takeout verify --zips DIR --account owner
+--export TS --extracted [--workers N]` then proves that tree without reading zip data: for each zip only the central
+directory (`ZipFile.infolist()`) is read, and every file entry (path, size, CRC) must have a file at `<tree>/<path>`
+with that size whose single 1 MiB-chunked read gives the same CRC-32 (`zlib.crc32`); the same read gives the BLAKE3
+(as `ids.asset_id`) for the manifest. Names are matched by NFC-normalised, casefolded path, because the SMB mount
+may present NFD names and the share is case-insensitive; two entries that collide on that key are one manifest row
+noting both zips when CRC and size agree, else the later zip fails (`conflicts`). Per zip, `zips.jsonl` records
+`verified` or `failed` with counts of `missing`, `size_mismatch`, `crc_mismatch` and `conflicts`; the zip's rows go to
+`parts/<zip>.jsonl`, and `manifest.parquet` has the same columns as D3 (path is the name as found on disk). Resume
+skips a `verified` zip whose part rows still exist with their sizes. Reconcile as D5 (unique file entries across the
+zips = files on disk = manifest rows, sizes match), where files on disk claimed by no entry are errors except
+Synology metadata (`@eaDir`, `@SynoEAStream`, `@SynoResource`, `#recycle`) and `.DS_Store`, which are ignored and
+counted. Verified files are chmod `a-w` (best effort). Reads run on `--workers` threads (default 8) because per-file
+open latency over SMB dominates. Write guards, counts-only stdout and the cleanup line are as in the self-extract
+mode; the command refuses if the export's tree does not exist.
