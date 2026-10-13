@@ -233,3 +233,17 @@ def test_decision_mono_below_gate_blocks_colour_filter_only():
     dec = graded.decide(cands, remaining_usd=100.0)
     assert dec["recommendation"]["captioner"] == "e4b-bf16"
     assert dec["recommendation"]["colour_filter"] is False
+
+
+def test_measure_costs_skips_a_local_model_not_pulled(monkeypatch):
+    """A frozen local captioner whose model is not pulled on this machine is reported unavailable, not fatal."""
+    from shoebox import runners
+
+    def resolve(name):
+        raise RuntimeError(f"model {name} is not pulled in the local Ollama")
+
+    monkeypatch.setattr(runners, "resolve", resolve)
+    monkeypatch.setattr(runners, "load_candidates", lambda *a: {"e4b-bf16": {"runtime": "ollama"}})
+    out = graded.measure_costs(None, ["e4b-bf16", "none"])
+    assert out == {"e4b-bf16": {"local": True, "n": 0, "subscription": False, "usd_per_image": None,
+                                "img_per_hour": None, "unavailable": "model e4b-bf16 is not pulled in the local Ollama"}}

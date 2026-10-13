@@ -15,8 +15,9 @@ about $0.0026 a photo, roughly 36k photos), and Gemini 3.8 Flash batch covers th
   written**. Each auditor favoured its own vendor; the owner judged that bias makes the cross-vendor rule unfair to
   Sonnet and chose it anyway (owner decision, against the rule, as for `opus-v2` reported but not gated).
   Reports: `runs/2026-10-13_sonnet-gate-caption-audit*.md`. Mono precision 0.974 for both, same as before.
-- Its search non-inferiority test (pre-registered route `eg2-blend:sonnet-api-v2`) runs separately; a clear
-  failure there is to be raised with the owner before any bulk use.
+- Search (pre-registered route `eg2-blend:sonnet-api-v2`, 2026-10-14): test nDCG@20 0.804 vs the reference's
+  0.794, delta +0.010 (95% CI +0.002 to +0.018). Non-inferior, and level with `opus-v2` (0.805).
+  Report: `runs/2026-10-14_eval-1k-test.md`.
 
 The evidence is the `eval-1k` run (`evals/runs/2026-10-11_eval-1k-*.md`), scored under the decision rule in `evals/gates.toml`. That file was committed before any test-split search score existed. Version 1 is commit 542640b; version 2, 126c067, changed which judge's grades count before scoring.
 

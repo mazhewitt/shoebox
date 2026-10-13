@@ -366,15 +366,23 @@ def caption_rules(audit_dir: Path, set_name: str, captioners: list[str], gates: 
 
 def measure_costs(cfg, captioners: list[str]) -> dict:
     """Per captioner from its label store, over the eval-1k items: hosted USD per image (mean `usd`) or local
-    img/h (3,600,000 / mean `latency_ms`, sequential). Reads records only."""
-    from shoebox.runners import label_source, resolve, source_index
+    img/h (3,600,000 / mean `latency_ms`, sequential). Reads records only. A local captioner whose model is not
+    pulled on this machine cannot be resolved; it is reported `unavailable` with no cost."""
+    from shoebox import runners
+    from shoebox.runners import label_source, source_index
 
     items = {r["asset_id"] for r in search.read_jsonl(REPO_ROOT / "evals" / "sets" / "eval-1k" / "items.jsonl")}
     out = {}
     for cap in captioners:
         if cap == NONE:
             continue
-        res = resolve(cap)
+        try:
+            res = runners.resolve(cap)
+        except RuntimeError as e:
+            local = runners.load_candidates().get(cap, {}).get("runtime") == "ollama"
+            out[cap] = {"local": local, "n": 0, "subscription": False, "usd_per_image": None,
+                        "img_per_hour": None, "unavailable": str(e)}
+            continue
         recs = [r for a, r in source_index(cfg, label_source(res)).items() if a in items]
         local = res.model_id.startswith("ollama/")
         lat = [r["latency_ms"] for r in recs if isinstance(r.get("latency_ms"), (int, float))]

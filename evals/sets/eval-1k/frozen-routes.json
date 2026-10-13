@@ -58,6 +58,12 @@
    "dev_ndcg": 0.8333898969977783,
    "params_hash": "d9ab2c9c89160158",
    "route": "eg2-blend:opus-v2"
+  },
+  "sonnet-api-v2": {
+   "dev_ndcg": null,
+   "note": "added 2026-10-14 by hand, pre-registered in gates.toml v3 (not chosen on dev; Ollama 0.40.3 embeddings)",
+   "params_hash": "6582917f682ea411",
+   "route": "eg2-blend:sonnet-api-v2"
   }
  },
  "set": "eval-1k"
