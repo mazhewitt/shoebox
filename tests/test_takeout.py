@@ -654,3 +654,40 @@ def test_x_cli_extracted_needs_export(env, monkeypatch, capsys):
     args = cli.build_parser().parse_args(["takeout", "verify", "--zips", str(zips), "--account", "owner",
                                           "--extracted"])
     assert args.func(args) == 2 and "--extracted needs --export TS" in capsys.readouterr().err
+
+
+def test_resume_redoes_zip_with_merged_layout_part(env, capsys, monkeypatch):
+    """A part file from the merged layout (no `entry` column) is not trusted at resume: the zip is redone."""
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/a/1.jpg": b"1" * 100})
+    assert run(cfg, zips, capsys)[0] == 0
+    part = takeout._part_path(mdir(cfg), zname(1))
+    old = [json.loads(line) for line in part.read_text().splitlines()]
+    part.write_text("".join(json.dumps({k: v for k, v in r.items() if k != "entry"}) + "\n" for r in old))
+    opened = []
+    real_extract = takeout._extract_zip
+
+    def spy(zip_path, *a, **k):
+        opened.append(zip_path.name)
+        return real_extract(zip_path, *a, **k)
+
+    monkeypatch.setattr(takeout, "_extract_zip", spy)
+    code, out, _ = run(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out
+    assert opened == [zname(1)]
+    assert [r["entry"] for r in manifest(cfg)] == ["Takeout/a/1.jpg"]
+
+
+def test_reconcile_matches_nfd_listing(env, capsys, monkeypatch):
+    """D7: the SMB mount may list NFD names for NFC zip entries; reconcile must still match them."""
+    cfg, zips = env
+    make_zip(zips, 1, {unicodedata.normalize("NFC", "Takeout/Café.jpg"): b"c" * 10})
+    assert run(cfg, zips, capsys)[0] == 0
+    real_walk = os.walk
+
+    def nfd_walk(top, *a, **k):
+        for d, dirs, names in real_walk(top, *a, **k):
+            yield d, dirs, [unicodedata.normalize("NFD", n) for n in names]
+
+    monkeypatch.setattr(takeout.os, "walk", nfd_walk)
+    assert takeout.reconcile(mdir(cfg), tree(cfg)) == []

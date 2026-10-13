@@ -265,10 +265,13 @@ def reconcile(mdir: Path, tree: Path, expected: dict[str, int] | None = None) ->
             problems.append(f"{z}: zip file entries {expected.get(z, 0)} != manifest rows {rows_of[z]}")
         if disk_of[z] != rows_of[z]:
             problems.append(f"{z}: files on disk {disk_of[z]} != manifest rows {rows_of[z]}")
-    listed = {r["path"] for r in rows}
-    missing = sum(1 for r in rows if r["path"] not in on_disk)
-    resized = sum(1 for r in rows if r["path"] in on_disk and (tree / r["path"]).stat().st_size != r["size"])
-    extra = sum(1 for p in on_disk if p not in listed)
+    # match by NFC: the manifest path follows the zip entry, the SMB mount may list NFD names (D7)
+    disk_nfc = {unicodedata.normalize("NFC", p): p for p in on_disk}
+    listed = {unicodedata.normalize("NFC", r["path"]) for r in rows}
+    found = [(r, disk_nfc.get(unicodedata.normalize("NFC", r["path"]))) for r in rows]
+    missing = sum(1 for _, p in found if p is None)
+    resized = sum(1 for r, p in found if p is not None and (tree / p).stat().st_size != r["size"])
+    extra = sum(1 for p in disk_nfc if p not in listed)
     if missing:
         problems.append(f"{missing} manifest file(s) missing from the tree")
     if resized:
