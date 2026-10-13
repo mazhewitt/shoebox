@@ -54,3 +54,30 @@ price_cache_write_1h_multiplier = 2.0
 price_cache_read_multiplier = 0.05
 price_date = "2026-10-13"
 price_valid_until = "2027-01-13"
+
+# Sonnet 5.5 through the same runner and layout, tried as a cheaper bulk captioner (owner, 2026-10-13); it must pass
+# the eval-1k gates (search non-inferiority, caption audit, mono precision) before any bulk use.
+[candidates.sonnet-api-v2]
+runtime = "anthropic-batch"
+model = "claude-sonnet-5-5"
+model_id = "anthropic/claude-sonnet-5-5"
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+max_tokens = 2048
+budget_provider = "anthropic"
+prompt_placement = "system-cached"
+max_usd_per_run = 10.0
+est_image_tokens = 1400
+est_prompt_tokens = 3300
+est_cached_prompt_tokens = 2100
+est_output_tokens = 400
+est_thinking_tokens = 0
+price_input_usd_per_mtok = 2.0     # platform.claude.com/docs/en/about-claude/pricing, 2026-10-13
+price_output_usd_per_mtok = 10.0
+price_batch_discount = 0.5
+price_cache_write_5m_multiplier = 1.25
+price_cache_write_1h_multiplier = 2.0
+price_cache_read_multiplier = 0.05
+price_date = "2026-10-13"
+price_valid_until = "2027-01-13"
