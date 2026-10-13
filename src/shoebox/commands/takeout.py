@@ -16,8 +16,8 @@ def register(sub) -> None:
     v.add_argument("--dest", type=Path, default=None, help="default <shoebox_root>/originals/takeout/<account>")
     v.add_argument("--export", default=None, metavar="TS", help="only zips of this export timestamp")
     v.add_argument("--extracted", action="store_true",
-                   help="the tree was already extracted (7-Zip on the NAS): verify it against the zips' central "
-                   "directories without reading zip data (design D7); needs --export")
+                   help="the tree was already extracted (7-Zip on the NAS, one folder per zip): verify it against "
+                   "the zips' central directories without reading zip data (design D7); needs --export")
     v.add_argument("--workers", type=int, default=8, help="--extracted: concurrent file reads (default 8)")
     v.set_defaults(func=cmd_verify)
 

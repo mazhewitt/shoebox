@@ -1,16 +1,20 @@
 ## 1. Verify and extract
 
 - [x] 1.1 Implement `src/shoebox/takeout.py` and `shoebox takeout verify --zips DIR --account owner [--dest]` per
-  design D1–D5: one pass per zip (CRC on read, BLAKE3 on the same stream, temp file then rename), `zips.jsonl`,
-  `manifest.parquet`, resume, reconcile, the cleanup line. Counts only on stdout (no file names).
+  design D1–D5 and D8: one folder per zip (`<export>/<zip stem>/`), SMB-safe names (trailing space/dot stripped
+  per component, `entry` column keeps the zip's name), one pass per zip (CRC on read, BLAKE3 on the same stream, temp
+  file then rename), `zips.jsonl`, `manifest.parquet`, resume, per-zip reconcile, the cleanup line. Counts only on
+  stdout (no file names).
   - Verify with tests on synthetic zips: good zip; corrupt entry (CRC); unopenable zip; resume after an interrupt;
-    duplicate entry path (identical bytes and different bytes); missing/resized file caught by reconcile;
-    destination under a source root refused; no writes under the zips folder.
-  - Verify-only mode `--extracted --export TS [--workers N]` per design D7, for the tree 7-Zip extracts on the NAS:
-    central directory only, per-file size + CRC-32 + BLAKE3, NFC/case-insensitive name matching, Synology metadata
-    ignored, same manifest columns. Tests: all good; missing file; size mismatch; same-size byte flip; extra file;
-    `@eaDir` ignored; NFD name on disk vs NFC entry; case/NFC collision across zips identical vs different; resume
-    skips verified zips; no writes under the zips folder; no names on stdout.
+    same entry path in two zips with different bytes both kept; trailing-space album folder stored SMB-safe; two
+    entries of one zip mapping to one name fail; missing/resized file caught by reconcile; unexpected top-level
+    folder caught by reconcile; destination under a source root refused; no writes under the zips folder.
+  - Verify-only mode `--extracted --export TS [--workers N]` per design D7, for the per-zip tree 7-Zip extracts on the
+    NAS (`takeout-perzip.sh`): central directory only, per-file size + CRC-32 + BLAKE3, NFC/case-insensitive name
+    matching within a zip folder, Synology metadata ignored, same manifest columns. Tests: all good; missing file;
+    size mismatch; same-size byte flip; extra file; unexpected top-level item; `@eaDir` ignored; NFD name on disk vs
+    NFC entry; same entry path in two zips; trailing-space album; trailing-space/case/NFC twins in one zip conflict;
+    resume skips verified zips; no writes under the zips folder; no names on stdout.
 - [ ] 1.2 Run it over `~/mnt/importantfiles-ro/Takeout` (owner's export `20261012T083010Z`, and the
   `20261012T083009Z` zip). Record per-zip results, totals, throughput and the reconcile in
   `evals/runs/<date>_takeout-verify.md` (counts only).
