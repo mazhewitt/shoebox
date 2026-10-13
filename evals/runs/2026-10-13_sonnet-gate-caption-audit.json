@@ -1,0 +1,1596 @@
+{
+ "arms": {
+  "gemini-medium-v2": {
+   "error_rate": {
+    "ci95": [
+     0.2386,
+     0.3655
+    ],
+    "mean": 0.2995
+   },
+   "invented": {
+    "ci95": [
+     0.1378,
+     0.2602
+    ],
+    "mean": 0.199
+   },
+   "missing": {
+    "ci95": [
+     0.0255,
+     0.0918
+    ],
+    "mean": 0.0561
+   },
+   "n": 196,
+   "no_caption": 1,
+   "useful": {
+    "ci95": [
+     4.4365,
+     4.6041
+    ],
+    "mean": 4.5228
+   },
+   "wrong": {
+    "ci95": [
+     0.0918,
+     0.1888
+    ],
+    "mean": 0.1378
+   }
+  },
+  "sonnet-api-v2": {
+   "error_rate": {
+    "ci95": [
+     0.1066,
+     0.203
+    ],
+    "mean": 0.1523
+   },
+   "invented": {
+    "ci95": [
+     0.0711,
+     0.1624
+    ],
+    "mean": 0.1168
+   },
+   "missing": {
+    "ci95": [
+     0.0051,
+     0.0457
+    ],
+    "mean": 0.0254
+   },
+   "n": 197,
+   "no_caption": 0,
+   "useful": {
+    "ci95": [
+     4.797,
+     4.9137
+    ],
+    "mean": 4.8579
+   },
+   "wrong": {
+    "ci95": [
+     0.0203,
+     0.0761
+    ],
+    "mean": 0.0457
+   }
+  }
+ },
+ "bootstrap": 2000,
+ "date": "2026-10-13",
+ "opus_model_id": "claude/opus-5.5",
+ "opus_params_hash": "1b3c3d9e61591c1e",
+ "owner_params_hash": "ff930a089fd03332",
+ "paired_vs_reference": {
+  "sonnet-api-v2": {
+   "d11_error_rate_pass": true,
+   "error_rate": {
+    "ci95": [
+     -0.2183,
+     -0.0761
+    ],
+    "diff": -0.1472
+   },
+   "invented": {
+    "ci95": [
+     -0.1531,
+     -0.0153
+    ],
+    "diff": -0.0816
+   },
+   "missing": {
+    "ci95": [
+     -0.0765,
+     0.0051
+    ],
+    "diff": -0.0357
+   },
+   "n": 197,
+   "useful": {
+    "ci95": [
+     0.2487,
+     0.4264
+    ],
+    "diff": 0.335
+   },
+   "wrong": {
+    "ci95": [
+     -0.1531,
+     -0.0357
+    ],
+    "diff": -0.0918
+   }
+  }
+ },
+ "photos": 197,
+ "reference_arm": "gemini-medium-v2",
+ "rescore_params_hash": "e993ea8f27fbec6c",
+ "rules": {
+  "ci": "95% percentile bootstrap over photos; paired differences resample photos jointly (candidate minus reference)",
+  "d11": "candidate error rate <= reference + 2% (point estimate; paired CI shown); mono precision >= 0.98",
+  "error_rate": "share of photos with >= 1 wrong or invented fact, or no caption at all (a blocked or invalid photo counts as an error and as usefulness 1; it adds nothing to the wrong/invented/missing means)",
+  "structured": "scored against the Opus reference where its confidence is high or medium"
+ },
+ "self_audit": {
+  "opus-v2": "self-audit \u2014 not used for the rule"
+ },
+ "set": "eval-1k",
+ "structured": {
+  "gemini-medium-v2": {
+   "overall": {
+    "colour_class": {
+     "accuracy": 0.9948,
+     "correct": 192,
+     "n": 193
+    },
+    "digitiser": {
+     "accuracy": 0.9202,
+     "correct": 173,
+     "n": 188
+    },
+    "medium": {
+     "accuracy": 0.9319,
+     "correct": 178,
+     "n": 191
+    },
+    "mono": {
+     "d11_precision_pass": false,
+     "fn": 0,
+     "fp": 1,
+     "precision": 0.9737,
+     "recall": 1.0,
+     "tp": 37
+    },
+    "rotate_cw": {
+     "rotated": {
+      "accuracy": 0.5714,
+      "correct": 4,
+      "n": 7
+     },
+     "upright": {
+      "accuracy": 1.0,
+      "correct": 184,
+      "n": 184
+     }
+    }
+   },
+   "per_stratum": {
+    "1990s|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "2000-09|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 3
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 4,
+       "n": 4
+      }
+     }
+    },
+    "2000-09|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 48,
+      "n": 48
+     },
+     "digitiser": {
+      "accuracy": 0.9792,
+      "correct": 47,
+      "n": 48
+     },
+     "medium": {
+      "accuracy": 0.9792,
+      "correct": 47,
+      "n": 48
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 0.5,
+       "correct": 2,
+       "n": 4
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 43,
+       "n": 43
+      }
+     }
+    },
+    "2010-14|mono|noscan": {
+     "colour_class": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "digitiser": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "medium": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      }
+     }
+    },
+    "2010-14|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 18,
+      "n": 18
+     },
+     "digitiser": {
+      "accuracy": 0.7222,
+      "correct": 13,
+      "n": 18
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 18,
+      "n": 18
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 18,
+       "n": 18
+      }
+     }
+    },
+    "2015-19|mono|noscan": {
+     "colour_class": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "digitiser": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      }
+     }
+    },
+    "2015-19|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 48,
+      "n": 48
+     },
+     "digitiser": {
+      "accuracy": 0.9574,
+      "correct": 45,
+      "n": 47
+     },
+     "medium": {
+      "accuracy": 0.9787,
+      "correct": 46,
+      "n": 47
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 0.0,
+       "correct": 0,
+       "n": 1
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 47,
+       "n": 47
+      }
+     }
+    },
+    "2020+|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "2020+|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 3,
+       "n": 3
+      }
+     }
+    },
+    "2020+|other|scan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "unknown|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 6,
+      "n": 6
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 6,
+      "n": 6
+     },
+     "medium": {
+      "accuracy": 0.7143,
+      "correct": 5,
+      "n": 7
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 6
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 6,
+       "n": 6
+      }
+     }
+    },
+    "unknown|mono|scan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 25,
+      "n": 25
+     },
+     "digitiser": {
+      "accuracy": 0.875,
+      "correct": 21,
+      "n": 24
+     },
+     "medium": {
+      "accuracy": 0.875,
+      "correct": 21,
+      "n": 24
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 25
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 24,
+       "n": 24
+      }
+     }
+    },
+    "unknown|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 17,
+      "n": 17
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 14,
+      "n": 14
+     },
+     "medium": {
+      "accuracy": 0.9412,
+      "correct": 16,
+      "n": 17
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 2
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 1.0,
+       "correct": 2,
+       "n": 2
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 15,
+       "n": 15
+      }
+     }
+    },
+    "unknown|other|scan": {
+     "colour_class": {
+      "accuracy": 0.9524,
+      "correct": 20,
+      "n": 21
+     },
+     "digitiser": {
+      "accuracy": 0.8095,
+      "correct": 17,
+      "n": 21
+     },
+     "medium": {
+      "accuracy": 0.7368,
+      "correct": 14,
+      "n": 19
+     },
+     "mono": {
+      "d11_precision_pass": false,
+      "fn": 0,
+      "fp": 1,
+      "precision": 0.0,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 21,
+       "n": 21
+      }
+     }
+    }
+   },
+   "scans": {
+    "colour_class": {
+     "accuracy": 0.9787,
+     "correct": 46,
+     "n": 47
+    },
+    "digitiser": {
+     "accuracy": 0.8478,
+     "correct": 39,
+     "n": 46
+    },
+    "medium": {
+     "accuracy": 0.8182,
+     "correct": 36,
+     "n": 44
+    },
+    "mono": {
+     "d11_precision_pass": false,
+     "fn": 0,
+     "fp": 1,
+     "precision": 0.9615,
+     "recall": 1.0,
+     "tp": 25
+    },
+    "rotate_cw": {
+     "rotated": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "upright": {
+      "accuracy": 1.0,
+      "correct": 46,
+      "n": 46
+     }
+    }
+   }
+  },
+  "sonnet-api-v2": {
+   "overall": {
+    "colour_class": {
+     "accuracy": 0.9897,
+     "correct": 192,
+     "n": 194
+    },
+    "digitiser": {
+     "accuracy": 0.9788,
+     "correct": 185,
+     "n": 189
+    },
+    "medium": {
+     "accuracy": 0.9635,
+     "correct": 185,
+     "n": 192
+    },
+    "mono": {
+     "d11_precision_pass": false,
+     "fn": 0,
+     "fp": 1,
+     "precision": 0.9737,
+     "recall": 1.0,
+     "tp": 37
+    },
+    "rotate_cw": {
+     "rotated": {
+      "accuracy": 1.0,
+      "correct": 7,
+      "n": 7
+     },
+     "upright": {
+      "accuracy": 1.0,
+      "correct": 185,
+      "n": 185
+     }
+    }
+   },
+   "per_stratum": {
+    "1990s|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "2000-09|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 4,
+      "n": 4
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 3
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 4,
+       "n": 4
+      }
+     }
+    },
+    "2000-09|other|noscan": {
+     "colour_class": {
+      "accuracy": 0.9792,
+      "correct": 47,
+      "n": 48
+     },
+     "digitiser": {
+      "accuracy": 0.9792,
+      "correct": 47,
+      "n": 48
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 48,
+      "n": 48
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 1.0,
+       "correct": 4,
+       "n": 4
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 43,
+       "n": 43
+      }
+     }
+    },
+    "2010-14|mono|noscan": {
+     "colour_class": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "digitiser": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "medium": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      }
+     }
+    },
+    "2010-14|other|noscan": {
+     "colour_class": {
+      "accuracy": 0.9474,
+      "correct": 18,
+      "n": 19
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 19,
+      "n": 19
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 19,
+      "n": 19
+     },
+     "mono": {
+      "d11_precision_pass": false,
+      "fn": 0,
+      "fp": 1,
+      "precision": 0.0,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 19,
+       "n": 19
+      }
+     }
+    },
+    "2015-19|mono|noscan": {
+     "colour_class": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "digitiser": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      }
+     }
+    },
+    "2015-19|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 48,
+      "n": 48
+     },
+     "digitiser": {
+      "accuracy": 0.9787,
+      "correct": 46,
+      "n": 47
+     },
+     "medium": {
+      "accuracy": 0.9787,
+      "correct": 46,
+      "n": 47
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 47,
+       "n": 47
+      }
+     }
+    },
+    "2020+|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 1
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "2020+|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 3,
+      "n": 3
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 3,
+       "n": 3
+      }
+     }
+    },
+    "2020+|other|scan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "medium": {
+      "accuracy": 1.0,
+      "correct": 1,
+      "n": 1
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 1,
+       "n": 1
+      }
+     }
+    },
+    "unknown|mono|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 6,
+      "n": 6
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 6,
+      "n": 6
+     },
+     "medium": {
+      "accuracy": 0.5714,
+      "correct": 4,
+      "n": 7
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 6
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 6,
+       "n": 6
+      }
+     }
+    },
+    "unknown|mono|scan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 25,
+      "n": 25
+     },
+     "digitiser": {
+      "accuracy": 0.9583,
+      "correct": 23,
+      "n": 24
+     },
+     "medium": {
+      "accuracy": 0.9583,
+      "correct": 23,
+      "n": 24
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 25
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 24,
+       "n": 24
+      }
+     }
+    },
+    "unknown|other|noscan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 17,
+      "n": 17
+     },
+     "digitiser": {
+      "accuracy": 0.9286,
+      "correct": 13,
+      "n": 14
+     },
+     "medium": {
+      "accuracy": 0.9412,
+      "correct": 16,
+      "n": 17
+     },
+     "mono": {
+      "d11_precision_pass": true,
+      "fn": 0,
+      "fp": 0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "tp": 2
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": 1.0,
+       "correct": 2,
+       "n": 2
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 15,
+       "n": 15
+      }
+     }
+    },
+    "unknown|other|scan": {
+     "colour_class": {
+      "accuracy": 1.0,
+      "correct": 21,
+      "n": 21
+     },
+     "digitiser": {
+      "accuracy": 1.0,
+      "correct": 21,
+      "n": 21
+     },
+     "medium": {
+      "accuracy": 0.9474,
+      "correct": 18,
+      "n": 19
+     },
+     "mono": {
+      "d11_precision_pass": null,
+      "fn": 0,
+      "fp": 0,
+      "precision": null,
+      "recall": null,
+      "tp": 0
+     },
+     "rotate_cw": {
+      "rotated": {
+       "accuracy": null,
+       "correct": 0,
+       "n": 0
+      },
+      "upright": {
+       "accuracy": 1.0,
+       "correct": 21,
+       "n": 21
+      }
+     }
+    }
+   },
+   "scans": {
+    "colour_class": {
+     "accuracy": 1.0,
+     "correct": 47,
+     "n": 47
+    },
+    "digitiser": {
+     "accuracy": 0.9783,
+     "correct": 45,
+     "n": 46
+    },
+    "medium": {
+     "accuracy": 0.9545,
+     "correct": 42,
+     "n": 44
+    },
+    "mono": {
+     "d11_precision_pass": true,
+     "fn": 0,
+     "fp": 0,
+     "precision": 1.0,
+     "recall": 1.0,
+     "tp": 25
+    },
+    "rotate_cw": {
+     "rotated": {
+      "accuracy": null,
+      "correct": 0,
+      "n": 0
+     },
+     "upright": {
+      "accuracy": 1.0,
+      "correct": 46,
+      "n": 46
+     }
+    }
+   }
+  }
+ },
+ "usefulness": {
+  "arms": {
+   "e4b-bf16": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      3.72,
+      3.93
+     ],
+     "mean": 3.83
+    },
+    "unanchored": {
+     "ci95": null,
+     "mean": null
+    },
+    "unanchored_n": 0
+   },
+   "e4b-bf16-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      3.79,
+      4.04
+     ],
+     "mean": 3.915
+    },
+    "unanchored": {
+     "ci95": null,
+     "mean": null
+    },
+    "unanchored_n": 0
+   },
+   "g12b-q4": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.08,
+      4.295
+     ],
+     "mean": 4.19
+    },
+    "unanchored": {
+     "ci95": null,
+     "mean": null
+    },
+    "unanchored_n": 0
+   },
+   "g12b-q4-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.2,
+      4.41
+     ],
+     "mean": 4.305
+    },
+    "unanchored": {
+     "ci95": null,
+     "mean": null
+    },
+    "unanchored_n": 0
+   },
+   "gemini-medium-v2": {
+    "n": 200,
+    "rubric": {
+     "ci95": [
+      4.865,
+      4.965
+     ],
+     "mean": 4.92
+    },
+    "unanchored": {
+     "ci95": [
+      4.4315,
+      4.6091
+     ],
+     "mean": 4.5228
+    },
+    "unanchored_n": 197
+   }
+  },
+  "bootstrap": 2000,
+  "owner": {
+   "agreement": {
+    "mean_abs_diff": 0.7067,
+    "pairs": 150,
+    "spearman_per_photo": {
+     "mean": 0.4221,
+     "n": 23
+    },
+    "spearman_pooled": 0.3299
+   },
+   "arms": {
+    "e4b-bf16": {
+     "n": 30,
+     "opus_rubric": {
+      "ci95": [
+       3.8667,
+       4.2667
+      ],
+      "mean": 4.0667
+     },
+     "opus_unanchored": {
+      "ci95": null,
+      "mean": null
+     },
+     "owner": {
+      "ci95": [
+       3.3667,
+       3.9
+      ],
+      "mean": 3.6667
+     }
+    },
+    "e4b-bf16-v2": {
+     "n": 30,
+     "opus_rubric": {
+      "ci95": [
+       3.7333,
+       4.4
+      ],
+      "mean": 4.1
+     },
+     "opus_unanchored": {
+      "ci95": null,
+      "mean": null
+     },
+     "owner": {
+      "ci95": [
+       3.3667,
+       3.9667
+      ],
+      "mean": 3.7
+     }
+    },
+    "g12b-q4": {
+     "n": 30,
+     "opus_rubric": {
+      "ci95": [
+       4.1333,
+       4.5333
+      ],
+      "mean": 4.3333
+     },
+     "opus_unanchored": {
+      "ci95": null,
+      "mean": null
+     },
+     "owner": {
+      "ci95": [
+       3.3333,
+       3.8
+      ],
+      "mean": 3.5667
+     }
+    },
+    "g12b-q4-v2": {
+     "n": 30,
+     "opus_rubric": {
+      "ci95": [
+       4.3,
+       4.7667
+      ],
+      "mean": 4.5333
+     },
+     "opus_unanchored": {
+      "ci95": null,
+      "mean": null
+     },
+     "owner": {
+      "ci95": [
+       3.5333,
+       4.0
+      ],
+      "mean": 3.7667
+     }
+    },
+    "gemini-medium-v2": {
+     "n": 30,
+     "opus_rubric": {
+      "ci95": [
+       4.4,
+       4.9333
+      ],
+      "mean": 4.7
+     },
+     "opus_unanchored": {
+      "ci95": [
+       3.9333,
+       4.6
+      ],
+      "mean": 4.3
+     },
+     "owner": {
+      "ci95": [
+       4.0667,
+       4.6333
+      ],
+      "mean": 4.3667
+     }
+    },
+    "opus-v2": {
+     "n": 0,
+     "opus_rubric": {
+      "ci95": null,
+      "mean": null
+     },
+     "opus_unanchored": {
+      "ci95": null,
+      "mean": null
+     },
+     "owner": {
+      "ci95": null,
+      "mean": null
+     }
+    }
+   },
+   "photos": 30
+  },
+  "paired_vs_reference": {
+   "e4b-bf16": {
+    "ci95": [
+     -1.205,
+     -0.965
+    ],
+    "diff": -1.09,
+    "n": 200
+   },
+   "e4b-bf16-v2": {
+    "ci95": [
+     -1.135,
+     -0.88
+    ],
+    "diff": -1.005,
+    "n": 200
+   },
+   "g12b-q4": {
+    "ci95": [
+     -0.85,
+     -0.61
+    ],
+    "diff": -0.73,
+    "n": 200
+   },
+   "g12b-q4-v2": {
+    "ci95": [
+     -0.725,
+     -0.495
+    ],
+    "diff": -0.615,
+    "n": 200
+   }
+  },
+  "reference_arm": "gemini-medium-v2",
+  "rules": {
+   "owner": "owner's blind 1-5 on the review page; agreement vs the Opus rubric score: Spearman across the arms of each photo (photos where either side is constant are skipped), averaged; pooled Spearman over all (photo, arm) pairs; mean absolute difference",
+   "paired": "candidate minus reference, photos resampled jointly; 95% percentile bootstrap",
+   "rubric": "Opus usefulness against config/prompts/caption-usefulness-v1.md (1-5), mean per photo",
+   "unanchored": "the caption audit's original 1-5 usefulness (no anchored rubric), same photos"
+  }
+ }
+}
