@@ -461,3 +461,131 @@ def test_frozen_repo_thresholds_are_the_recorded_ones():
     assert gates["colour_filter"]["heuristic_hash"] == "2228f47c8e77df69"
     assert gates["colour_filter"]["source"] == {"scan": "heuristic", "received": "heuristic",
                                                 "phone": "unavailable", "camera": "unavailable"}
+
+
+# ---------- second sample (colour-mono-pc) and v2 thresholds ----------
+
+
+def test_reference_accepts_opus_v2_or_opus_api_v2_with_the_same_trust_rule():
+    assert colour.REFERENCE_CANDIDATES == ("opus-v2", "opus-api-v2")
+    a, b = {aid(0): label("mono"), aid(1): label("mono", 0.4)}, {aid(0): label("colour"), aid(1): label("colour"),
+                                                               aid(2): label("toned", 0.3), aid(3): label("mono")}
+    refs = colour.merge_refs([a, b])
+    assert colour.trusted_label(refs[aid(0)]) == "mono"  # opus-v2 first when both are ok
+    assert colour.trusted_label(refs[aid(1)]) is None  # an ok opus-v2 record wins; low confidence stays untrusted
+    assert colour.trusted_label(refs[aid(2)]) is None and colour.trusted_label(refs[aid(3)]) == "mono"
+    err = {"status": "error"}
+    assert colour.merge_refs([{aid(5): err}, {aid(5): label("colour")}])[aid(5)]["output"]["colour_class"] == "colour"
+    assert colour.merge_refs([{aid(5): err}, {}])[aid(5)] == err
+
+
+def test_draw_restricts_strata_per_stratum_counts_and_excludes_previous_sets(tmp_path):
+    rows = corpus(40)
+    phone = [r for r in rows if r["make"] == "Apple"]
+    phone[0]["group_id"] = phone[4]["group_id"] = "gphone"
+    prior = {phone[0]["asset_id"], phone[1]["asset_id"]}
+    kw = {"seed": 3, "n_mono": 6, "n_near": 4, "floor": 1, "strata": ("phone", "camera")}
+    items, meta = colour.draw(rows, {r["asset_id"] for r in rows}, set(), cfg_for(tmp_path), prior=prior, **kw)
+    ids = {it["asset_id"] for it in items}
+    assert {it["origin"] for it in items} == {"phone", "camera"}
+    for s in ("phone", "camera"):
+        assert sum(it["origin"] == s and it["bucket"] == "mono" for it in items) == 6
+        assert sum(it["origin"] == s and it["bucket"] == "near" for it in items) == 4
+    assert not (prior | {phone[4]["asset_id"]}) & ids
+    assert meta["dropped"]["previous_set"] == 2 and meta["dropped"]["previous_set_group"] == 1
+    assert meta["strata"] == ["phone", "camera"] and meta["buckets"]["mono"]["drawn"] == {"phone": 6, "camera": 6}
+    assert all(it["split"] == colour.split_of(3, it.get("group_id") or it["asset_id"]) for it in items)
+    assert all(it["key"].startswith("m-") for it in items)
+    assert colour.draw(rows, {r["asset_id"] for r in rows}, set(), cfg_for(tmp_path), prior=prior,
+                       key_prefix="p", **kw)[0][0]["key"].startswith("p-")
+    with pytest.raises(ValueError, match="stratum"):
+        colour.draw(rows, set(), set(), cfg_for(tmp_path), strata=("phone", "selfie"))
+
+
+def test_v2_freeze_and_test_on_a_new_set_with_already_seen_secondary(tmp_path):
+    rows = eval_rows()
+    fpath, runs, led = tmp_path / "colour-thresholds-v2.json", tmp_path / "runs", tmp_path / "ledger.jsonl"
+    tuned = colour.tune([r for r in rows if r["split"] == "dev"], gate=0.98, min_pred=3)
+    doc = colour.freeze(fpath, tuned, {"sets": ["colour-mono", "colour-mono-pc"], "version": 2})
+    assert doc["sets"] == ["colour-mono", "colour-mono-pc"] and doc["version"] == 2
+    test_rows = [r for r in rows if r["split"] == "test"]
+    # the same thresholds already scored on the first set (a ledger line without `set`) block that set only
+    led.write_text(json.dumps({"frozen_hash": doc["hash"], "report": "old", "runs_dir": "runs"}) + "\n")
+    with pytest.raises(colour.AlreadyScored):
+        colour.test_report(test_rows, fpath, runs, "2026-10-14", gate=0.98, min_pred=3, ledger=led)
+    sec = colour.secondary(test_rows[:9], fpath, gate=0.98, min_pred=3, coverage=(9, 9))
+    rep = colour.test_report(test_rows, fpath, runs, "2026-10-14", gate=0.98, min_pred=3, ledger=led,
+                             set_name="colour-mono-pc", secondary={"colour-mono": sec})
+    assert rep["set"] == "colour-mono-pc" and rep["report"] == "2026-10-14_colour-heuristic-colour-mono-pc"
+    s = rep["secondary"]["colour-mono"]
+    assert s["already_seen"] is True and s["test"]["overall"]["n"] == 9 and "strata" in s
+    md = (runs / f"{rep['report']}.md").read_text()
+    assert "colour-mono-pc" in md and "already-seen" in md and "Secondary" in md
+    with pytest.raises(colour.AlreadyScored):
+        colour.test_report(test_rows, fpath, runs, "2026-10-15", gate=0.98, min_pred=3, ledger=led,
+                           set_name="colour-mono-pc")
+    last = json.loads(led.read_text().splitlines()[-1])
+    assert last["set"] == "colour-mono-pc" and last["frozen_hash"] == doc["hash"]
+
+
+def test_cli_second_sample_v2_tune_and_test(tmp_path, monkeypatch, capsys):
+    from shoebox.cli import main
+    from shoebox.commands import eval as eval_cmd
+    from shoebox.evals import judge
+
+    cfg = cfg_for(tmp_path)
+    monkeypatch.setattr(eval_cmd, "_cfg", lambda: cfg)
+    monkeypatch.setattr(privacy, "NEVER_SEND_PATH", tmp_path / "never-send.txt")
+    monkeypatch.setattr(colour, "LEDGER_PATH", tmp_path / "ledger.jsonl")
+    rows = corpus(80)
+    frame = write_frame(tmp_path / "frame.parquet", rows)
+    idx = cfg.derived_dir / "infer-v1" / "index.jsonl"
+    idx.parent.mkdir(parents=True)
+    idx.write_text("".join(json.dumps({"asset_id": r["asset_id"], "status": "ok"}) + "\n" for r in rows))
+    sets = tmp_path / "sets"
+    (sets / "eval-1k").mkdir(parents=True)
+    judge.write_jsonl(sets / "eval-1k" / "caption-audit-sample.jsonl", [{"key": "c-001", "asset_id": aid(0)}])
+    judge.write_jsonl(sets / "eval-1k" / "items.jsonl", [{"asset_id": aid(0), "source": "own", "relpath": "x"}])
+    common = ["--frame", str(frame), "--sets-dir", str(sets)]
+    assert main(["eval", "colour-draw", *common, "--n-mono", "40", "--n-near", "40", "--floor", "5"]) == 0
+    first = [json.loads(x) for x in (sets / colour.SET_NAME / "items.jsonl").read_text().splitlines()]
+    assert main(["eval", "colour-draw", *common, "--set", "colour-mono-pc", "--strata", "phone,camera",
+                 "--n-mono", "10", "--n-near", "8"]) == 0
+    pc = [json.loads(x) for x in (sets / "colour-mono-pc" / "items.jsonl").read_text().splitlines()]
+    assert len(pc) == 36 and {it["origin"] for it in pc} == {"phone", "camera"}
+    pc_ids = {it["asset_id"] for it in pc}
+    assert not {it["asset_id"] for it in first} & pc_ids and aid(0) not in pc_ids
+    assert not {it["key"] for it in first} & {it["key"] for it in pc}
+    meta = json.loads((sets / "colour-mono-pc" / colour.SAMPLE_META).read_text())
+    assert meta["previous_sets"] == ["colour-mono"] and meta["dropped"]["previous_set"] > 0
+
+    by = {r["asset_id"]: r for r in rows}
+
+    def ref(it):
+        return label("mono" if by[it["asset_id"]]["chroma_p95"] < 2 else "colour")
+
+    opus = {it["asset_id"]: ref(it) for it in first}
+    api = {it["asset_id"]: ref(it) for it in pc}
+    monkeypatch.setattr(colour, "load_labels", lambda cfg, cand: {"opus-v2": opus, "opus-api-v2": api}.get(cand, {}))
+    v1, v2 = tmp_path / colour.FROZEN_PATH, tmp_path / colour.FROZEN_V2_PATH
+    v1.write_text("v1 untouched\n")
+    assert main(["eval", "colour-tune", *common, "--sets", "colour-mono,colour-mono-pc", "--frozen", str(v1)]) == 2
+    assert "v1" in capsys.readouterr().err
+    assert main(["eval", "colour-tune", *common, "--sets", "colour-mono,colour-mono-pc", "--frozen", str(v2),
+                 "--min-pred", "2"]) == 0
+    doc = json.loads(v2.read_text())
+    assert v1.read_text() == "v1 untouched\n"
+    assert doc["sets"] == ["colour-mono", "colour-mono-pc"] and doc["version"] == 2
+    assert doc["dev_n"] == sum(it["split"] == "dev" for it in first + pc)
+    runs = tmp_path / "runs"
+    assert main(["eval", "colour-test", *common, "--frozen", str(v2), "--out-dir", str(runs)]) == 2
+    assert "already scored" in capsys.readouterr().err and not runs.exists()
+    test = ["eval", "colour-test", *common, "--set", "colour-mono-pc", "--frozen", str(v2), "--min-pred", "2",
+            "--out-dir", str(runs), "--date", "2026-10-14"]
+    assert main(test) == 0
+    rep = json.loads(next(runs.glob("*colour-mono-pc.json")).read_text())
+    assert rep["test"]["overall"]["n"] == sum(it["split"] == "test" for it in pc)
+    sec = rep["secondary"]["colour-mono"]
+    assert sec["already_seen"] and sec["test"]["overall"]["n"] == sum(it["split"] == "test" for it in first)
+    capsys.readouterr()
+    assert main(test) == 1 and "already scored" in capsys.readouterr().err

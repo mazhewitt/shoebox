@@ -43,6 +43,9 @@ TRUSTED_MIN = 0.5  # label-v2 numeric confidence: >= 0.9 clear, 0.5-0.8 leaning 
 SET_NAME = "colour-mono"
 SAMPLE_META = "sample.json"
 FROZEN_PATH = "colour-thresholds.json"
+# v2: tuned on the union of the dev halves of colour-mono and colour-mono-pc; v1 stays as recorded.
+FROZEN_V2_PATH = "colour-thresholds-v2.json"
+PC_SET_NAME = "colour-mono-pc"
 REPORT_SUFFIX = "colour-heuristic"
 # Fixed record of every test-half scoring (not under --out-dir, so another out dir cannot skip the run-once rule).
 LEDGER_PATH = REPO_ROOT / "evals" / "colour-test-ledger.jsonl"
@@ -52,6 +55,8 @@ N_MONO = N_NEAR = 150
 FLOOR = 25
 MIN_PRED = 10
 REFERENCE_CANDIDATE = "opus-v2"
+# Either Opus labeller is a reference (both label-v2, blind to colour_guess): opus-v2 first, then opus-api-v2.
+REFERENCE_CANDIDATES = (REFERENCE_CANDIDATE, "opus-api-v2")
 GEMINI_CANDIDATE = "gemini-medium-v2"
 MONO_C95_GRID = (0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 8.0)
 FRAME_COLUMNS = ("source", "relpath", "asset_id", "kind", "ext", "bytes", "mtime", "make", "model", "software",
@@ -170,6 +175,28 @@ def load_labels(cfg, candidate: str) -> dict[str, dict]:
         return {}
 
 
+def merge_refs(per_candidate: list[dict[str, dict]]) -> dict[str, dict]:
+    """{asset_id: record}: the first candidate's ok record, else the first record of any status. The trust
+    rule (`trusted_label`) is applied afterwards, unchanged."""
+    out: dict[str, dict] = {}
+    for recs in per_candidate:
+        for a, rec in recs.items():
+            if a not in out or (out[a].get("status") != "ok" and rec.get("status") == "ok"):
+                out[a] = rec
+    return out
+
+
+def load_refs(cfg, candidates=REFERENCE_CANDIDATES) -> dict[str, dict]:
+    """Merged reference records; a candidate not configured yet contributes nothing (coverage still gates)."""
+    per = []
+    for c in candidates:
+        try:
+            per.append(load_labels(cfg, c))
+        except KeyError:
+            per.append({})
+    return merge_refs(per)
+
+
 def labelled_rows(items: list[dict], frows: dict[str, dict], refs: dict[str, dict], gem: dict[str, dict]
                   ) -> list[dict]:
     """Rows with a trusted reference: {asset_id, stratum, row, ref, split, gemini}."""
@@ -251,13 +278,22 @@ def split_of(seed: int, group: str) -> str:
 
 
 def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed: int = DEFAULT_SEED,
-         n_mono: int = N_MONO, n_near: int = N_NEAR, floor: int = FLOOR, **privacy_kw) -> tuple[list[dict], dict]:
+         n_mono: int = N_MONO, n_near: int = N_NEAR, floor: int = FLOOR, strata: tuple[str, ...] | None = None,
+         prior: set[str] = frozenset(), key_prefix: str = "m", **privacy_kw) -> tuple[list[dict], dict]:
     """Seeded, privacy-filtered (`provider="claude"`) mono-stratified draw. `privacy_kw` go to
-    `privacy.filter_items` (tests); a PrivacyError (e.g. incomplete pixel-hash coverage) propagates."""
+    `privacy.filter_items` (tests); a PrivacyError (e.g. incomplete pixel-hash coverage) propagates.
+
+    `strata` restricts the draw to those origin strata and makes `n_mono`/`n_near` per-stratum targets (capped
+    at what is available); without it they are totals spread by largest remainder. `prior`: assets of earlier
+    colour sets, excluded with their capture groups like the caption-audit sample."""
+    if strata is not None and (not strata or set(strata) - set(STRATA)):
+        raise ValueError(f"unknown origin stratum in {list(strata)}; known: {', '.join(STRATA)}")
+    use = tuple(s for s in STRATA if strata is None or s in strata)
     rows = by_asset(frame_rows)
     drop = Counter()
     cands, seen_groups = [], set()
     audit_groups = {queries.group_key(rows[a]) for a in exclude if a in rows}
+    prior_groups = {queries.group_key(rows[a]) for a in prior if a in rows}
     for a in sorted(rows, key=lambda a: (_h(seed, "order", a), a)):
         r = rows[a]
         b = bucket(r)
@@ -270,6 +306,12 @@ def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed
             drop["caption_audit_sample"] += 1
         elif g in audit_groups:
             drop["caption_audit_group"] += 1
+        elif a in prior:
+            drop["previous_set"] += 1
+        elif g in prior_groups:
+            drop["previous_set_group"] += 1
+        elif origin_stratum(r) not in use:
+            drop["other_stratum"] += 1
         elif g in seen_groups:
             drop["same_group"] += 1
         else:
@@ -286,31 +328,38 @@ def draw(frame_rows: list[dict], derived: set[str], exclude: set[str], cfg, seed
             pools[bucket(r)][origin_stratum(r)].append(r)
     out, meta_b = [], {}
     for b, n in (("mono", n_mono), ("near", n_near)):
-        sizes = {s: len(v) for s, v in pools[b].items()}
-        alloc = (queries._largest_remainder({s: max(v, 1e-9) for s, v in sizes.items()}, min(n, sum(sizes.values())),
-                                            floor_min=floor, cap=sizes) if sum(sizes.values()) else
-                 dict.fromkeys(STRATA, 0))
+        sizes = {s: len(pools[b][s]) for s in use}
+        if strata is not None:
+            alloc = {s: min(n, sizes[s]) for s in use}
+        else:
+            alloc = (queries._largest_remainder({s: max(v, 1e-9) for s, v in sizes.items()},
+                                                min(n, sum(sizes.values())), floor_min=floor, cap=sizes)
+                     if sum(sizes.values()) else dict.fromkeys(STRATA, 0))
         meta_b[b] = {"target": n, "available": sizes, "drawn": alloc,
-                     "shortfall": {s: floor - sizes[s] for s in STRATA if sizes[s] < floor}}
-        for s in STRATA:
+                     "shortfall": {s: floor - sizes[s] for s in use if sizes[s] < floor}}
+        for s in use:
             for r in pools[b][s][:alloc[s]]:
                 g = queries.group_key(r)
                 out.append({**allowed[r["asset_id"]], "origin": s, "bucket": b, "split": split_of(seed, g),
                             "colour_guess": r.get("colour_guess")})
     out.sort(key=lambda it: (_h(seed, "key", it["asset_id"]), it["asset_id"]))
-    out = [{"key": f"m-{i:03d}", **it} for i, it in enumerate(out, 1)]
-    meta = {"seed": seed, "n": len(out), "frame_assets": len(rows), "candidates": len(cands),
+    out = [{"key": f"{key_prefix}-{i:03d}", **it} for i, it in enumerate(out, 1)]
+    meta = {"seed": seed, "n": len(out), "strata": list(use), "frame_assets": len(rows), "candidates": len(cands),
             "dropped": dict(sorted(drop.items())), "skipped": elig.counts(), "buckets": meta_b,
             "splits": dict(sorted(Counter(it["split"] for it in out).items())),
             "rules": {"mono": "colour_guess in (mono, toned), not near",
                       "near": f"colour_guess unknown, colour with chroma_p95 < {NEAR_COLOUR_C95}, or mono with "
                               f"chroma_p95 >= {DEFAULT_THRESHOLDS.mono_sure_c95}",
-                      "allocation": f"largest remainder over available per origin stratum, floor {floor}, capped",
+                      "allocation": (f"per origin stratum in {list(use)}: n_mono/n_near each, capped at available"
+                                     if strata is not None else
+                                     f"largest remainder over available per origin stratum, floor {floor}, capped"),
                       "eligibility": "one image row per asset (latest frame), derived infer-v1 ok, "
                                      "privacy.filter_items(provider=claude), not in the caption-audit sample, "
+                                     "not in an earlier colour set, nor in either's capture groups, "
                                      "one per capture group",
                       "split": "dev/test by seeded sha256 of the capture group (group_id or asset_id), 50/50",
-                      "reference": f"{REFERENCE_CANDIDATE} label records (label-v2; colour_guess never shown), "
+                      "reference": f"{' or '.join(REFERENCE_CANDIDATES)} label records (label-v2; colour_guess "
+                                   "never shown), "
                                    f"colour_class with confidence >= {TRUSTED_MIN}"}}
     return out, meta
 
@@ -383,14 +432,18 @@ def load_frozen(path: Path) -> tuple[ColourThresholds, dict]:
     return t, doc
 
 
-def prior_test(runs_dir: Path, h: str, ledger: Path) -> str | None:
-    """Name of the first test report for frozen hash `h`: from the fixed ledger, else from `runs_dir`."""
+def prior_test(runs_dir: Path, h: str, ledger: Path, set_name: str = SET_NAME) -> str | None:
+    """Name of the first test report for frozen hash `h` on `set_name`'s test half: from the fixed ledger, else
+    from `runs_dir`. Records without a `set` are the first set's (colour-mono). Keyed by set as well, so the
+    same thresholds may be scored once on each fresh test half."""
     if Path(ledger).is_file():
         for line in Path(ledger).read_text().splitlines():
-            if line.strip() and json.loads(line).get("frozen_hash") == h:
-                return json.loads(line)["report"] + ".json"
+            rec = json.loads(line) if line.strip() else {}
+            if rec.get("frozen_hash") == h and rec.get("set", SET_NAME) == set_name:
+                return rec["report"] + ".json"
     for p in sorted(Path(runs_dir).glob(f"*_{REPORT_SUFFIX}*.json")):
-        if json.loads(p.read_text()).get("frozen_hash") == h:
+        rep = json.loads(p.read_text())
+        if rep.get("frozen_hash") == h and rep.get("set", SET_NAME) == set_name:
             return p.name
     return None
 
@@ -407,20 +460,30 @@ def comparisons(audit_json: Path) -> dict:
             for a, v in FALLBACK_COMPARISONS.items()}
 
 
+def secondary(rows: list[dict], frozen: Path, gate: float, min_pred: int = MIN_PRED,
+              coverage: tuple[int, int] | None = None) -> dict:
+    """The frozen thresholds on another set's test half that tuning has already seen (secondary, not a gate)."""
+    t, _doc = load_frozen(frozen)
+    sc = score(_guessed(rows, t))
+    labelled, total = coverage or (len(rows), len(rows))
+    return {"already_seen": True, "test": sc, "strata": strata_status(sc, gate, min_pred),
+            "coverage": {"labelled": labelled, "total": total}}
+
+
 def test_report(rows: list[dict], frozen: Path, runs_dir: Path, day: str, gate: float, min_pred: int = MIN_PRED,
                 force_reason: str | None = None, audit: dict | None = None, dev: dict | None = None,
                 comparisons: dict | None = None, coverage: tuple[int, int] | None = None,
-                ledger: Path | None = None) -> dict:
+                ledger: Path | None = None, set_name: str = SET_NAME, secondary: dict | None = None) -> dict:
     """`coverage`: (drawn test items with a reference label record, drawn test items). Refuses, writing
     nothing, unless there are trusted rows and every drawn test item is labelled: the one score is not spent
-    on missing labels."""
+    on missing labels. `secondary`: {set: `secondary(...)`} on already-seen test halves, reported apart."""
     ledger = Path(ledger or LEDGER_PATH)
     t, doc = load_frozen(frozen)
     labelled, total = coverage or (len(rows), len(rows))
     if not rows or labelled < total:
         raise NotReady(f"test half not ready: {labelled} of {total} drawn test items labelled, {len(rows)} with a "
                        "trusted reference; nothing scored")
-    prior = prior_test(runs_dir, doc["hash"], ledger)
+    prior = prior_test(runs_dir, doc["hash"], ledger, set_name)
     if force_reason is not None and not force_reason.strip():
         raise ValueError("--force-rescore needs a non-empty reason")
     if prior and force_reason is None:
@@ -437,14 +500,17 @@ def test_report(rows: list[dict], frozen: Path, runs_dir: Path, day: str, gate: 
            "audit_sample": audit, "dev": dev or {k: doc.get(k) for k in ("dev_strata", "dev_n")},
            "comparisons": comparisons or {}}
     rep["coverage"] = {"labelled": labelled, "total": total}
+    if set_name != SET_NAME or secondary:
+        rep["set"], rep["secondary"] = set_name, secondary or {}
     if prior:
         rep["force_rescore_reason"], rep["previous"] = force_reason, prior
     runs_dir = Path(runs_dir)
     runs_dir.mkdir(parents=True, exist_ok=True)
-    name, k = f"{day}_{REPORT_SUFFIX}", 1
+    base = REPORT_SUFFIX if set_name == SET_NAME else f"{REPORT_SUFFIX}-{set_name}"
+    name, k = f"{day}_{base}", 1
     while (runs_dir / f"{name}.json").exists() or (runs_dir / f"{name}.md").exists():
         k += 1
-        name = f"{day}_{REPORT_SUFFIX}-r{k}"
+        name = f"{day}_{base}-r{k}"
     rep["report"] = name
     stem = runs_dir / name
     stem.with_suffix(".json").write_text(json.dumps(rep, indent=1, sort_keys=True) + "\n")
@@ -452,7 +518,8 @@ def test_report(rows: list[dict], frozen: Path, runs_dir: Path, day: str, gate: 
     ledger.parent.mkdir(parents=True, exist_ok=True)
     with ledger.open("a") as f:
         f.write(json.dumps({"frozen_hash": doc["hash"], "date": day, "report": name, "runs_dir": runs_dir.name,
-                            "force_rescore_reason": force_reason if prior else None}, sort_keys=True) + "\n")
+                            "force_rescore_reason": force_reason if prior else None,
+                            **({"set": set_name} if set_name != SET_NAME else {})}, sort_keys=True) + "\n")
     return rep
 
 
@@ -468,6 +535,8 @@ def render_md(rep: dict) -> str:
            f"{rep['min_pred']} predicted-mono rows is `insufficient` (filter unavailable there). Counts only."), ""]
     if rep.get("force_rescore_reason"):
         out += [f"**Re-scored** (previous: {rep['previous']}): {rep['force_rescore_reason']}", ""]
+    if rep.get("set"):
+        out += [f"Primary: test half of `{rep['set']}` (fresh data, never seen in tuning).", ""]
     out += ["## Test half", "", "| stratum | n | tp | fp | fn | precision | recall | status | filter |",
             "|---|---|---|---|---|---|---|---|---|"]
     for s in STRATA:
@@ -477,6 +546,17 @@ def render_md(rep: dict) -> str:
     o = rep["test"]["overall"]
     out += [(f"| overall | {o['n']} | {o['tp']} | {o['fp']} | {o['fn']} | {_f(o['precision'])} | {_f(o['recall'])} "
             "| | |"), ""]
+    for sname, sec in sorted((rep.get("secondary") or {}).items()):
+        cv = sec["coverage"]
+        out += [f"## Secondary: `{sname}` test half (already-seen data, not a gate)", "",
+                (f"This test half was scored and inspected before these thresholds were tuned; "
+                 f"{cv['labelled']} of {cv['total']} items labelled."), "",
+                "| stratum | n | tp | fp | fn | precision | recall | status |", "|---|---|---|---|---|---|---|---|"]
+        for s in STRATA:
+            m = sec["strata"][s]
+            out.append(f"| {s} | {m['n']} | {m['tp']} | {m['fp']} | {m['fn']} | {_f(m['precision'])} | "
+                       f"{_f(m['recall'])} | {m['status']} |")
+        out.append("")
     c = rep["combination"]["overall"]
     out += [(f"Combination (heuristic mono AND Gemini colour_class != colour; {rep['combination']['rows_with_gemini']}"
             f" rows with a Gemini record): tp {c['tp']}, fp {c['fp']}, fn {c['fn']}, precision {_f(c['precision'])}, "
