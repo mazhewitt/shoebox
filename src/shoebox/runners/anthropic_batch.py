@@ -11,7 +11,9 @@ again per batch); `privacy.filter_items(provider="claude")`; the derived-image c
 (`gemini._check_image_path`, `gemini.check_derived_jpeg`, on the derived file and on the thumbnail); per batch,
 the batch-price estimate plus this run's spend within `max_usd_per_run`, and plus the provider's spend log rows
 and open batches' estimates within the candidate's `budget_provider` budget (anthropic: $100, separate from
-the Gemini project budget; `privacy.Limits.budget`).
+the Gemini project budget; `privacy.Limits.budget`). A batch that would breach either is cut to the images that
+fit and the run stops there (`refused` says why; rerun to continue). The candidate must have
+`budget_provider = "anthropic"`, or nothing runs.
 
 Ledger: `results/batch-jobs/<candidate>/` with gemini_batch's record format and helpers (`save_job`,
 `load_jobs`), plus `n_requests`. A batch has no display name at the provider, so an intent
@@ -23,7 +25,8 @@ more than one raises `LedgerError` and nothing is submitted: the owner must chec
 (console.anthropic.com, Batches) and either rename the intent to `<batch id>.json` with that `job_id` and
 state `submitted`, or set its state to `failed`. A lookup that fails raises `LedgerError` too.
 
-On `ended`: the results are downloaded; the batch's actual cost (usage of every `succeeded` result at the
+On `ended`: the results are downloaded; a result whose custom_id is not one of the job's items (e.g. an adopted
+intent that was another client's batch) raises `LedgerError` before anything is logged or stored. The batch's actual cost (usage of every `succeeded` result at the
 batch price: errored, canceled and expired requests are not billed) is appended to `evals/spend.jsonl` with
 `provider: anthropic` before any label is stored, once per batch (`spend_logged`). Per result: `succeeded` is
 parsed (stop_reason `refusal` -> invalid, reason `refused`; `max_tokens` -> invalid, reason `truncated`; else
@@ -342,7 +345,13 @@ class _Run:
 
     def collect(self, job: dict) -> None:
         """Download an ended batch: spend first (once per batch), then the labels, then `stored`."""
-        rows = [r for r in self.t.download(job["job_id"]) if r.get("custom_id") in set(job["items"])]
+        rows = self.t.download(job["job_id"])
+        foreign = [r.get("custom_id") for r in rows if r.get("custom_id") not in set(job["items"])]
+        if foreign:  # e.g. an intent adopted by count and time that was another client's batch
+            raise LedgerError(
+                f"batch {job['job_id']} returned {len(foreign)} results whose custom_id is not in its ledger "
+                f"items, so it may not be ours: nothing logged or stored. Check it in the console, then fix "
+                f"{_ledger_path(self.cfg, job).name} (job_id, or state `failed`)")
         if not job.get("spend_logged"):
             billed = [r["result"]["message"] for r in rows
                       if (r.get("result") or {}).get("type") == "succeeded"]
@@ -450,6 +459,9 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
     Raises PrivacyError before anything is polled or submitted when the checklist is not confirmed or the price
     has expired; returns with `refused` set when a batch would breach the run cap or the provider budget."""
     cand = res.cand
+    if cand.get("budget_provider") != "anthropic":
+        raise AnthropicError(f"anthropic-batch candidate {res.name} needs budget_provider = \"anthropic\" "
+                             f"(got {cand.get('budget_provider')!r}): its spend must not count against another budget")
     privacy.require_checklist()
     privacy.require_current_price(cand)
     tally = BatchTally()
@@ -477,18 +489,26 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
 
     work = _prepare(res, items, cfg, busy, tally, others)
     lim = privacy.limits()
-    provider = cand.get("budget_provider", privacy.PROJECT_PROVIDER)
+    provider = cand["budget_provider"]
     prompt = cand["prompt_text"]
     prompt_bytes = len(prompt.encode()) + len(json.dumps(run.schema))
     for chunk in _chunks(work, max_requests, max_batch_bytes, prompt_bytes):
-        est = privacy.estimate(run.bcand, len(chunk))
         privacy.require_current_price(cand)
         privacy.require_checklist()
         run_usd = tally.usd + sum(float(j["est_usd"]) for j in run.open if j["job_id"] in run.mine)
+        already = privacy.spent_total(provider=provider) + run.committed_usd() - run_usd
+        room = min(float(cand.get("max_usd_per_run") or 0.0), lim.budget(provider) - already)
+        per = privacy.estimate(run.bcand, 1).usd
+        fit = max(1, min(len(chunk), int((room - run_usd) / per) + 1 if per > 0 else len(chunk)))
+        while fit > 1 and run_usd + privacy.estimate(run.bcand, fit).usd > room:
+            fit -= 1
+        short = fit < len(chunk)  # the rest waits for the next run (or the next budget)
+        chunk = chunk[:fit]
+        est = privacy.estimate(run.bcand, fit)
         try:
             privacy.check_budget(
                 run.bcand, privacy.Estimate(est.n, est.input_tokens, est.output_tokens, run_usd + est.usd),
-                already_spent=privacy.spent_total(provider=provider) + run.committed_usd() - run_usd, lim=lim)
+                already_spent=already, lim=lim)
         except privacy.PrivacyError as e:
             tally.refused = str(e)
             print(f"anthropic-batch [{res.name}]: batch of {len(chunk)} not submitted: {e}", file=sys.stderr)
@@ -506,6 +526,12 @@ def run_batch(res, items: list[dict], cfg: config.Config, transport: Transport, 
         run.open.append(job)
         tally.jobs_submitted += 1
         tally.submitted += len(chunk)
+        if short:
+            tally.refused = (f"batch cut to {fit} images to stay within max_usd_per_run "
+                             f"${float(cand['max_usd_per_run']):.2f} and the remaining {provider} budget; "
+                             "rerun to continue")
+            print(f"anthropic-batch [{res.name}]: {tally.refused}", file=sys.stderr)
+            break
 
     run.wait(max_poll_rounds)
     tally.open_jobs = len(run.open)

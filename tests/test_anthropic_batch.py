@@ -423,3 +423,77 @@ def test_claude_batch_tool_quotes_and_runs_printing_counts_only(a, monkeypatch, 
     assert tool.main(["--items", str(items)], transport=t) == 0
     out = capsys.readouterr().out.strip().splitlines()[-1]
     assert json.loads(out)["ok"] == 5 and not any(x in out for x in AIDS)
+
+
+# ---------- review fixes ----------
+
+
+def test_run_cap_shrinks_the_batch_and_a_rerun_continues(a):
+    per = privacy.estimate(ab.batch_priced(a.res.cand), 1).usd
+    res = replace(a.res, cand={**a.res.cand, "max_usd_per_run": 2.5 * per})
+    t = FakeTransport()
+    first = run(a, t, res=res)
+    assert len(t.submits) == 1 and len(t.submits[0]) == 2 and first.ok == 2
+    assert "max_usd_per_run" in first.refused
+    run(a, t, res=res)
+    assert [len(s) for s in t.submits] == [2, 2]
+    run(a, t, res=res)
+    assert [len(s) for s in t.submits] == [2, 2, 1] and all(stored(a)[x]["status"] == "ok" for x in AIDS)
+
+
+def test_provider_budget_shrinks_the_batch(a):
+    per = privacy.estimate(ab.batch_priced(a.res.cand), 1).usd
+    privacy.append_spend("opus-api-v2", 1, 100.0 - 3.5 * per, "2026-10-13", provider="anthropic")
+    t = FakeTransport()
+    tally = run(a, t)
+    assert len(t.submits) == 1 and len(t.submits[0]) == 3 and "budget" in tally.refused
+
+
+def test_candidate_must_use_the_anthropic_budget(a):
+    for bp in (None, "gemini"):
+        cand = {k: v for k, v in a.res.cand.items() if k != "budget_provider"}
+        if bp:
+            cand["budget_provider"] = bp
+        t = FakeTransport()
+        with pytest.raises(ab.AnthropicError, match="budget_provider"):
+            run(a, t, res=replace(a.res, cand=cand))
+        assert t.submits == [] and spend_lines(a) == []
+
+
+def test_foreign_results_refuse_before_spend_or_labels(a):
+    t = FakeTransport()
+    real = t.download
+    t.download = lambda bid: [*real(bid), {"custom_id": "ff" + "e" * 62, "result": ok()}]
+    with pytest.raises(ab.LedgerError, match="not in"):
+        run(a, t)
+    assert spend_lines(a) == [] and stored(a) == {}
+
+
+def _batch(bid, created, n):
+    return {"id": bid, "created_at": created, "processing_status": "ended",
+            "request_counts": {"processing": 0, "succeeded": n - 1, "errored": 1, "canceled": 0, "expired": 0}}
+
+
+def test_http_find_pages_cuts_off_and_matches_request_counts(monkeypatch):
+    pages = {
+        None: {"data": [_batch("b_new", "2026-10-13T12:00:00.5Z", 5), _batch("b_four", "2026-10-13T11:59:00Z", 4)],
+               "has_more": True, "last_id": "b_four"},
+        "b_four": {"data": [_batch("b_mid", "2026-10-13T11:58:00.123456+00:00", 5),
+                            _batch("b_old", "2026-10-13T11:00:00Z", 5)],
+                   "has_more": True, "last_id": "b_old"},
+        "b_old": {"data": [_batch("b_older", "2026-10-12T00:00:00Z", 5)], "has_more": False},
+    }
+    seen = []
+
+    def handler(req):
+        assert req.url.path == "/v1/messages/batches" and req.headers["anthropic-version"] == ab.API_VERSION
+        after = req.url.params.get("after_id")
+        seen.append(after)
+        return httpx.Response(200, json=pages[after])
+
+    monkeypatch.setattr(ab.HttpTransport, "_client", lambda self: httpx.Client(
+        transport=httpx.MockTransport(handler), headers={"anthropic-version": ab.API_VERSION}))
+    assert ab.HttpTransport(key="k").find("2026-10-13T11:55:00Z", 5) == ["b_new", "b_mid"]
+    assert seen == [None, "b_four"]  # stops at the first older batch, never fetches b_old's page
+    seen.clear()
+    assert ab.HttpTransport(key="k").find("2026-10-13T11:58:30Z", 4) == ["b_four"]
