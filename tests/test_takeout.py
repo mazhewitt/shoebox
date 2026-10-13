@@ -513,3 +513,101 @@ def test_x_cli(env):
     args = cli.build_parser().parse_args(["takeout", "verify", "--zips", "/x", "--account", "owner",
                                           "--export", TS, "--extracted", "--workers", "4"])
     assert args.extracted and args.workers == 4
+
+
+def test_x_resume_skip_still_checks_collisions(env, capsys):
+    """A verified zip skipped on resume must not merge into a key another zip now owns with other content."""
+    cfg, zips = env
+    make_zip(zips, 2, {"Takeout/X.jpg": b"BBBB"})
+    nas_extract(zips, cfg)
+    (zips / f"takeout-{TS}-001.zip").write_bytes(b"not a zip yet")
+    assert run_x(cfg, zips, capsys)[0] != 0  # 001 unreadable; 002 verified
+    assert zip_rows(cfg)[f"takeout-{TS}-002.zip"]["status"] == "verified"
+    (zips / f"takeout-{TS}-001.zip").unlink()
+    make_zip(zips, 1, {"Takeout/X.jpg": b"AAAA"})
+    p = tree(cfg) / "Takeout/X.jpg"
+    p.chmod(0o644)
+    p.write_bytes(b"AAAA")  # 7z -aoa overwrote it
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out
+    rows = zip_rows(cfg)
+    assert rows[f"takeout-{TS}-001.zip"]["status"] == "verified"
+    assert rows[f"takeout-{TS}-002.zip"]["status"] == "failed"
+    assert rows[f"takeout-{TS}-002.zip"]["conflicts"] == 1
+
+
+def _case_sensitive_walk(monkeypatch, alias_of: dict[str, str]):
+    """Simulate the NAS's case-sensitive btrfs, where `7z x -aos` writes both IMG_E.JPG and img_e.jpg: the walk
+    also reports each alias name (on this case-insensitive host the alias opens the same bytes)."""
+    real = os.walk
+
+    def walk(top):
+        for dirpath, dirnames, filenames in real(top):
+            yield dirpath, dirnames, filenames + [alias_of[f] for f in filenames if f in alias_of]
+
+    monkeypatch.setattr(takeout.os, "walk", walk)
+
+
+def test_x_case_collision_identical_both_on_disk_passes(env, capsys, monkeypatch):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
+    make_zip(zips, 2, {"Takeout/img_e.jpg": b"same"})
+    nas_extract(zips, cfg)
+    _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code == 0 and CLEANUP in out, out
+    rows = pq.read_table(mdir(cfg) / "manifest.parquet").to_pylist()
+    assert len(rows) == 1 and rows[0]["zip"] == f"takeout-{TS}-001.zip,takeout-{TS}-002.zip"
+
+
+def test_x_case_alias_not_named_by_any_entry_is_extra(env, capsys, monkeypatch):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
+    nas_extract(zips, cfg)
+    _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out and "not claimed" in out
+
+
+@pytest.mark.parametrize("argv,expect", [
+    (["--extracted", "--export", TS, "--workers", "4"], ("x", 4)),
+    (["--export", TS], ("self", None)),
+])
+def test_x_cli_routes(env, monkeypatch, argv, expect):
+    from shoebox import cli
+    from shoebox.commands import takeout as cmd
+
+    cfg, zips = env
+    calls = []
+    monkeypatch.setattr(cmd.config, "load", lambda _p: cfg)
+    monkeypatch.setattr(cmd.takeout, "verify_extracted",
+                        lambda c, z, a, e, dest_root=None, workers=8: calls.append(("x", workers)) or 0)
+    monkeypatch.setattr(cmd.takeout, "verify",
+                        lambda c, z, a, dest_root=None, export=None: calls.append(("self", None)) or 0)
+    args = cli.build_parser().parse_args(["takeout", "verify", "--zips", str(zips), "--account", "owner", *argv])
+    assert args.func(args) == 0 and calls == [expect]
+
+
+def test_x_cli_extracted_needs_export(env, monkeypatch, capsys):
+    from shoebox import cli
+    from shoebox.commands import takeout as cmd
+
+    cfg, zips = env
+    monkeypatch.setattr(cmd.config, "load", lambda _p: cfg)
+    monkeypatch.setattr(cmd.takeout, "verify_extracted", lambda *a, **k: pytest.fail("should refuse"))
+    args = cli.build_parser().parse_args(["takeout", "verify", "--zips", str(zips), "--account", "owner",
+                                          "--extracted"])
+    assert args.func(args) == 2 and "--extracted needs --export TS" in capsys.readouterr().err
+
+
+def test_x_case_alias_with_other_bytes_is_reconcile_error(env, capsys, monkeypatch):
+    cfg, zips = env
+    make_zip(zips, 1, {"Takeout/IMG_E.JPG": b"same"})
+    make_zip(zips, 2, {"Takeout/img_e.jpg": b"same"})
+    nas_extract(zips, cfg)
+    _case_sensitive_walk(monkeypatch, {"IMG_E.JPG": "img_e.jpg"})
+    real = takeout._hash_file
+    monkeypatch.setattr(takeout, "_hash_file",  # the alias's bytes differ on the NAS (same size)
+                        lambda p: (0, "0" * 64) if p.name == "img_e.jpg" else real(p))
+    code, out, _ = run_x(cfg, zips, capsys)
+    assert code != 0 and CLEANUP not in out and "not claimed" in out

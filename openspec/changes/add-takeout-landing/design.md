@@ -56,10 +56,13 @@ directory (`ZipFile.infolist()`) is read, and every file entry (path, size, CRC)
 with that size whose single 1 MiB-chunked read gives the same CRC-32 (`zlib.crc32`); the same read gives the BLAKE3
 (as `ids.asset_id`) for the manifest. Names are matched by NFC-normalised, casefolded path, because the SMB mount
 may present NFD names and the share is case-insensitive; two entries that collide on that key are one manifest row
-noting both zips when CRC and size agree, else the later zip fails (`conflicts`). Per zip, `zips.jsonl` records
+noting both zips when CRC and size agree, else the later zip fails (`conflicts`). The NAS's own filesystem is
+case-sensitive, so `7z -aos` may write both spellings; a second file under a row's key counts as that row only if a zip
+entry names it and its size and BLAKE3 equal the row's, otherwise it is unclaimed. Per zip, `zips.jsonl` records
 `verified` or `failed` with counts of `missing`, `size_mismatch`, `crc_mismatch` and `conflicts`; the zip's rows go to
 `parts/<zip>.jsonl`, and `manifest.parquet` has the same columns as D3 (path is the name as found on disk). Resume
-skips a `verified` zip whose part rows still exist with their sizes. Reconcile as D5 (unique file entries across the
+skips a `verified` zip whose part rows still exist with their sizes and do not collide with other content already
+recorded under the same key (else the zip is re-checked and fails `conflicts`). Reconcile as D5 (unique file entries across the
 zips = files on disk = manifest rows, sizes match), where files on disk claimed by no entry are errors except
 Synology metadata (`@eaDir`, `@SynoEAStream`, `@SynoResource`, `#recycle`) and `.DS_Store`, which are ignored and
 counted. Verified files are chmod `a-w` (best effort). Reads run on `--workers` threads (default 8) because per-file
