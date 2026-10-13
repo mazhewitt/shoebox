@@ -1,0 +1,25 @@
+## 1. Verify and extract
+
+- [ ] 1.1 Implement `src/shoebox/takeout.py` and `shoebox takeout verify --zips DIR --account owner [--dest]` per
+  design D1–D5: one pass per zip (CRC on read, BLAKE3 on the same stream, temp file then rename), `zips.jsonl`,
+  `manifest.parquet`, resume, reconcile, the cleanup line. Counts only on stdout (no file names).
+  - Verify with tests on synthetic zips: good zip; corrupt entry (CRC); unopenable zip; resume after an interrupt;
+    duplicate entry path (identical bytes and different bytes); missing/resized file caught by reconcile;
+    destination under a source root refused; no writes under the zips folder.
+- [ ] 1.2 Run it over `~/mnt/importantfiles-ro/Takeout` (owner's export `20261012T083010Z`, and the
+  `20261012T083009Z` zip). Record per-zip results, totals, throughput and the reconcile in
+  `evals/runs/<date>_takeout-verify.md` (counts only).
+
+## 2. Register and inventory
+
+- [ ] 2.1 Add `[sources.takeout-owner]` to `config/shoebox.toml` (design D6). Verify with a test that hosted sends
+  fail closed before its first frame.
+- [ ] 2.2 Run `shoebox inventory --sources takeout-owner`. Record the frame counts, sidecar count and skip counts in
+  `evals/runs/` (counts only).
+- [ ] 2.3 Overlap with ImportantFiles: assets in both sources by exact BLAKE3, and the share of the Takeout's image
+  assets already present, in `evals/runs/` (counts only). Same-pixel overlap follows once the Takeout is derived.
+
+## 3. Close-out
+
+- [ ] 3.1 Update `.scratch/sources/02` and `07` comments (export size, account, verify result) and the README queue.
+  Verify `openspec validate add-takeout-landing --strict` passes.
