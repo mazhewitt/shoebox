@@ -26,6 +26,14 @@ THUMB_PX = 1024
 NO_USAGE = {"input_tokens": None, "output_tokens": None, "thinking_tokens": None}
 
 
+def thumbnail_jpeg(src: Path) -> bytes:
+    """The packets' thumbnail (`THUMB_PX` long edge, JPEG q85, stripped) as bytes, for API runners that send
+    what the subagents saw (`anthropic_batch`)."""
+    import pyvips
+
+    return pyvips.Image.thumbnail(str(src), THUMB_PX).write_to_buffer(".jpg", Q=85, strip=True)
+
+
 def runtime_version(cand: dict) -> str:
     return cand.get("producer") or "external"
 

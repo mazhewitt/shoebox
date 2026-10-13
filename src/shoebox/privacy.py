@@ -23,6 +23,11 @@ SPEND_PATH = EVALS_DIR / "spend.jsonl"
 SETS_DIR = EVALS_DIR / "sets"
 
 DEFAULT_MAX_TOTAL_USD = 150.0
+# The project budget above is Gemini's. Other providers bill other accounts and have their own budgets: a
+# spend row with `"provider": P` counts only against P's; a row without one is Gemini's (every row before
+# 2026-10-13). A candidate names its budget with `budget_provider` (default "gemini").
+PROJECT_PROVIDER = "gemini"
+DEFAULT_PROVIDER_USD = {"anthropic": 100.0}  # owner's Anthropic API credits, 2026-10-13
 DEFAULT_CHECKLIST_MAX_AGE_DAYS = 90
 RETENTION_DAYS = (1, 7)
 
@@ -44,10 +49,21 @@ class PrivacyError(RuntimeError):
 class Limits:
     max_total_usd: float = DEFAULT_MAX_TOTAL_USD
     checklist_max_age_days: int = DEFAULT_CHECKLIST_MAX_AGE_DAYS
+    provider_usd: tuple[tuple[str, float], ...] = tuple(sorted(DEFAULT_PROVIDER_USD.items()))
+
+    def budget(self, provider: str) -> float:
+        """USD budget for `provider`: the project budget for Gemini, else its own (refused if it has none)."""
+        if provider == PROJECT_PROVIDER:
+            return self.max_total_usd
+        own = dict(self.provider_usd)
+        if provider not in own:
+            raise PrivacyError(f"no budget for provider {provider!r}: add it to [hosted.provider_budgets]")
+        return own[provider]
 
 
 def limits(path: Path | None = None) -> Limits:
-    """Project budget and checklist age from an optional `[hosted]` table in config/shoebox.toml."""
+    """Project budget and checklist age from an optional `[hosted]` table in config/shoebox.toml, and
+    per-provider budgets from `[hosted.provider_budgets]` (over `DEFAULT_PROVIDER_USD`)."""
     path = Path(path or config.CONFIG_PATH)
     try:
         hosted = tomllib.loads(path.read_text()).get("hosted", {})
@@ -58,6 +74,8 @@ def limits(path: Path | None = None) -> Limits:
         checklist_max_age_days=int(
             hosted.get("checklist_max_age_days", DEFAULT_CHECKLIST_MAX_AGE_DAYS)
         ),
+        provider_usd=tuple(sorted({**DEFAULT_PROVIDER_USD, **{
+            k: float(v) for k, v in hosted.get("provider_budgets", {}).items()}}.items())),
     )
 
 
@@ -506,12 +524,16 @@ def require_current_price(cand: dict, today: date | None = None) -> None:
 
 def estimate(cand: dict, n: int) -> Estimate:
     """Pre-flight cost for n images from the candidate's token estimates."""
-    res = cand.get("media_resolution", "high")
-    if res not in IMAGE_TOKENS:
-        raise PrivacyError(
-            f"unknown media_resolution {res!r}; expected one of {sorted(IMAGE_TOKENS)}"
-        )
-    per_in = IMAGE_TOKENS[res] + int(cand.get("est_prompt_tokens", 1000))
+    if cand.get("est_image_tokens") is not None:  # providers without media_resolution (e.g. Anthropic)
+        image_tokens = int(cand["est_image_tokens"])
+    else:
+        res = cand.get("media_resolution", "high")
+        if res not in IMAGE_TOKENS:
+            raise PrivacyError(
+                f"unknown media_resolution {res!r}; expected one of {sorted(IMAGE_TOKENS)}"
+            )
+        image_tokens = IMAGE_TOKENS[res]
+    per_in = image_tokens + int(cand.get("est_prompt_tokens", 1000))
     per_out = int(cand.get("est_output_tokens", 300)) + int(
         cand.get("est_thinking_tokens", 1000)
     )
@@ -519,8 +541,9 @@ def estimate(cand: dict, n: int) -> Estimate:
     return Estimate(n, n * per_in, n * per_out, n * (per_in * pin + per_out * pout))
 
 
-def spent_total(path: Path | None = None) -> float:
-    """Cumulative USD in the spend log. Unreadable lines fail loudly rather than undercount."""
+def spent_total(path: Path | None = None, provider: str | None = PROJECT_PROVIDER) -> float:
+    """Cumulative USD in the spend log for `provider`'s budget (rows without a `provider` are Gemini's);
+    `provider=None` sums every row. Unreadable lines fail loudly rather than undercount."""
     path = Path(path or SPEND_PATH)
     if not path.exists():
         return 0.0
@@ -528,7 +551,10 @@ def spent_total(path: Path | None = None) -> float:
     for i, line in enumerate(path.read_text().splitlines(), 1):
         if line.strip():
             try:
-                total += float(json.loads(line)["usd"])
+                row = json.loads(line)
+                usd = float(row["usd"])
+                if provider is None or row.get("provider", PROJECT_PROVIDER) == provider:
+                    total += usd
             except (ValueError, KeyError, TypeError) as e:
                 raise PrivacyError(f"{path}:{i}: unreadable spend line ({e})") from e
     return total
@@ -540,10 +566,14 @@ def check_budget(
     already_spent: float | None = None,
     lim: Limits | None = None,
 ) -> None:
-    """Refuse if the estimate is over the run cap or the remaining project budget."""
+    """Refuse if the estimate is over the run cap or the remaining budget of the candidate's
+    `budget_provider` (the project budget for Gemini)."""
     lim = lim or limits()
-    spent = spent_total() if already_spent is None else already_spent
-    remaining = lim.max_total_usd - spent
+    provider = cand.get("budget_provider", PROJECT_PROVIDER)
+    total = lim.budget(provider)
+    which = "project" if provider == PROJECT_PROVIDER else provider
+    spent = spent_total(provider=provider) if already_spent is None else already_spent
+    remaining = total - spent
     cap = cand.get("max_usd_per_run")
     if cap is None:
         raise PrivacyError(
@@ -552,12 +582,12 @@ def check_budget(
     if est.usd > float(cap):
         raise PrivacyError(
             f"estimated ${est.usd:.4f} for {est.n} images is over max_usd_per_run ${float(cap):.2f} "
-            f"(remaining project budget ${remaining:.2f})"
+            f"(remaining {which} budget ${remaining:.2f})"
         )
     if est.usd > remaining:
         raise PrivacyError(
-            f"estimated ${est.usd:.4f} for {est.n} images is over the remaining project budget "
-            f"${remaining:.2f} (spent ${spent:.2f} of ${lim.max_total_usd:.2f})"
+            f"estimated ${est.usd:.4f} for {est.n} images is over the remaining {which} budget "
+            f"${remaining:.2f} (spent ${spent:.2f} of ${total:.2f})"
         )
 
 
@@ -569,9 +599,11 @@ def append_spend(
     path: Path | None = None,
     ts: str | None = None,
     run: str | None = None,
+    provider: str | None = None,
 ) -> None:
-    """Append {ts, candidate, n, usd, price_date[, run]} and fsync, so a killed process can't lose
-    spend it has already been billed for. Hosted runners write one line per billed call."""
+    """Append {ts, candidate, n, usd, price_date[, run][, provider]} and fsync, so a killed process can't
+    lose spend it has already been billed for. Hosted runners write one line per billed call. `provider`
+    names a non-Gemini budget the row counts against (see `spent_total`)."""
     path = Path(path or SPEND_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     rec = {
@@ -583,6 +615,8 @@ def append_spend(
     }
     if run:
         rec["run"] = run
+    if provider and provider != PROJECT_PROVIDER:
+        rec["provider"] = provider
     with path.open("a") as f:
         f.write(json.dumps(rec, sort_keys=True) + "\n")
         f.flush()

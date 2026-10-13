@@ -14,3 +14,30 @@ producer = "Claude Code subagent, 1024px thumbnail of the infer-v1 image"
 prompt = "label-v2.md"
 schema = "label-v2.json"
 profile = "infer-v1"
+
+# The same label arm through the Anthropic Message Batches API (runtime `anthropic-batch`,
+# runners/anthropic_batch.py): opus-v2's prompt, schema and 1024px thumbnail, sent by shoebox itself, so it
+# is a distinct store key. Spend counts against the Anthropic budget ($100 of the owner's API credits,
+# 2026-10-13; privacy.DEFAULT_PROVIDER_USD), never the Gemini project budget. Prices: Opus 5.5 standard
+# $4 in / $20 out per MTok, batch half price (platform.claude.com pricing, checked 2026-10-13). Anthropic
+# publishes no end date: price_valid_until is a review date, not a known price change.
+# Image tokens: ceil(w/28)*ceil(h/28), at most 37*37 = 1369 for a 1024px thumbnail.
+[candidates.opus-api-v2]
+runtime = "anthropic-batch"
+model = "claude-opus-5-5"
+model_id = "anthropic/claude-opus-5-5"
+prompt = "label-v2.md"
+schema = "label-v2.json"
+profile = "infer-v1"
+max_tokens = 2048
+budget_provider = "anthropic"
+max_usd_per_run = 10.0
+est_image_tokens = 1400
+est_prompt_tokens = 2100          # label-v2.md (~1.7k tokens) plus the output schema
+est_output_tokens = 400
+est_thinking_tokens = 0           # no extended thinking requested
+price_input_usd_per_mtok = 4.0
+price_output_usd_per_mtok = 20.0
+price_batch_discount = 0.5
+price_date = "2026-10-13"
+price_valid_until = "2027-01-13"

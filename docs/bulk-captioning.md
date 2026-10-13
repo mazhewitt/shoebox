@@ -177,3 +177,31 @@ An image is tiny when its **source** long side (`src_width`/`src_height` in the 
 - Any tiny image 12B does caption (local-only captures, fallbacks, eval runs) gets `tiny: true`,
   `tiny_rule: "route_hosted_else_mark"` and `tiny_max_side: 256` in its record, so search can weigh it lower.
 - Gemini candidates have no rule.
+
+## 7. Anthropic batches (`opus-api-v2`)
+
+`opus-api-v2` (`config/candidates.d/claude.toml`) is the `opus-v2` label arm (label-v2 prompt and schema,
+the packets' 1024 px q85 thumbnail of the infer-v1 image) sent by shoebox through the Anthropic Message
+Batches API (`runners/anthropic_batch.py`, runtime `anthropic-batch`). It has the Gemini batch runner's
+guards, ledger and resume, with these differences:
+
+- **Privacy.** Items pass `privacy.filter_items(provider="claude")`: the source must list `claude` in
+  `hosted_models`.
+- **Budget.** Its spend rows carry `"provider": "anthropic"` and count only against the Anthropic budget
+  ($100 of the owner's API credits, 2026-10-13; override in `[hosted.provider_budgets]`). Rows without a
+  provider are Gemini's and count only against the $150 project budget. The candidate's
+  `max_usd_per_run` (10) caps one invocation.
+- **Intent reconciliation.** A batch has no display name, so the intent records its request count and
+  submit time. A rerun lists the provider's batches created since five minutes before that time with the
+  same request count, minus those already in the ledger: exactly one is adopted, none marks the intent
+  `failed` (its items are pending again), and more than one stops the run with the candidate ids. Check
+  them in the console (Batches), then rename the intent file to `<batch id>.json` with that `job_id` and
+  state `submitted`, or set its state to `failed`, and rerun.
+- **Results.** stop_reason `refusal` is stored as `invalid` with reason `refused`, `max_tokens` as `invalid`
+  with reason `truncated`; `errored` requests become `error` records (retried by the next run); `canceled`
+  and `expired` requests store nothing and are pending again. Only `succeeded` results are billed.
+
+```sh
+sops exec-env secrets/shoebox.sops.yaml 'uv run python tools/claude_batch.py --items <items.jsonl> --quote'
+sops exec-env secrets/shoebox.sops.yaml 'uv run python tools/claude_batch.py --items <items.jsonl>'
+```
