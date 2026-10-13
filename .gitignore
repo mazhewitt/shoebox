@@ -15,3 +15,8 @@ node_modules/
 evals/vally/generated/
 evals/sets/*/screen-queue.jsonl
 .claude/worktrees/
+
+# Secrets: only SOPS-encrypted files are committed (docs/machines.md → Secrets)
+secrets/*
+!secrets/*.sops.yaml
+!secrets/*.sops.json

@@ -24,7 +24,7 @@ If an item fails, stop and tell the owner. Don't work around it.
    - A write and delete on `~/mnt/shoebox` succeed.
    - `mount` shows both as `//shoebox@192.168.1.9/...`.
    - Nothing on this machine mounts ImportantFiles read-write.
-2. **Secrets.** `.env` exists in the repo root. Check it only with `test -s .env`. Never print, cat, grep for or commit `GEMINI_API_KEY`.
+2. **Secrets.** The age key is at `~/.config/sops/age/keys.txt` (restore it with `~/radiobox/deploy/scripts/sops-key-nas.sh restore` if missing), and `sops exec-env secrets/shoebox.sops.yaml 'test -n "$GEMINI_API_KEY"'` succeeds. Until a machine has the key, a gitignored `.env` with `GEMINI_API_KEY` still works as a fallback. Never print, cat, grep for or commit a secret.
 3. **Python.** `uv sync` and `uv run pytest -q` both pass, and `openspec validate add-pipeline-foundations --strict` passes.
 4. **Derive tool versions match the existing derived set.** Check `uv run python -c "from shoebox.derive import tool_versions; print(tool_versions())"`. It must equal the `tools` in the last record of `~/mnt/shoebox/derived/infer-v1/index.jsonl`:
    - libvips 8.18.7;

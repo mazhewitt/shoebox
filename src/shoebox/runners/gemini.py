@@ -10,7 +10,8 @@ returns, so a killed run loses no spend. Before every call the run's spend is ch
 `max_usd_per_run`, the whole log (all processes) against the project budget, and the candidate's
 `price_valid_until` against today.
 
-The API key comes from `GEMINI_API_KEY`, else the repo-root `.env`. It is only ever put in the
+The API key comes from `GEMINI_API_KEY` (injected by `sops exec-env secrets/shoebox.sops.yaml`),
+else a legacy repo-root `.env`. It is only ever put in the
 request header and is scrubbed from every error and raw text this module returns or raises.
 """
 
@@ -101,7 +102,9 @@ def api_key() -> str:
         "GEMINI_API_KEY", ""
     )
     if not key:
-        raise GeminiError("GEMINI_API_KEY is not set (environment or repo-root .env)")
+        raise GeminiError(
+            "GEMINI_API_KEY is not set: run via `sops exec-env secrets/shoebox.sops.yaml '<cmd>'`"
+        )
     return key
 
 

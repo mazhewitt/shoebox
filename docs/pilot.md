@@ -114,7 +114,7 @@ JSON Schema, draft 2020-12. Model output is an object with:
 Graders treat a missing label as **unlabelled**, which is reported separately and is neither a pass nor a fail. After labels are added, `vally grade` re-scores with no model call.
 
 ## Gemini arm (added on request; gated)
-- **Key:** `GEMINI_API_KEY` is loaded from `.env` (gitignored, so never commit it). Code reads the env var only and never logs or prints the key.
+- **Key:** `GEMINI_API_KEY` is in `secrets/shoebox.sops.yaml` (SOPS-encrypted, see `docs/machines.md` → Secrets). Run commands under `sops exec-env`. Code reads the env var only and never logs or prints the key.
 - **Runner:** `shoebox/runners/gemini.py`, runtime `gemini`. It calls `generateContent` with:
   - model `gemini-3.8-flash`;
   - `media_resolution` low or medium;

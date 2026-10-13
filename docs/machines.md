@@ -21,11 +21,20 @@ The `shoebox` NAS user (created 2026-10-10; effective permission on `ImportantFi
 
 Volumes:
 - `shoebox` sits on the 3.4 TiB volume, which had 3.1 TiB free at setup.
-- `ImportantFiles` sits on a 983 GiB volume.
+- `ImportantFiles` moved to the same 3.4 TiB volume on 2026-10-12, after a Google Takeout filled its old 983 GiB volume.
 
 ### Backup
 - `shoebox/` goes to GCS via Hyper Backup, **excluding `derived/` and `staging/`**. Derived images can be regenerated, and the staging zips are deleted once the extract is verified.
 - Exclusion set in the Hyper Backup task (confirmed by the owner, 2026-10-10).
+
+## Secrets
+
+Secrets are in `secrets/shoebox.sops.yaml`, encrypted with SOPS + age and committed. It uses the same age key as radiobox and the owner's notes vault: `~/.config/sops/age/keys.txt` on each machine, with a passphrase-encrypted backup on the NAS (`~/radiobox/deploy/scripts/sops-key-nas.sh restore`).
+
+- `GEMINI_API_KEY`: the Gemini runner.
+- `ADUKI_NAS_USERNAME` / `ADUKI_NAS_PASSWORD`: the owner's **DSM admin** account, for DSM admin checks only (share permissions, Hyper Backup scope, Cloud Sync status) via the DSM Web API. **Never use it to mount shares or read photos.** Every pipeline read goes through the `shoebox` user's mounts above, so the read-only guarantee on `ImportantFiles` holds.
+
+Use the secrets without reading them: `sops exec-env secrets/shoebox.sops.yaml 'uv run shoebox …'`. Never `sops decrypt` the file to the terminal and never echo a value. Add or change one with `sops set secrets/shoebox.sops.yaml '["KEY"]' '"value"'`. Don't add YAML comments: SOPS encrypts them.
 
 ## Laptop (M5 Max, 128 GB): mounts
 

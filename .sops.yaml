@@ -1,0 +1,12 @@
+# SOPS configuration for Shoebox secrets.
+# Only encrypted files live in git: secrets/*.sops.yaml (key/value) and
+# secrets/*.sops.json (whole JSON documents, e.g. GCP service-account keys).
+#
+# The age key is shared with radiobox: the private key is on the laptop at
+# ~/.config/sops/age/keys.txt, and a passphrase-encrypted backup sits on the NAS
+# (~/radiobox/deploy/scripts/sops-key-nas.sh backup|restore).
+
+creation_rules:
+  - path_regex: secrets/.*\.sops\.(ya?ml|json)$
+    age: >-
+      age1n8rmxzzerft4szql7rfn73jnl7zx595yj82c35at9za5jtlq6s4sr8ljkj
