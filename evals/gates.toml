@@ -80,5 +80,6 @@ basis = "owner review of the first 48 flags at 0.2: all 48 false positives (incl
 heuristic_thresholds = "evals/colour-thresholds.json"   # mono_c95 2.0
 heuristic_hash = "2228f47c8e77df69"
 source = { scan = "heuristic", received = "heuristic", phone = "unavailable", camera = "unavailable" }
+v2_not_adopted = "2026-10-13: 800 phone/camera photos labelled by Opus: 1/400 phone and 14/400 camera are black-and-white; v2 (4e0d9ed3e18bdb9e) not adopted"
 basis = "test half (152 photos, blind Opus reference): scan precision 1.00 (30/30), received 1.00 (17/17, recall 0.89); phone and camera have fewer than 10 predicted-mono photos (unmeasurable), so no filter there"
 toned = "separate: toned photos do not match black-and-white searches (lenient toned-as-mono precision 0.73)"
