@@ -4,7 +4,7 @@ import argparse
 import importlib
 import sys
 
-COMMANDS = ["pilot", "derive", "label", "embed", "privacy", "eval", "inventory", "screen", "dedup"]
+COMMANDS = ["pilot", "derive", "label", "embed", "privacy", "eval", "inventory", "screen", "dedup", "takeout"]
 
 
 def build_parser() -> argparse.ArgumentParser:
