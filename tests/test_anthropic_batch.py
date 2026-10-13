@@ -167,7 +167,8 @@ def test_batch_stores_labels_logs_spend_and_sends_a_1024px_thumbnail(a):
     assert cid in AIDS and params["model"] == "claude-opus-5-5" and params["max_tokens"] == 2048
     img, text = params["messages"][0]["content"]
     assert img["type"] == "image" and img["source"]["media_type"] == "image/jpeg"
-    assert text == {"type": "text", "text": a.res.cand["prompt_text"]}
+    assert text == {"type": "text", "text": ab.USER_TEXT}
+    assert params["system"][0]["text"] == a.res.cand["prompt_text"]
     import base64
     import io
 
@@ -429,7 +430,7 @@ def test_claude_batch_tool_quotes_and_runs_printing_counts_only(a, monkeypatch, 
 
 
 def test_run_cap_shrinks_the_batch_and_a_rerun_continues(a):
-    per = privacy.estimate(ab.batch_priced(a.res.cand), 1).usd
+    per = ab.estimate(ab.batch_priced(a.res.cand), 1).usd
     res = replace(a.res, cand={**a.res.cand, "max_usd_per_run": 2.5 * per})
     t = FakeTransport()
     first = run(a, t, res=res)
@@ -442,7 +443,7 @@ def test_run_cap_shrinks_the_batch_and_a_rerun_continues(a):
 
 
 def test_provider_budget_shrinks_the_batch(a):
-    per = privacy.estimate(ab.batch_priced(a.res.cand), 1).usd
+    per = ab.estimate(ab.batch_priced(a.res.cand), 1).usd
     privacy.append_spend("opus-api-v2", 1, 100.0 - 3.5 * per, "2026-10-13", provider="anthropic")
     t = FakeTransport()
     tally = run(a, t)
@@ -497,3 +498,114 @@ def test_http_find_pages_cuts_off_and_matches_request_counts(monkeypatch):
     assert seen == [None, "b_four"]  # stops at the first older batch, never fetches b_old's page
     seen.clear()
     assert ab.HttpTransport(key="k").find("2026-10-13T11:58:30Z", 4) == ["b_four"]
+
+
+# ---------- prompt caching (prompt_placement = "system-cached") ----------
+
+# Opus 5.5 batch prices per token: base in $4/MTok x 0.5; 5m write 1.25x, 1h write 2x, read 0.05x; out $20 x 0.5.
+B_IN, B_OUT = 4e-6 * 0.5, 20e-6 * 0.5
+
+
+def test_request_puts_the_prompt_in_a_1h_cached_system_block_and_the_image_first(a):
+    t = FakeTransport()
+    run(a, t)
+    reqs = [p for _, p in t.batches["msgbatch_0"]["requests"]]
+    for params in reqs:
+        assert params["system"] == [{"type": "text", "text": a.res.cand["prompt_text"],
+                                     "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
+        (msg,) = params["messages"]
+        img, text = msg["content"]
+        assert img["type"] == "image" and text == {"type": "text", "text": "Label this photo."}
+        assert "cache_control" not in img and "cache_control" not in text
+        assert params["output_config"]["format"]["type"] == "json_schema"
+    assert len({json.dumps(p["system"]) for p in reqs}) == 1
+    assert len({json.dumps(p["output_config"]) for p in reqs}) == 1
+
+
+def test_prompt_placement_is_hashed_so_the_cached_layout_has_its_own_store_key():
+    res = runners.resolve("opus-api-v2")
+    assert res.params["prompt_placement"] == "system-cached"
+    old = {k: v for k, v in res.params.items() if k != "prompt_placement"}  # the smoke-run layout's params
+    assert store.params_hash(old) != res.params_hash == store.params_hash(res.params)
+    assert "price_cache_write_1h_multiplier" not in res.params  # prices are not hashed
+
+
+MIXED = {
+    AIDS[0]: {"input_tokens": 1300, "output_tokens": 300, "cache_creation_input_tokens": 3300,
+              "cache_read_input_tokens": 0,
+              "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 3300}},
+    AIDS[1]: {"input_tokens": 1300, "output_tokens": 300, "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 3300,
+              "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0}},
+    AIDS[2]: {"input_tokens": 4600, "output_tokens": 300, "cache_creation_input_tokens": 0,
+              "cache_read_input_tokens": 0},
+    AIDS[3]: {"input_tokens": 1300, "output_tokens": 300, "cache_creation_input_tokens": 3300,
+              "cache_read_input_tokens": 0,
+              "cache_creation": {"ephemeral_5m_input_tokens": 3300, "ephemeral_1h_input_tokens": 0}},
+    AIDS[4]: {"input_tokens": 1300, "output_tokens": 300, "cache_creation_input_tokens": 3300,
+              "cache_read_input_tokens": 0},  # no breakdown: billed as the dearer 1h write
+}
+MIXED_USD = {
+    AIDS[0]: 1300 * B_IN + 3300 * B_IN * 2 + 300 * B_OUT,
+    AIDS[1]: 1300 * B_IN + 3300 * B_IN * 0.05 + 300 * B_OUT,
+    AIDS[2]: 4600 * B_IN + 300 * B_OUT,
+    AIDS[3]: 1300 * B_IN + 3300 * B_IN * 1.25 + 300 * B_OUT,
+    AIDS[4]: 1300 * B_IN + 3300 * B_IN * 2 + 300 * B_OUT,
+}
+
+
+def mixed_ok(aid):
+    return {"type": "succeeded", "message": message(json.dumps(GOOD), usage=MIXED[aid])}
+
+
+def test_cost_from_mixed_cache_usage_and_records_carry_the_cache_fields(a):
+    tally = run(a, FakeTransport(respond=mixed_ok))
+    recs = stored(a)
+    for aid in AIDS:
+        assert recs[aid]["usd"] == pytest.approx(MIXED_USD[aid])
+        u = recs[aid]["usage"]
+        api = MIXED[aid]
+        assert u["input_tokens"] == api["input_tokens"] + api["cache_creation_input_tokens"] + api[
+            "cache_read_input_tokens"]
+        assert u["uncached_input_tokens"] == api["input_tokens"]
+        assert u["cache_creation_input_tokens"] == api["cache_creation_input_tokens"]
+        assert u["cache_read_input_tokens"] == api["cache_read_input_tokens"]
+        assert u["output_tokens"] == 300
+    assert recs[AIDS[0]]["usage"]["cache_creation"] == MIXED[AIDS[0]]["cache_creation"]
+    total = sum(MIXED_USD.values())
+    assert spend_lines(a)[0]["usd"] == pytest.approx(total) and tally.usd == pytest.approx(total)
+
+
+def test_worst_case_estimate_covers_any_actual_and_the_expected_quote_is_lower(a):
+    bc = ab.batch_priced(a.res.cand)
+    worst = ab.estimate(bc, 1).usd
+    assert worst >= max(MIXED_USD.values())
+    assert worst == pytest.approx(1400 * B_IN + 3300 * B_IN * 2 + 400 * B_OUT)
+    assert ab.estimate(bc, 5).usd == pytest.approx(5 * worst)
+    hits = ab.estimate(bc, 5, cache_hits=True).usd
+    assert hits == pytest.approx(5 * (1400 * B_IN + 400 * B_OUT) + 3300 * B_IN * (2 + 4 * 0.05))
+    assert hits < 5 * worst
+    # the run cap uses the worst case: room for 2.5 worst-case requests sends 2
+    res = replace(a.res, cand={**a.res.cand, "max_usd_per_run": 2.5 * worst})
+    t = FakeTransport(respond=mixed_ok)
+    run(a, t, res=res)
+    assert len(t.submits[0]) == 2
+    job = json.loads((a.ledger / "msgbatch_0.json").read_text())
+    assert job["est_usd"] == pytest.approx(2 * worst) and job["actual_usd"] <= job["est_usd"]
+
+
+def test_claude_batch_quote_shows_worst_case_and_expected(a, monkeypatch, capsys):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("claude_batch", runners.REPO_ROOT / "tools" / "claude_batch.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    monkeypatch.setattr(tool.config, "load", lambda: a.cfg)
+    items = a.tmp / "items.jsonl"
+    items.write_text("".join(json.dumps(it) + "\n" for it in a.items))
+    assert tool.main(["--items", str(items), "--quote"], transport=FakeTransport()) == 0
+    q = json.loads(capsys.readouterr().out)
+    bc = ab.batch_priced(a.res.cand)
+    assert q["quote_usd"] == pytest.approx(ab.estimate(bc, 5).usd, abs=1e-4)
+    assert q["quote_expected_usd"] == pytest.approx(ab.estimate(bc, 5, cache_hits=True).usd, abs=1e-4)
+    assert q["quote_expected_usd"] < q["quote_usd"]
