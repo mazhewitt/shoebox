@@ -21,6 +21,8 @@ written = "2026-10-13"
 # audit of the same packets checks for Claude-favouring bias (Opus auditing Sonnet is same-vendor). Sonnet passes
 # only if non-inferior on search (as v2) AND its Opus error rate <= reference + 0.02 AND the Gemini audit does not
 # show it worse than the reference beyond the same margin. Choosing it remains the owner's decision.
+# Outcome (2026-10-13): Opus audit -0.147 (pass), Gemini audit +0.056 (fail): the rule fails as written. The owner
+# chose sonnet-api-v2 anyway for the Anthropic-credit share of the bulk run (each auditor favoured its own vendor).
 # v2 (2026-10-11, before any test-split search scoring): Opus judgments now cover the WHOLE test pool
 # (owner noted Opus via the subscription costs no API money), so the primary test qrels are Opus's; Gemini's
 # are a secondary report. Dev tuning uses Gemini qrels (Opus did not judge dev). Nothing else changed.

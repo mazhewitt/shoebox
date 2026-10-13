@@ -5,6 +5,19 @@
 - **New photos as they arrive:** Gemma 4 12B (`g12b-q4`) with `label-v2`, run locally.
 - **Search:** blend the EmbeddingGemma 2 image vector with the caption vector (`eg2-blend`, w = 0.5).
 
+**Amended by the owner on 2026-10-13:** the bulk run spends the owner's Anthropic API credits ($100, expiring
+2026-11-08) first, with **Claude Sonnet 5.5** (`sonnet-api-v2`, `label-v2`, Message Batches, cached prompt,
+about $0.0026 a photo, roughly 36k photos), and Gemini 3.8 Flash batch covers the rest.
+- Sonnet was pre-registered in `gates.toml` v3. In the blind caption audit on the eval-1k audit sample (197 photos),
+  the Opus auditor found Sonnet clearly better than the Gemini reference (error rate 0.152 vs 0.300; paired
+  difference -0.147, 95% CI -0.218 to -0.076), and the Gemini auditor found it worse (0.208 vs 0.152; +0.056,
+  CI -0.020 to +0.127). The pre-registered rule needed both auditors within +0.02, so **Sonnet failed it as
+  written**. Each auditor favoured its own vendor; the owner judged that bias makes the cross-vendor rule unfair to
+  Sonnet and chose it anyway (owner decision, against the rule, as for `opus-v2` reported but not gated).
+  Reports: `runs/2026-10-13_sonnet-gate-caption-audit*.md`. Mono precision 0.974 for both, same as before.
+- Its search non-inferiority test (pre-registered route `eg2-blend:sonnet-api-v2`) runs separately; a clear
+  failure there is to be raised with the owner before any bulk use.
+
 The evidence is the `eval-1k` run (`evals/runs/2026-10-11_eval-1k-*.md`), scored under the decision rule in `evals/gates.toml`. That file was committed before any test-split search score existed. Version 1 is commit 542640b; version 2, 126c067, changed which judge's grades count before scoring.
 
 ## What was compared
