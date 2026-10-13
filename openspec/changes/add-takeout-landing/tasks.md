@@ -1,6 +1,6 @@
 ## 1. Verify and extract
 
-- [ ] 1.1 Implement `src/shoebox/takeout.py` and `shoebox takeout verify --zips DIR --account owner [--dest]` per
+- [x] 1.1 Implement `src/shoebox/takeout.py` and `shoebox takeout verify --zips DIR --account owner [--dest]` per
   design D1–D5: one pass per zip (CRC on read, BLAKE3 on the same stream, temp file then rename), `zips.jsonl`,
   `manifest.parquet`, resume, reconcile, the cleanup line. Counts only on stdout (no file names).
   - Verify with tests on synthetic zips: good zip; corrupt entry (CRC); unopenable zip; resume after an interrupt;
