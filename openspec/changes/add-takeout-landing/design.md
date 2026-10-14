@@ -54,7 +54,11 @@ inventory then runs over it; `add-pipeline-foundations` D5 keeps hosted sends cl
 ### D7. Verify-only mode for a tree extracted on the NAS
 Extracting over SMB from the Studio ran at about 15 MB/s, so the owner extracts on the NAS with 7-Zip 16.02
 (`shoebox/logs/takeout-perzip.sh`: `7z x -y -aoa -o<export>/<zip stem> <zip>` per zip, into the D3 layout, then
-the D8 renames). `shoebox takeout verify --zips DIR --account owner --export TS --extracted [--workers N]` then
+the D8 renames). 7-Zip must run under a UTF-8 locale (`LC_ALL=en_US.utf8`): under the SSH session's default POSIX
+locale it wrote non-ASCII names as Latin-1 bytes, which SMB hides (2026-10-14: 66 files in 9 zips, 5 folders, all
+Latin-1 characters). `shoebox/logs/takeout-fix.py` repaired them with the owner's approval: it re-extracted just those
+entries under a UTF-8 locale, moved them into place under their D8 names, and deleted the 14 mis-encoded paths.
+`shoebox takeout verify --zips DIR --account owner --export TS --extracted [--workers N]` then
 proves that tree without reading zip data: for each zip only the central directory (`ZipFile.infolist()`) is read,
 and every file entry (name, size, CRC) must have a file at `<export>/<zip stem>/<smb_name path>` with that size whose
 single 1 MiB-chunked read gives the same CRC-32 (`zlib.crc32`); the same read gives the BLAKE3 (as `ids.asset_id`)
