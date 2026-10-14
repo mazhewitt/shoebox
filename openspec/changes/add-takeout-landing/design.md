@@ -84,3 +84,22 @@ zip that map to the same name are a `conflicts` error. `manifest.parquet` gains 
 entry name, so the original album name is kept; `path` is the name on disk, relative to the export folder (it starts with
 the zip stem).
 
+### D9. Partner-shared and Locked Folder photos (owner, 2026-10-14)
+The owner's rulings: photos that came by Google Photos partner sharing (the key `googlePhotosOrigin.fromPartnerSharing` is present in the
+sidecar, its value an empty object; about 16%
+of a 1,500-sidecar sample) are left out entirely, because they are another person's library; Locked Folder photos
+(`inLockedFolder: true`, about 0.5%, and anything under a `Locked Folder` directory) are private. Both are written to the
+quarantine (`evals/quarantine.jsonl`) by asset ID before the first inventory of `takeout-owner`: partner-shared as
+`exclude` (refused by every stage), Locked Folder as `private` (local stages only, never hosted or viewed by Claude),
+`by = "owner-rule:takeout-partner-shared"` / `"owner-rule:takeout-locked-folder"`. An asset that already has a more
+restrictive verdict keeps it; the more restrictive of the two rules wins.
+
+`shoebox takeout flags --account owner --export TS [--workers N] [--dry-run]` reads every sidecar of the verified
+extract (`*.json` other than album `metadata.json`) and matches it to its media file in the same directory of the same
+zip folder: the sidecar's `title`, else its own name with `.json`, any `(n)` before `.json` (moved before the media
+extension) and any prefix of `.supplemental-metadata` removed, matched exactly and then as a prefix (Takeout truncates
+long names), NFC and case-insensitively. Every media file in that directory with the same stem as a flagged match
+(`-edited` copies, Live Photo / Motion Photo companions) gets the same flag. Asset IDs come from `manifest.parquet`. It
+prints counts only: sidecars read, flagged per rule, matched, unmatched; a flagged sidecar that matches no media file
+fails the command (exit 1) after writing what did match, so nothing flagged is silently dropped. Re-runs add nothing
+new. The photos stay in the extract (no deletes); they are excluded from processing, not removed.

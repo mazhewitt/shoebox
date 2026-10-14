@@ -57,3 +57,20 @@ The verified tree SHALL be configured as source `takeout-owner` (person owner, h
 #### Scenario: Before the first frame
 - **WHEN** `takeout-owner` is configured but has no frame dated on or after `added`
 - **THEN** hosted sends are refused with the missing-frame error
+
+### Requirement: Partner-shared photos are left out and Locked Folder photos are private
+Before the first inventory of `takeout-owner`, `shoebox takeout flags` SHALL write a quarantine verdict for every media
+file whose sidecar has `fromPartnerSharing` (`exclude`) or `inLockedFolder`, or that lies under a `Locked Folder`
+directory (`private`), including same-stem companions in the same directory. It SHALL NOT delete anything.
+
+#### Scenario: Partner-shared photo
+- **WHEN** a photo's sidecar has `fromPartnerSharing: true`
+- **THEN** its asset has verdict `exclude` and no stage, local or hosted, processes it
+
+#### Scenario: Locked Folder photo
+- **WHEN** a photo's sidecar has `inLockedFolder: true`, or it is under `Locked Folder/`
+- **THEN** its asset has verdict `private`: local stages may run, hosted sends and Claude viewing are refused
+
+#### Scenario: A flagged sidecar matches no photo
+- **WHEN** a sidecar carries either flag but no media file in its directory matches it
+- **THEN** the command writes the verdicts it could match, reports the unmatched count, and exits non-zero

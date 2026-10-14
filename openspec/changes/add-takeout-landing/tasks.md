@@ -23,6 +23,11 @@
 
 - [ ] 2.1 Add `[sources.takeout-owner]` to `config/shoebox.toml` (design D6). Verify with a test that hosted sends
   fail closed before its first frame.
+- [ ] 2.1b Implement `shoebox takeout flags` per design D9 and run it on the verified export before 2.2. Tests on a
+  synthetic extract: partner-shared → `exclude`, `inLockedFolder` and `Locked Folder/` → `private`; truncated sidecar
+  name; `(1)` duplicate numbering; `-edited` and Live Photo companions inherit; both rules → `exclude`; an existing
+  more restrictive verdict kept; unmatched flagged sidecar fails; re-run appends nothing; no names on stdout. Record the
+  counts in the 1.2 run note.
 - [ ] 2.2 Run `shoebox inventory --sources takeout-owner`. Record the frame counts, sidecar count and skip counts in
   `evals/runs/` (counts only).
 - [ ] 2.3 Overlap with ImportantFiles: assets in both sources by exact BLAKE3, and the share of the Takeout's image
