@@ -15,7 +15,7 @@
     size mismatch; same-size byte flip; extra file; unexpected top-level item; `@eaDir` ignored; NFD name on disk vs
     NFC entry; same entry path in two zips; trailing-space album; trailing-space/case/NFC twins in one zip conflict;
     resume skips verified zips; no writes under the zips folder; no names on stdout.
-- [ ] 1.2 Run it over `~/mnt/importantfiles-ro/Takeout` (owner's export `20261012T083010Z`, and the
+- [x] 1.2 Run it over `~/mnt/importantfiles-ro/Takeout` (owner's export `20261012T083010Z`, and the
   `20261012T083009Z` zip). Record per-zip results, totals, throughput and the reconcile in
   `evals/runs/<date>_takeout-verify.md` (counts only).
 
