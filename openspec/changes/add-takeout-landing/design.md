@@ -102,4 +102,8 @@ long names), NFC and case-insensitively. Every media file in that directory with
 (`-edited` copies, Live Photo / Motion Photo companions) gets the same flag. Asset IDs come from `manifest.parquet`. It
 prints counts only: sidecars read, flagged per rule, matched, unmatched; a flagged sidecar that matches no media file
 fails the command (exit 1) after writing what did match, so nothing flagged is silently dropped. Re-runs add nothing
-new. The photos stay in the extract (no deletes); they are excluded from processing, not removed.
+new. The photos stay in the extract (no deletes); they are excluded from processing, not removed. When a sidecar's own name carries `(n)`, the
+name-derived `name(n).ext` is tried before `title` (the title names the un-numbered photo). A prefix match flags every
+candidate (over-restricting is the safe error). An asset already `pending` in the content screen stays `pending`
+(more restrictive); after the owner rules on it, re-run `takeout flags` so a Locked Folder photo does not stay
+`include`. New rows carry `screen: null` (not a screen flag).

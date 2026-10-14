@@ -546,3 +546,175 @@ def verify_extracted(cfg: Config, zips_dir: Path, account: str, export: str, des
         return 1
     print(f"export {export} for {account} verified on the NAS; safe to delete from Drive")
     return 0
+
+
+# --- flags (D9): partner-shared photos excluded, Locked Folder photos private -----------------------------
+
+RULE_PARTNER = "owner-rule:takeout-partner-shared"
+RULE_LOCKED = "owner-rule:takeout-locked-folder"
+_SUPPLEMENTAL = ".supplemental-metadata"
+_DUP = re.compile(r"^(.*)\((\d+)\)$")
+_EDITED = "-edited"
+
+
+def _sidecar_flags(path: Path) -> tuple[bool, bool, str | None]:
+    """(partner-shared, locked, title) from one sidecar. `fromPartnerSharing` is `{}`: key presence counts."""
+    data = json.loads(path.read_bytes())
+    if not isinstance(data, dict):
+        return False, False, None
+    origin = data.get("googlePhotosOrigin")
+    partner = isinstance(origin, dict) and "fromPartnerSharing" in origin
+    title = data.get("title") if isinstance(data.get("title"), str) else None
+    return partner, data.get("inLockedFolder") is True, title
+
+
+def _name_from_sidecar(name: str) -> tuple[str, bool]:
+    """The media name a sidecar's own name points at: `.json`, any prefix of `.supplemental-metadata` and a `(n)`
+    before `.json` removed, the `(n)` moved before the media extension. Returns (name, numbered)."""
+    base = name[:-len(".json")]
+    dup = _DUP.match(base)
+    if dup:
+        base = dup.group(1)
+    dot = base.rfind(".")
+    if dot >= 0 and len(base) - dot > 1 and _SUPPLEMENTAL.startswith(base[dot:].lower()):
+        base = base[:dot]
+    if dup:
+        stem, dot, ext = base.rpartition(".")
+        base = f"{stem}({dup.group(2)}).{ext}" if dot else f"{base}({dup.group(2)})"
+    return base, bool(dup)
+
+
+def _match(sidecar: str, title: str | None, media: dict[str, str]) -> list[str]:
+    """Media names (values of `media`, keyed by `_nkey`) a sidecar belongs to: its `title` exactly, else its own
+    name exactly, else as a prefix (Takeout truncates long names). A numbered sidecar (`...(1).json`) names a
+    numbered media file whose title is the un-numbered one, so its own name goes first."""
+    derived, numbered = _name_from_sidecar(sidecar)
+    exact = [derived, title] if numbered else [title, derived]
+    for cand in exact:
+        if cand and _nkey(cand) in media:
+            return [media[_nkey(cand)]]
+    key = _nkey(derived)
+    return sorted(v for k, v in media.items() if key and k.startswith(key))
+
+
+def _stem_key(name: str) -> str:
+    stem = name.rpartition(".")[0] or name
+    stem = _nkey(stem)
+    return stem.removesuffix(_EDITED)
+
+
+def flags(cfg: Config, account: str, export: str, dest_root: Path | None = None, workers: int = 8,
+          dry_run: bool = False, quarantine_path: Path | None = None, err=None) -> int:
+    """D9: write quarantine verdicts for partner-shared (`exclude`) and Locked Folder (`private`) media of a
+    verified export. Counts only on stdout. Returns the exit status."""
+    from shoebox import quarantine
+
+    err = err or sys.stderr
+    dest_root = Path(dest_root).expanduser() if dest_root else default_dest(cfg, account)
+    tree, mdir = dest_root / export, dest_root / f"{export}.manifest"
+    qpath = Path(quarantine_path) if quarantine_path else quarantine.QUARANTINE_PATH
+    if not dry_run:
+        check_write_location(cfg, qpath)
+    if not tree.is_dir() or not (mdir / "manifest.parquet").exists():
+        raise ValueError(f"export {export} has no verified tree and manifest under {dest_root}")
+    asset_of = {_nkey(r["path"]): r["blake3"]
+                for r in pq.read_table(mdir / "manifest.parquet", columns=["path", "blake3"]).to_pylist()}
+
+    # per directory (each zip folder its own tree, D3): media by key, sidecars
+    dirs: list[tuple[str, dict[str, str], list[str]]] = []
+    for dirpath, dirnames, filenames in os.walk(tree):
+        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DIRS]
+        rel_dir = Path(dirpath).relative_to(tree).as_posix()
+        media, sidecars = {}, []
+        for name in filenames:
+            if name in _IGNORED_FILES:
+                continue
+            if name.lower().endswith(".json"):
+                if name.lower() != "metadata.json":
+                    sidecars.append(name)
+            else:
+                media[_nkey(name)] = name
+        dirs.append((rel_dir, media, sidecars))
+
+    print(f"export {export}: reading sidecars in {len(dirs)} folder(s)", file=err)
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        futs = [(d, s, pool.submit(_sidecar_flags, tree / d / s)) for d, _m, ss in dirs for s in ss]
+        read = {}
+        unreadable = 0
+        for d, s, fut in futs:
+            try:
+                read[(d, s)] = fut.result()
+            except (OSError, ValueError):
+                unreadable += 1
+
+    want: dict[str, str] = {}  # rel path -> verdict
+    n_partner = n_locked = matched = companions = unmatched = 0
+
+    def put(rel: str, verdict: str) -> None:
+        if quarantine.RESTRICTIVENESS[verdict] > quarantine.RESTRICTIVENESS.get(want.get(rel, "include"), 0):
+            want[rel] = verdict
+
+    for d, media, sidecars in dirs:
+        prefix = "" if d == "." else f"{d}/"
+        hits: dict[str, str] = {}  # media name -> verdict
+        if any(p.casefold() == "locked folder" for p in PurePosixPath(d).parts):
+            hits.update(dict.fromkeys(media.values(), "private"))
+        for s in sidecars:
+            if (d, s) not in read:
+                continue
+            partner, locked, title = read[(d, s)]
+            if not (partner or locked):
+                continue
+            n_partner += partner
+            n_locked += locked
+            found = _match(s, title, media)
+            if not found:
+                unmatched += 1
+                continue
+            matched += len(found)
+            for name in found:
+                v = "exclude" if partner else "private"
+                if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(hits.get(name, "include"), 0):
+                    hits[name] = v
+        by_stem: dict[str, str] = {}
+        for name, v in hits.items():
+            k = _stem_key(name)
+            if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(by_stem.get(k, "include"), 0):
+                by_stem[k] = v
+        for name in media.values():
+            v = by_stem.get(_stem_key(name))
+            if v is not None:
+                companions += name not in hits
+                put(prefix + name, v)
+
+    by_asset: dict[str, str] = {}
+    not_listed = 0
+    for rel, v in want.items():
+        a = asset_of.get(_nkey(rel))
+        if a is None:
+            not_listed += 1
+            continue
+        if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(by_asset.get(a, "include"), 0):
+            by_asset[a] = v
+
+    existing = quarantine.load(qpath)
+    now = datetime.now(UTC).isoformat(timespec="seconds")
+    rows = []
+    for a, v in sorted(by_asset.items()):
+        prev = existing.get(a)
+        if prev is not None and quarantine.RESTRICTIVENESS.get(prev.get("verdict"), len(quarantine.RESTRICTIVENESS)) \
+                >= quarantine.RESTRICTIVENESS[v]:
+            continue  # an existing verdict at least as restrictive is kept; a re-run adds nothing
+        rows.append({"asset_id": a, "screen": prev.get("screen") if prev else None,
+                     "flagged_at": prev.get("flagged_at") if prev else now, "verdict": v,
+                     "verdict_by": RULE_PARTNER if v == "exclude" else RULE_LOCKED, "verdict_at": now})
+    if rows and not dry_run:
+        quarantine._append(qpath, rows)
+
+    n_ex = sum(1 for v in by_asset.values() if v == "exclude")
+    print(f"export {export}: {len(read) + unreadable} sidecars read ({unreadable} unreadable), "
+          f"{n_partner} partner-shared, {n_locked} locked; {matched} matched media, {companions} companions, "
+          f"{len(want)} flagged media files = {len(by_asset)} assets ({n_ex} exclude, {len(by_asset) - n_ex} "
+          f"private); {unmatched} unmatched flagged sidecars, {not_listed} flagged media not in the manifest")
+    print(f"{len(rows)} verdicts {'to write (dry run)' if dry_run else 'written'}")
+    return 1 if unmatched or unreadable or not_listed else 0

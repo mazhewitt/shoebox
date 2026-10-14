@@ -64,7 +64,7 @@ file whose sidecar has `fromPartnerSharing` (`exclude`) or `inLockedFolder`, or 
 directory (`private`), including same-stem companions in the same directory. It SHALL NOT delete anything.
 
 #### Scenario: Partner-shared photo
-- **WHEN** a photo's sidecar has `fromPartnerSharing: true`
+- **WHEN** a photo's sidecar has the key `googlePhotosOrigin.fromPartnerSharing` (its value is an empty object)
 - **THEN** its asset has verdict `exclude` and no stage, local or hosted, processes it
 
 #### Scenario: Locked Folder photo
