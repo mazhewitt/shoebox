@@ -28,7 +28,7 @@
   name; `(1)` duplicate numbering; `-edited` and Live Photo companions inherit; both rules → `exclude`; an existing
   more restrictive verdict kept; unmatched flagged sidecar fails; re-run appends nothing; no names on stdout. Record the
   counts in the 1.2 run note.
-- [ ] 2.1c Inventory respects `exclude` (design D9): after hashing, an asset whose latest quarantine verdict is `exclude`
+- [x] 2.1c Inventory respects `exclude` (design D9): after hashing, an asset whose latest quarantine verdict is `exclude`
   gets no decode, thumbnail statistics or EXIF, and its frame row carries `quarantine = "exclude"`. Tests: excluded
   image hashed but not decoded (decoder not called) and not passed to ExifTool; `private` and unflagged decoded; video
   likewise; resume keeps the behaviour.

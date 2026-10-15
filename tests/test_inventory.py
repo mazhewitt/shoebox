@@ -493,3 +493,72 @@ def test_readme_reports_cache_skip_counts(env):
     text = inventory_readme.render(out / "frame-2026-10-10.parquet")
     assert "| `.thumbnails` | 1 |" in text
     assert "| `iPod Photo Cache` | 1 |" in text
+
+
+# --- quarantine `exclude` (add-takeout-landing 2.1c, design D9) ------------------------------------
+
+
+def _verdicts(src: Path, by_rel: dict[str, str]) -> None:
+    from shoebox import quarantine
+
+    with quarantine.QUARANTINE_PATH.open("a") as f:
+        for rel, verdict in by_rel.items():
+            f.write(json.dumps({"asset_id": ids.asset_id(src / rel), "screen": None, "verdict": verdict}) + "\n")
+
+
+def _spy_decode_and_exif(monkeypatch):
+    decoded, exiffed = [], []
+    real_decode, real_exif = inventory.decode_thumb, inventory.exiftool_batch
+
+    def decode(data, ext, settings, path=None):
+        decoded.append(ids.bytes_id(data) if data is not None else ids.asset_id(path))
+        return real_decode(data, ext, settings, path)
+
+    def exif(paths, exe="exiftool"):
+        exiffed.extend(ids.asset_id(Path(p)) for p in paths)
+        return real_exif(paths, exe)
+
+    monkeypatch.setattr(inventory, "decode_thumb", decode)
+    monkeypatch.setattr(inventory, "exiftool_batch", exif)
+    return decoded, exiffed
+
+
+@pytest.mark.parametrize("use_tmp", [True, False])
+def test_excluded_asset_hashed_but_not_decoded_or_exiftooled(env, tmp_path, monkeypatch, use_tmp):
+    cfg, src, out = env
+    trip = "Pictures/2004 Trip"
+    _verdicts(src, {f"{trip}/IMG_0002.JPG": "exclude", "Takeout/clip.mp4": "exclude",
+                    f"{trip}/IMG_0004.jpg": "private", "Screens/Screenshot 2021-03-04 at 10.11.12.png": "include"})
+    decoded, exiffed = _spy_decode_and_exif(monkeypatch)
+    scratch = tmp_path / "scratch"
+    _run(cfg, out, **({"tmp_dir": scratch} if use_tmp else {}))
+    rows = _rows(out)
+    excl_ids = {ids.asset_id(src / f"{trip}/IMG_0002.JPG"), ids.asset_id(src / "Takeout/clip.mp4")}
+    for rel in (f"{trip}/IMG_0002.JPG", "Takeout/clip.mp4"):
+        r = rows[rel]
+        assert (r["status"], r["asset_id"], r["quarantine"]) == ("ok", ids.asset_id(src / rel), "exclude")
+        assert (r["width"], r["chroma_mean"], r["colour_guess"], r["exif"], r["make"]) == (None,) * 5
+    assert not excl_ids & set(decoded) and not excl_ids & set(exiffed)
+    for rel in (f"{trip}/IMG_0004.jpg", f"{trip}/exif.jpg", "Screens/Screenshot 2021-03-04 at 10.11.12.png"):
+        r = rows[rel]
+        assert r["quarantine"] is None and r["width"] is not None and r["exif"] is not None
+        assert r["asset_id"] in decoded and r["asset_id"] in exiffed
+    assert ids.asset_id(src / "Takeout/clip.mp4") not in exiffed
+    if use_tmp:
+        assert list(scratch.iterdir()) == []
+
+
+def test_excluded_kept_on_resume(env, monkeypatch):
+    cfg, src, out = env
+    rel = "Pictures/2004 Trip/IMG_0002.JPG"
+    _verdicts(src, {rel: "exclude"})
+    _run(cfg, out)
+    ckpt = out / "work-2026-10-10" / "records.jsonl"
+    lines = [ln for ln in ckpt.read_text().splitlines() if json.loads(ln)["relpath"] != rel]
+    ckpt.write_text("\n".join(lines) + "\n")  # the excluded file is probed again on resume
+    decoded, exiffed = _spy_decode_and_exif(monkeypatch)
+    _run(cfg, out, resume=True)
+    r = _rows(out)[rel]
+    assert (r["quarantine"], r["width"], r["exif"]) == ("exclude", None, None)
+    assert decoded == [] and exiffed == []
+    assert "quarantine" in pq.read_table(out / "frame-2026-10-10.parquet").column_names

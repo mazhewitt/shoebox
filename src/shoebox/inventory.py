@@ -32,7 +32,7 @@ import sys
 import tempfile
 import time
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Container, Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -41,7 +41,7 @@ from pathlib import Path, PurePosixPath
 import blake3
 import pyvips
 
-from shoebox import derive, ids
+from shoebox import derive, ids, quarantine
 from shoebox.config import (
     Config,
     Source,
@@ -359,7 +359,7 @@ def blank_record(f: FileStat) -> dict:
             "width": None, "height": None, "bits": None, "src_kind": SRC_KIND.get(f.ext) if f.kind in
             ("image", "video") else None, "grey": None, "chroma_mean": None, "chroma_median": None,
             "chroma_p95": None, "chromatic": None, "hue_r": None, "colour_guess": None, "taken_ts": None,
-            "exif": None}
+            "exif": None, "quarantine": None}
 
 
 def _copy_and_hash(path: Path, dst: Path, keep_max: int) -> tuple[str, bytes | None]:
@@ -382,12 +382,16 @@ def _copy_and_hash(path: Path, dst: Path, keep_max: int) -> tuple[str, bytes | N
     return h.hexdigest(), (b"".join(keep) if keep is not None else None)
 
 
-def probe(cfg: Config, f: FileStat, settings: dict, max_read: int, tmp_dir: Path | None = None) -> dict:
+def probe(cfg: Config, f: FileStat, settings: dict, max_read: int, tmp_dir: Path | None = None,
+          excluded: Container[str] = frozenset()) -> dict:
     """Read, hash and decode one file (media and Takeout sidecars only; everything else is stat only).
 
     Media is read from the source exactly once. With `tmp_dir`, that one read also writes a local
     copy (`rec["_tmp"]`) that ExifTool reads instead of the SMB original: ExifTool's many small
     reads over SMB queue behind the probes' bulk reads and ran at about one file a second.
+
+    An asset in `excluded` (quarantine verdict `exclude`, design D9) is hashed only: its local copy is
+    deleted at once and the record says `quarantine = "exclude"`, with no decode, statistics or EXIF.
     """
     rec = blank_record(f)
     if f.kind not in ("image", "video") and not (f.kind == "sidecar" and f.ext == "json"):
@@ -415,6 +419,11 @@ def probe(cfg: Config, f: FileStat, settings: dict, max_read: int, tmp_dir: Path
             data, local = path.read_bytes(), path  # read once: hash and decode from memory
             rec["asset_id"] = ids.bytes_id(data)
         rec["status"] = "ok"
+        if rec["asset_id"] in excluded:
+            rec["quarantine"] = "exclude"
+            if tmp := rec.pop("_tmp", None):
+                Path(tmp).unlink(missing_ok=True)
+            return rec
         if f.kind == "video":
             return rec
         d = decode_thumb(data, f.ext, settings, local)
@@ -559,7 +568,7 @@ def best_date(exif: dict | None, sidecar_ts: int | None, relpath: str, ext: str,
 COLUMNS = ["source", "person", "synced", "relpath", "folder", "name", "ext", "kind", "bytes", "mtime",
            "asset_id", "status", "error", "width", "height", "bits", "src_kind", "date", "date_kind", "make",
            "model", "software", "exif", "chroma_mean", "chroma_median", "chroma_p95", "chromatic", "hue_r",
-           "colour_guess", "group_id", "group_rule", "dup_n"]
+           "colour_guess", "group_id", "group_rule", "dup_n", "quarantine"]
 
 
 def schema():
@@ -603,6 +612,7 @@ def build_rows(records: list[dict], sources: dict[str, Source]) -> list[dict]:
             "chroma_p95": r.get("chroma_p95"), "chromatic": r.get("chromatic"), "hue_r": r.get("hue_r"),
             "colour_guess": r.get("colour_guess"), "group_id": None, "group_rule": None,
             "dup_n": dup[r["asset_id"]] if r.get("asset_id") else None,
+            "quarantine": r.get("quarantine"),
         })
     by_source = defaultdict(list)
     for row in rows:
@@ -728,6 +738,7 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
     todo = [f for f in files if f.key not in done]
     log(f"{len(files)} files, {len(files) - len(todo)} already recorded, {len(todo)} to do")
     settings = derive.load_profile("infer-v1")
+    excluded = frozenset(a for a, q in quarantine.load().items() if q.get("verdict") == "exclude")
     pyvips.cache_set_max(0)
     total_bytes = sum(f.bytes for f in todo if f.kind in ("image", "video"))
     stats = {"files": 0, "bytes": 0, "t0": time.monotonic(), "last": time.monotonic()}
@@ -767,7 +778,7 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
                     if f is None:
                         exhausted = True
                         break
-                    inflight.add(pool.submit(probe, sel, f, settings, opts.max_read_bytes, tmp_dir))
+                    inflight.add(pool.submit(probe, sel, f, settings, opts.max_read_bytes, tmp_dir, excluded))
                 if pending and (len(pending) >= EXIF_BATCH or not inflight):
                     job = xpool.submit(attach_exif, sel, pending, opts.exiftool)
                     exif_jobs[job] = sum(r["bytes"] for r in pending)
@@ -779,7 +790,7 @@ def run(cfg: Config, opts: Options, log: Log = _stderr) -> dict:
                     if fut in inflight:
                         inflight.discard(fut)
                         rec = fut.result()
-                        if rec["kind"] in ("image", "video") and rec["asset_id"]:
+                        if rec["kind"] in ("image", "video") and rec["asset_id"] and not rec["quarantine"]:
                             pending.append(rec)
                         else:
                             if tmp := rec.pop("_tmp", None):
