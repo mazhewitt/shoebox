@@ -37,3 +37,19 @@ left. The second pass verified the 9 zips (the other 125 re-checked by size). `t
 The two earlier attempts, `_merged-20261012T083010Z` and `_studio-partial-20261012T083010Z` (with their manifests;
 about 630 GB), were deleted on the NAS with the owner's approval on 2026-10-14. Volume free space did not change
 afterwards (852 GB), which suggests a share snapshot still holds them; the owner is to check Snapshot Replication.
+
+## Owner rulings applied (task 2.1b, 2026-10-15)
+
+`shoebox takeout flags --account owner --export 20261012T083010Z` (design D9): partner-shared photos `exclude`, Locked
+Folder photos `private`, written to `evals/quarantine.jsonl` before the first inventory.
+
+- 121,429 sidecars read (0 unreadable): 49,449 partner-shared, 96 Locked Folder.
+- 50,025 media matched directly (29,581 of the sidecars matched in another zip folder; 465 ambiguous, all candidates
+  flagged), 14,255 same-stem companions (939 of them in another zip folder: the upper bound of own photos flagged by
+  name collision), 0 unmatched flagged sidecars.
+- 63,861 media files = 63,822 assets: 63,722 `exclude`, 100 `private`. A re-run writes 0.
+- A first dry run matched within each zip folder only and left 29,581 flagged sidecars unmatched (exit 1, nothing
+  written): Google splits albums across zips without keeping sidecars with their photos, so D9 now matches across zip
+  folders.
+- Sidecar reading took about 14 h over SMB with the NAS at 2 GB RAM and about 20 min at 8 GB; the contents are cached
+  in `20261012T083010Z.manifest/sidecars.parquet`.

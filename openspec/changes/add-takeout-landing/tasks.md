@@ -23,7 +23,7 @@
 
 - [ ] 2.1 Add `[sources.takeout-owner]` to `config/shoebox.toml` (design D6). Verify with a test that hosted sends
   fail closed before its first frame.
-- [ ] 2.1b Implement `shoebox takeout flags` per design D9 and run it on the verified export before 2.2. Tests on a
+- [x] 2.1b Implement `shoebox takeout flags` per design D9 and run it on the verified export before 2.2. Tests on a
   synthetic extract: partner-shared → `exclude`, `inLockedFolder` and `Locked Folder/` → `private`; truncated sidecar
   name; `(1)` duplicate numbering; `-edited` and Live Photo companions inherit; both rules → `exclude`; an existing
   more restrictive verdict kept; unmatched flagged sidecar fails; re-run appends nothing; no names on stdout. Record the
