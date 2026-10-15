@@ -95,11 +95,17 @@ quarantine (`evals/quarantine.jsonl`) by asset ID before the first inventory of 
 restrictive verdict keeps it; the more restrictive of the two rules wins.
 
 `shoebox takeout flags --account owner --export TS [--workers N] [--dry-run]` reads every sidecar of the verified
-extract (`*.json` other than album `metadata.json`) and matches it to its media file in the same directory of the same
-zip folder: the sidecar's `title`, else its own name with `.json`, any `(n)` before `.json` (moved before the media
-extension) and any prefix of `.supplemental-metadata` removed, matched exactly and then as a prefix (Takeout truncates
-long names), NFC and case-insensitively. Every media file in that directory with the same stem as a flagged match
-(`-edited` copies, Live Photo / Motion Photo companions) gets the same flag. Asset IDs come from `manifest.parquet`. It
+extract (`*.json` other than album `metadata.json`) and matches it to its media file in the same directory (the path
+below the zip folder), first in its own zip folder and then in the others: Google splits an album across zips without
+keeping a sidecar with its photo (2026-10-15: of 121,429 sidecars, 48,059 match in their own zip, 73,367 only in
+another zip, 3 nowhere). A name found in more than one other zip flags every candidate (over-restricting is the safe
+error) and is counted as ambiguous. A match is the sidecar's `title`, else its own name with `.json`, any `(n)` before
+`.json` (moved before the media extension) and any prefix of `.supplemental-metadata` removed, exactly and then as a
+prefix (Takeout truncates long names), NFC and case-insensitively. Every media file in that directory, in any zip
+folder, with the same stem as a flagged match (`-edited` copies, Live Photo / Motion Photo companions) gets the same
+flag. The file list and asset IDs come from `manifest.parquet` (no tree walk); sidecar contents are cached in
+`<export>.manifest/sidecars.parquet` (path, partner, locked, title, unreadable) so a re-run does not re-read 121k files
+over SMB. It
 prints counts only: sidecars read, flagged per rule, matched, unmatched; a flagged sidecar that matches no media file
 fails the command (exit 1) after writing what did match, so nothing flagged is silently dropped. Re-runs add nothing
 new. The photos stay in the extract (no deletes); they are excluded from processing, not removed. When a sidecar's own name carries `(n)`, the
