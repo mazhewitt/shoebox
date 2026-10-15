@@ -113,3 +113,8 @@ name-derived `name(n).ext` is tried before `title` (the title names the un-numbe
 candidate (over-restricting is the safe error). An asset already `pending` in the content screen stays `pending`
 (more restrictive); after the owner rules on it, re-run `takeout flags` so a Locked Folder photo does not stay
 `include`. New rows carry `screen: null` (not a screen flag).
+
+The inventory respects `exclude` (owner: "leave them out entirely"): it still reads and hashes such a file (the asset ID
+is its identity, and the copy index needs it), but records no decode, thumbnail statistics or EXIF for it; the frame row
+says `quarantine = "exclude"`. `private` assets are inventoried in full (local stages are allowed). The check is by
+asset ID against the quarantine after hashing, so it applies to every source, not just the Takeout.
