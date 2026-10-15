@@ -18,3 +18,15 @@ hosted_models = ["gemini", "claude"]   # owner consent 2026-10-11: their library
 # other people's own libraries (held until the owner confirms); "Important documents" holds
 # passports, IDs, citizenship, bills and health insurance.
 held_back = ["Pictures/toren phone", "Pictures/Jude Profile", "Important documents"]
+
+[sources.takeout-owner]
+# The owner's own Google Photos export (Takeout 20261012T083010Z), extracted on the NAS one folder per zip and
+# verified (add-takeout-landing; evals/runs/2026-10-14_takeout-verify.md). Read-only by rule: a source root, so
+# Shoebox refuses writes under it. Partner-shared photos are quarantined `exclude` and Locked Folder photos
+# `private` (owner, 2026-10-14; design D9).
+root = "~/mnt/shoebox/originals/takeout/owner/20261012T083010Z"
+person = "owner"
+synced = false
+hosted_consent = true
+added = 2026-10-15
+hosted_models = ["gemini", "claude"]

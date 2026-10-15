@@ -154,3 +154,18 @@ def test_frame_without_kind_column_counts_every_row_as_image(tmp_path):
     c = cfg(tmp_path)
     write_frame(c, "2026-10-10", [("importantfiles", "a.jpg", A)])
     assert copies.load(c).unhashed == (("importantfiles", "a.jpg", A),)
+
+
+def test_repo_takeout_source_fails_closed_before_its_first_frame(tmp_path):
+    """add-takeout-landing 2.1: the registered Takeout source counts as missing (hosted sends refuse) until it has a
+    frame dated on or after its `added` date."""
+    import dataclasses
+
+    repo = config.load(config.REPO_ROOT / "config" / "shoebox.toml")
+    src = repo.sources["takeout-owner"]
+    assert (src.person, src.synced, src.hosted_consent, src.added) == ("owner", False, True, date(2026, 10, 15))
+    c = dataclasses.replace(repo, shoebox_root=tmp_path)
+    write_frame(c, "2026-10-14", [("importantfiles", "a.jpg", A), ("takeout-owner", "z/a.jpg", A)])
+    assert copies.load(c).missing == ("takeout-owner",)
+    write_frame(c, "2026-10-15", [("takeout-owner", "z/a.jpg", A)])
+    assert copies.load(c).missing == ()

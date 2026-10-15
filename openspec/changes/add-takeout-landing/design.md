@@ -47,7 +47,7 @@ but zip folders (Synology metadata and `.DS_Store` aside). Any mismatch fails th
 
 ### D6. Register and inventory
 `[sources.takeout-owner]` with `root = "~/mnt/shoebox/originals/takeout/owner/20261012T083010Z"`, person owner,
-`synced = false`, `hosted_consent = true`, `hosted_models = ["gemini", "claude"]`, `added = 2026-10-13`, and the
+`synced = false`, `hosted_consent = true`, `hosted_models = ["gemini", "claude"]`, `added = 2026-10-15` (the registration date), and the
 same never-send / held-back handling as other sources (no held-back paths unless the owner names some). The
 inventory then runs over it; `add-pipeline-foundations` D5 keeps hosted sends closed until that frame exists.
 

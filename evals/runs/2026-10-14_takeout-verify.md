@@ -35,8 +35,8 @@ left. The second pass verified the 9 zips (the other 125 re-checked by size). `t
 ## Clean-up
 
 The two earlier attempts, `_merged-20261012T083010Z` and `_studio-partial-20261012T083010Z` (with their manifests;
-about 630 GB), were deleted on the NAS with the owner's approval on 2026-10-14. Volume free space did not change
-afterwards (852 GB), which suggests a share snapshot still holds them; the owner is to check Snapshot Replication.
+about 630 GB), were deleted on the NAS with the owner's approval on 2026-10-14. Free space stayed at 852 GB until the
+NAS restarted for its RAM upgrade on 2026-10-15, then read 1.5 TB: Btrfs had not yet freed the extents, no snapshot.
 
 ## Owner rulings applied (task 2.1b, 2026-10-15)
 
