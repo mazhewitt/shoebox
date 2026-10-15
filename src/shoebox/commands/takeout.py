@@ -29,6 +29,8 @@ def register(sub) -> None:
     f.add_argument("--workers", type=int, default=8, help="concurrent sidecar reads (default 8)")
     f.add_argument("--dry-run", action="store_true", help="count only, write nothing")
     f.add_argument("--quarantine", type=Path, default=None, help="default evals/quarantine.jsonl")
+    f.add_argument("--refresh-sidecars", action="store_true",
+                   help="ignore the sidecar cache (<export>.manifest/sidecars.parquet) and re-read every sidecar")
     f.set_defaults(func=cmd_flags)
 
 
@@ -50,7 +52,8 @@ def cmd_flags(args) -> int:
     cfg = config.load(config.CONFIG_PATH)
     try:
         return takeout.flags(cfg, args.account, args.export, dest_root=args.dest, workers=args.workers,
-                             dry_run=args.dry_run, quarantine_path=args.quarantine)
+                             dry_run=args.dry_run, quarantine_path=args.quarantine,
+                             refresh_sidecars=args.refresh_sidecars)
     except ValueError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 2

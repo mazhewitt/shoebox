@@ -10,6 +10,7 @@ from shoebox import config, quarantine, takeout
 TS = "20261012T083010Z"
 Z1 = "takeout-20261012T083010Z-001"
 Z2 = "takeout-20261012T083010Z-002"
+Z3 = "takeout-20261012T083010Z-003"
 D = "Takeout/Google Photos/Photos from 2019"
 PARTNER = {"googlePhotosOrigin": {"fromPartnerSharing": {}}}
 LOCKED = {"googlePhotosOrigin": {"webUpload": {"computerUpload": {}}}, "inLockedFolder": True}
@@ -107,20 +108,88 @@ def test_duplicate_numbering(env, capsys):
     assert verdicts(q) == {ids[f"{Z1}/{D}/name(1).jpg"]: EX}
 
 
-def test_companions_inherit_same_dir_same_zip_only(env, capsys):
+def test_companions_inherit_same_dir_any_zip(env, capsys):
     cfg, q = env
     ids = build(cfg, {
         f"{Z1}/{D}/IMG_1.HEIC": b"h", f"{Z1}/{D}/IMG_1.MOV": b"v", f"{Z1}/{D}/IMG_1-edited.HEIC": b"e",
         f"{Z1}/{D}/IMG_1.HEIC.supplemental-metadata.json": side("IMG_1.HEIC", LOCKED),
         f"{Z1}/{D}/IMG_10.HEIC": b"o",
         f"{Z1}/Takeout/Google Photos/Other/IMG_1.MOV": b"elsewhere",
-        f"{Z2}/{D}/IMG_1.MOV": b"other zip",
+        f"{Z2}/{D}/IMG_1-edited.HEIC": b"other zip",
     })
     code, out = run(env, capsys)
     assert code == 0
     assert verdicts(q) == {ids[f"{Z1}/{D}/IMG_1.HEIC"]: PR, ids[f"{Z1}/{D}/IMG_1.MOV"]: PR,
-                           ids[f"{Z1}/{D}/IMG_1-edited.HEIC"]: PR}
-    assert "2 companions" in out
+                           ids[f"{Z1}/{D}/IMG_1-edited.HEIC"]: PR, ids[f"{Z2}/{D}/IMG_1-edited.HEIC"]: PR}
+    assert "3 companions (1 cross-zip companions)" in out
+
+
+def test_cross_zip_match(env, capsys):
+    cfg, q = env
+    ids = build(cfg, {f"{Z2}/{D}/IMG_P.jpg": b"p",
+                      f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER)})
+    code, out = run(env, capsys)
+    assert code == 0 and verdicts(q) == {ids[f"{Z2}/{D}/IMG_P.jpg"]: EX}
+    assert "1 sidecars matched in another zip folder, 0 ambiguous" in out
+
+
+def test_ambiguous_cross_zip_flags_every_candidate(env, capsys):
+    cfg, q = env
+    long = "B" * 40  # truncated sidecar name: prefix candidates with different stems, so not companions
+    ids = build(cfg, {f"{Z2}/{D}/{long}XA.jpg": b"p2", f"{Z3}/{D}/{long}XB.jpg": b"p3",
+                      f"{Z1}/{D}/{long}X.json": side("unrelated title", PARTNER)})
+    code, out = run(env, capsys)
+    assert code == 0
+    assert verdicts(q) == {ids[f"{Z2}/{D}/{long}XA.jpg"]: EX, ids[f"{Z3}/{D}/{long}XB.jpg"]: EX}
+    assert "1 ambiguous" in out
+
+
+def test_own_zip_match_wins(env, capsys):
+    cfg, q = env
+    ids = build(cfg, {f"{Z1}/{D}/IMG_P.jpg": b"p1", f"{Z2}/{D}/IMG_P.jpg": b"p2",
+                      f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER)})
+    code, out = run(env, capsys)
+    assert code == 0
+    # the own-zip file is the match; the same name in another zip comes in only as a cross-zip companion (D9)
+    assert verdicts(q) == {ids[f"{Z1}/{D}/IMG_P.jpg"]: EX, ids[f"{Z2}/{D}/IMG_P.jpg"]: EX}
+    assert "1 matched media (0 sidecars matched in another zip folder" in out
+    assert "1 companions (1 cross-zip companions)" in out
+
+
+def test_sidecar_cache_reused_and_refreshed(env, capsys, monkeypatch):
+    cfg, _q = env
+    build(cfg, {f"{Z1}/{D}/IMG_P.jpg": b"p",
+                f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER)})
+    assert run(env, capsys, dry_run=True)[0] == 0
+    cache = takeout.default_dest(cfg, "owner") / f"{TS}.manifest" / "sidecars.parquet"
+    assert pq.read_table(cache).to_pylist() == [
+        {"path": f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json", "partner": True, "locked": False,
+         "title": "IMG_P.jpg", "unreadable": False}]
+
+    def boom(_p):
+        raise AssertionError("sidecar re-read")
+
+    real = takeout._sidecar_flags
+    monkeypatch.setattr(takeout, "_sidecar_flags", boom)
+    code, out = run(env, capsys)
+    assert code == 0 and "1 verdicts written" in out
+    calls = []
+    monkeypatch.setattr(takeout, "_sidecar_flags", lambda p: calls.append(p) or real(p))
+    assert run(env, capsys, refresh_sidecars=True)[0] == 0
+    assert len(calls) == 1
+
+
+def test_listing_comes_from_manifest(env, capsys):
+    cfg, q = env
+    ids = build(cfg, {f"{Z1}/{D}/IMG_P.jpg": b"p",
+                      f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER)})
+    extra = tree(cfg) / Z1 / D
+    (extra / "IMG_Q.jpg").write_bytes(b"q")  # on disk, not in the manifest
+    (extra / "IMG_Q.jpg.supplemental-metadata.json").write_text(json.dumps(side("IMG_Q.jpg", PARTNER)))
+    (extra / "IMG_P.MOV").write_bytes(b"companion not in the manifest")
+    code, out = run(env, capsys)
+    assert code == 0 and verdicts(q) == {ids[f"{Z1}/{D}/IMG_P.jpg"]: EX}
+    assert "1 sidecars read" in out and "0 companions" in out
 
 
 def test_title_nfc_and_case_insensitive(env, capsys):
@@ -180,8 +249,8 @@ def test_unmatched_flagged_sidecar_fails_after_writing(env, capsys):
     ids = build(cfg, {
         f"{Z1}/{D}/IMG_P.jpg": b"p", f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER),
         f"{Z1}/{D}/GONE.jpg.supplemental-metadata.json": side("GONE.jpg", PARTNER),
-        f"{Z2}/{D}/ELSE.jpg": b"e",
-        f"{Z1}/{D}/ELSE.jpg.supplemental-metadata.json": side("ELSE.jpg", LOCKED),  # media in another zip
+        f"{Z2}/Takeout/Google Photos/Other/ELSE.jpg": b"e",
+        f"{Z1}/{D}/ELSE.jpg.supplemental-metadata.json": side("ELSE.jpg", LOCKED),  # media in another dir
         f"{Z1}/{D}/PLAIN.jpg.supplemental-metadata.json": side("PLAIN.jpg", PLAIN),  # unflagged: no matter
     })
     code, out = run(env, capsys)
@@ -213,25 +282,17 @@ def test_dry_run_writes_nothing(env, capsys):
     assert "1 verdicts to write" in out
 
 
-def test_flagged_media_missing_from_manifest_fails(env, capsys):
-    cfg, _q = env
-    build(cfg, {f"{Z1}/{D}/IMG_P.jpg": b"p",
-                f"{Z1}/{D}/IMG_P.jpg.supplemental-metadata.json": side("IMG_P.jpg", PARTNER)},
-          unlisted=(f"{Z1}/{D}/IMG_P.jpg",))
-    code, out = run(env, capsys)
-    assert code == 1 and "1 flagged media not in the manifest" in out
-
-
 def test_cli(env, monkeypatch, capsys):
     from shoebox import cli
     from shoebox.commands import takeout as cmd
 
     args = cli.build_parser().parse_args(["takeout", "flags", "--account", "owner", "--export", TS,
-                                          "--workers", "3", "--dry-run", "--quarantine", "/q.jsonl"])
+                                          "--workers", "3", "--dry-run", "--quarantine", "/q.jsonl",
+                                          "--refresh-sidecars"])
     assert args.func is cmd.cmd_flags and args.workers == 3 and args.dry_run
     seen = {}
     monkeypatch.setattr(cmd.config, "load", lambda _p: env[0])
     monkeypatch.setattr(cmd.takeout, "flags", lambda *a, **kw: seen.update(a=a, kw=kw) or 0)
     assert args.func(args) == 0
     assert seen["a"][1:] == ("owner", TS) and seen["kw"]["workers"] == 3 and seen["kw"]["dry_run"]
-    assert str(seen["kw"]["quarantine_path"]) == "/q.jsonl"
+    assert str(seen["kw"]["quarantine_path"]) == "/q.jsonl" and seen["kw"]["refresh_sidecars"]

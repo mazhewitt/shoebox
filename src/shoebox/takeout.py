@@ -603,98 +603,143 @@ def _stem_key(name: str) -> str:
     return stem.removesuffix(_EDITED)
 
 
+_SIDECAR_SCHEMA = pa.schema([("path", pa.string()), ("partner", pa.bool_()), ("locked", pa.bool_()),
+                             ("title", pa.string()), ("unreadable", pa.bool_())])
+
+
+def _read_sidecars(tree: Path, mdir: Path, paths: list[str], workers: int, refresh: bool, err) -> dict[str, tuple]:
+    """`{path: (partner, locked, title) or None if unreadable}` for every sidecar path. Contents come from the cache
+    `sidecars.parquet` where present (unless `refresh`); only paths missing from it, or unreadable last time, are
+    read (on a thread pool: the tree is on SMB). The cache is rewritten when anything was read."""
+    cache = mdir / "sidecars.parquet"
+    known: dict[str, tuple | None] = {}
+    if cache.exists() and not refresh:
+        for r in pq.read_table(cache).to_pylist():
+            known[r["path"]] = None if r["unreadable"] else (r["partner"], r["locked"], r["title"])
+    todo = [p for p in paths if known.get(p) is None]
+    if todo:
+        print(f"reading {len(todo)} sidecar(s) ({len(paths) - len(todo)} cached)", file=err)
+        with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+            futs = [(p, pool.submit(_sidecar_flags, tree / p)) for p in todo]
+            for p, fut in futs:
+                try:
+                    known[p] = fut.result()
+                except (OSError, ValueError):
+                    known[p] = None
+        rows = sorted(known.items())
+        table = pa.table({"path": [p for p, _ in rows], "partner": [bool(v and v[0]) for _, v in rows],
+                          "locked": [bool(v and v[1]) for _, v in rows], "title": [v[2] if v else None for _, v in rows],
+                          "unreadable": [v is None for _, v in rows]}, schema=_SIDECAR_SCHEMA)
+        tmp = mdir / "sidecars.parquet.tmp"
+        pq.write_table(table, tmp)
+        os.replace(tmp, cache)
+    return {p: known[p] for p in paths}
+
+
 def flags(cfg: Config, account: str, export: str, dest_root: Path | None = None, workers: int = 8,
-          dry_run: bool = False, quarantine_path: Path | None = None, err=None) -> int:
+          dry_run: bool = False, quarantine_path: Path | None = None, refresh_sidecars: bool = False,
+          err=None) -> int:
     """D9: write quarantine verdicts for partner-shared (`exclude`) and Locked Folder (`private`) media of a
-    verified export. Counts only on stdout. Returns the exit status."""
+    verified export. The file list and asset IDs come from `manifest.parquet`. A sidecar is matched first in its
+    own zip folder, then in the same directory of every other zip folder (Google splits albums across zips);
+    companions are matched by stem in that directory in any zip folder. Sidecar contents are cached in
+    `<export>.manifest/sidecars.parquet`, written even on `dry_run`: it is a read cache, not a verdict.
+    Counts only on stdout. Returns the exit status."""
     from shoebox import quarantine
 
+    rank = quarantine.RESTRICTIVENESS
     err = err or sys.stderr
     dest_root = Path(dest_root).expanduser() if dest_root else default_dest(cfg, account)
     tree, mdir = dest_root / export, dest_root / f"{export}.manifest"
     qpath = Path(quarantine_path) if quarantine_path else quarantine.QUARANTINE_PATH
+    check_write_location(cfg, mdir)
     if not dry_run:
         check_write_location(cfg, qpath)
-    if not tree.is_dir() or not (mdir / "manifest.parquet").exists():
-        raise ValueError(f"export {export} has no verified tree and manifest under {dest_root}")
-    asset_of = {_nkey(r["path"]): r["blake3"]
-                for r in pq.read_table(mdir / "manifest.parquet", columns=["path", "blake3"]).to_pylist()}
+    if not (mdir / "manifest.parquet").exists():
+        raise ValueError(f"export {export} has no manifest under {dest_root}")
 
-    # per directory (each zip folder its own tree, D3): media by key, sidecars
-    dirs: list[tuple[str, dict[str, str], list[str]]] = []
-    for dirpath, dirnames, filenames in os.walk(tree):
-        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DIRS]
-        rel_dir = Path(dirpath).relative_to(tree).as_posix()
-        media, sidecars = {}, []
-        for name in filenames:
-            if name in _IGNORED_FILES:
-                continue
-            if name.lower().endswith(".json"):
-                if name.lower() != "metadata.json":
-                    sidecars.append(name)
-            else:
-                media[_nkey(name)] = name
-        dirs.append((rel_dir, media, sidecars))
+    # rel dir key -> zip folder -> (media by name key -> path, sidecars [(name, path)]); asset id by path
+    dirs: dict[str, dict[str, tuple[dict[str, str], list[tuple[str, str]]]]] = {}
+    rel_dirs: dict[str, str] = {}
+    asset_of: dict[str, str] = {}
+    for r in pq.read_table(mdir / "manifest.parquet", columns=["path", "blake3"]).to_pylist():
+        path = r["path"]
+        if _ignored(path):
+            continue
+        parts = PurePosixPath(path).parts
+        if len(parts) < 2:
+            continue
+        zf, rel_dir, name = parts[0], "/".join(parts[1:-1]), parts[-1]
+        asset_of[path] = r["blake3"]
+        rel_dirs.setdefault(_nkey(rel_dir), rel_dir)
+        media, sidecars = dirs.setdefault(_nkey(rel_dir), {}).setdefault(zf, ({}, []))
+        if name.lower().endswith(".json"):
+            if name.lower() != "metadata.json":
+                sidecars.append((name, path))
+        else:
+            media[_nkey(name)] = path
 
-    print(f"export {export}: reading sidecars in {len(dirs)} folder(s)", file=err)
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        futs = [(d, s, pool.submit(_sidecar_flags, tree / d / s)) for d, _m, ss in dirs for s in ss]
-        read = {}
-        unreadable = 0
-        for d, s, fut in futs:
-            try:
-                read[(d, s)] = fut.result()
-            except (OSError, ValueError):
-                unreadable += 1
+    side_paths = sorted(p for zips in dirs.values() for _m, ss in zips.values() for _n, p in ss)
+    if side_paths and not tree.is_dir():
+        raise ValueError(f"the extracted tree of export {export} does not exist: {tree}")
+    read = _read_sidecars(tree, mdir, side_paths, workers, refresh_sidecars, err)
+    unreadable = sum(1 for v in read.values() if v is None)
 
-    want: dict[str, str] = {}  # rel path -> verdict
-    n_partner = n_locked = matched = companions = unmatched = 0
+    def stronger(v: str, old: str | None) -> bool:
+        return rank[v] > rank.get(old or "include", 0)
 
-    def put(rel: str, verdict: str) -> None:
-        if quarantine.RESTRICTIVENESS[verdict] > quarantine.RESTRICTIVENESS.get(want.get(rel, "include"), 0):
-            want[rel] = verdict
-
-    for d, media, sidecars in dirs:
-        prefix = "" if d == "." else f"{d}/"
-        hits: dict[str, str] = {}  # media name -> verdict
-        if any(p.casefold() == "locked folder" for p in PurePosixPath(d).parts):
-            hits.update(dict.fromkeys(media.values(), "private"))
-        for s in sidecars:
-            if (d, s) not in read:
-                continue
-            partner, locked, title = read[(d, s)]
-            if not (partner or locked):
-                continue
-            n_partner += partner
-            n_locked += locked
-            found = _match(s, title, media)
-            if not found:
-                unmatched += 1
-                continue
-            matched += len(found)
-            for name in found:
+    want: dict[str, str] = {}  # path -> verdict
+    n_partner = n_locked = matched = cross = ambiguous = companions = cross_companions = unmatched = 0
+    for dkey, zips in dirs.items():
+        names = {z: {k: PurePosixPath(p).name for k, p in media.items()} for z, (media, _s) in zips.items()}
+        hits: dict[str, str] = {}  # path -> verdict
+        if any(c.casefold() == "locked folder" for c in PurePosixPath(rel_dirs[dkey]).parts):
+            for media, _s in zips.values():
+                hits.update(dict.fromkeys(media.values(), "private"))
+        for z, (_media, sidecars) in zips.items():
+            for s, sp in sidecars:
+                got = read.get(sp)
+                if not got or not (got[0] or got[1]):
+                    continue
+                partner, locked, title = got
+                n_partner += partner
+                n_locked += locked
+                found = [zips[z][0][_nkey(n)] for n in _match(s, title, names[z])]
+                if not found:
+                    others = {o: [zips[o][0][_nkey(n)] for n in _match(s, title, names[o])]
+                              for o in sorted(zips) if o != z}
+                    others = {o: f for o, f in others.items() if f}
+                    if not others:
+                        unmatched += 1
+                        continue
+                    cross += 1
+                    ambiguous += len(others) > 1
+                    found = [p for f in others.values() for p in f]
+                matched += len(found)
                 v = "exclude" if partner else "private"
-                if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(hits.get(name, "include"), 0):
-                    hits[name] = v
-        by_stem: dict[str, str] = {}
-        for name, v in hits.items():
-            k = _stem_key(name)
-            if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(by_stem.get(k, "include"), 0):
-                by_stem[k] = v
-        for name in media.values():
-            v = by_stem.get(_stem_key(name))
-            if v is not None:
-                companions += name not in hits
-                put(prefix + name, v)
+                for p in found:
+                    if stronger(v, hits.get(p)):
+                        hits[p] = v
+        by_stem: dict[str, tuple[str, set[str]]] = {}  # stem key -> (verdict, zip folders of the hits)
+        for p, v in hits.items():
+            k = _stem_key(PurePosixPath(p).name)
+            old, zs = by_stem.get(k, (None, set()))
+            by_stem[k] = (v if stronger(v, old) else old, zs | {PurePosixPath(p).parts[0]})
+        for z, (media, _s) in zips.items():
+            for p in media.values():
+                hit = by_stem.get(_stem_key(PurePosixPath(p).name))
+                if hit is None:
+                    continue
+                if p not in hits:
+                    companions += 1
+                    cross_companions += z not in hit[1]
+                if stronger(hit[0], want.get(p)):
+                    want[p] = hit[0]
 
     by_asset: dict[str, str] = {}
-    not_listed = 0
-    for rel, v in want.items():
-        a = asset_of.get(_nkey(rel))
-        if a is None:
-            not_listed += 1
-            continue
-        if quarantine.RESTRICTIVENESS[v] > quarantine.RESTRICTIVENESS.get(by_asset.get(a, "include"), 0):
+    for p, v in want.items():
+        a = asset_of[p]
+        if stronger(v, by_asset.get(a)):
             by_asset[a] = v
 
     existing = quarantine.load(qpath)
@@ -702,8 +747,7 @@ def flags(cfg: Config, account: str, export: str, dest_root: Path | None = None,
     rows = []
     for a, v in sorted(by_asset.items()):
         prev = existing.get(a)
-        if prev is not None and quarantine.RESTRICTIVENESS.get(prev.get("verdict"), len(quarantine.RESTRICTIVENESS)) \
-                >= quarantine.RESTRICTIVENESS[v]:
+        if prev is not None and rank.get(prev.get("verdict"), len(rank)) >= rank[v]:
             continue  # an existing verdict at least as restrictive is kept; a re-run adds nothing
         rows.append({"asset_id": a, "screen": prev.get("screen") if prev else None,
                      "flagged_at": prev.get("flagged_at") if prev else now, "verdict": v,
@@ -712,9 +756,10 @@ def flags(cfg: Config, account: str, export: str, dest_root: Path | None = None,
         quarantine._append(qpath, rows)
 
     n_ex = sum(1 for v in by_asset.values() if v == "exclude")
-    print(f"export {export}: {len(read) + unreadable} sidecars read ({unreadable} unreadable), "
-          f"{n_partner} partner-shared, {n_locked} locked; {matched} matched media, {companions} companions, "
+    print(f"export {export}: {len(read)} sidecars read ({unreadable} unreadable), {n_partner} partner-shared, "
+          f"{n_locked} locked; {matched} matched media ({cross} sidecars matched in another zip folder, "
+          f"{ambiguous} ambiguous), {companions} companions ({cross_companions} cross-zip companions), "
           f"{len(want)} flagged media files = {len(by_asset)} assets ({n_ex} exclude, {len(by_asset) - n_ex} "
-          f"private); {unmatched} unmatched flagged sidecars, {not_listed} flagged media not in the manifest")
+          f"private); {unmatched} unmatched flagged sidecars")
     print(f"{len(rows)} verdicts {'to write (dry run)' if dry_run else 'written'}")
-    return 1 if unmatched or unreadable or not_listed else 0
+    return 1 if unmatched or unreadable else 0
