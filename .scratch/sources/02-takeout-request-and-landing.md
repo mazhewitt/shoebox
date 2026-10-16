@@ -43,3 +43,10 @@ Reporter: claude (build-planning session)
 - Should the zips be deleted after verification, or kept until the next export? PLAN.md §2 deletes them only after a verified extract.
 
 ## Comments
+
+- 2026-10-16 (claude, `add-takeout-landing`): the owner's export `20261012T083010Z` is landed and verified. It has
+  134/134 zips, 568.9 GB of zips (569.7 GB extracted) and 263,065 files, with 0 size, CRC or reconcile mismatches
+  after the non-ASCII name repair. Extracted on the NAS one folder per zip; Shoebox deleted no zips (decision 29 is
+  the owner's). Source `takeout-owner` is registered (`hosted_consent = true`, `hosted_models = ["gemini", "claude"]`)
+  and inventoried. Details: `evals/runs/2026-10-14_takeout-verify.md`, `evals/runs/2026-10-16_takeout-inventory.md`.
+  Commits `1bd7a99`, `a0c40da`, `455f558`. Still open: Jude's export, and the backup-quality record per account.

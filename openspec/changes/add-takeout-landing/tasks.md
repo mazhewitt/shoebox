@@ -32,12 +32,12 @@
   gets no decode, thumbnail statistics or EXIF, and its frame row carries `quarantine = "exclude"`. Tests: excluded
   image hashed but not decoded (decoder not called) and not passed to ExifTool; `private` and unflagged decoded; video
   likewise; resume keeps the behaviour.
-- [ ] 2.2 Run `shoebox inventory --sources takeout-owner`. Record the frame counts, sidecar count and skip counts in
+- [x] 2.2 Run `shoebox inventory --sources takeout-owner`. Record the frame counts, sidecar count and skip counts in
   `evals/runs/` (counts only).
-- [ ] 2.3 Overlap with ImportantFiles: assets in both sources by exact BLAKE3, and the share of the Takeout's image
+- [x] 2.3 Overlap with ImportantFiles: assets in both sources by exact BLAKE3, and the share of the Takeout's image
   assets already present, in `evals/runs/` (counts only). Same-pixel overlap follows once the Takeout is derived.
 
 ## 3. Close-out
 
-- [ ] 3.1 Update `.scratch/sources/02` and `07` comments (export size, account, verify result) and the README queue.
+- [x] 3.1 Update `.scratch/sources/02` and `07` comments (export size, account, verify result) and the README queue.
   Verify `openspec validate add-takeout-landing --strict` passes.

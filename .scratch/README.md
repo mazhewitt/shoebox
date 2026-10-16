@@ -67,7 +67,7 @@ Each directory has a `README.md` that orders its issues and names the gate each 
 
 **Owner actions** (`ready-for-human` / `needs-info`):
 - **DSM:** read-only access to the other shares (`sources/01`).
-- **Takeout (most urgent: it is the long pole before the price deadline):** check backup quality, request both accounts' exports and ask Jude about consent (`sources/07`), then set up scheduled Takeout (`ingest/03`).
+- **Takeout (most urgent: it is the long pole before the price deadline):** the owner's export is landed, verified and inventoried (2026-10-16). Still open: Jude's export and consent, the backup quality per account, and a ruling on 74 partner-shared assets that also sit in ImportantFiles (`sources/07`). Then set up scheduled Takeout (`ingest/03`).
 - **Backups:** private git remote (`ops/01`); check the NAS backup job's scope (`ops/03`).
 - **Ollama:** confirm what uses each Ollama on the LAN before binding it to localhost (`ops/04`).
 - **Filenames:** examples of your scan-naming conventions (`catalogue/04`).

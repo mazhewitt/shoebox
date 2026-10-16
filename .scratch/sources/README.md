@@ -5,7 +5,7 @@
 - one Google Takeout per account, landed and verified;
 - a single mirror of the Drive scan folder.
 
-Each source names its person and their hosted-processing consent. Skip rules keep caches and junk out. A complete inventory across all of them closes **Gate A**. Today only `importantfiles` is configured (`config/shoebox.toml`); its frame (`~/mnt/shoebox/frame/frame-2026-10-10.parquet`) has:
+Each source names its person and their hosted-processing consent. Skip rules keep caches and junk out. A complete inventory across all of them closes **Gate A**. `importantfiles` and `takeout-owner` are configured (`config/shoebox.toml`). The Takeout's frame is `frame-2026-10-15.parquet` (263,065 files; `evals/runs/2026-10-16_takeout-inventory.md`). The ImportantFiles frame (`~/mnt/shoebox/frame/frame-2026-10-10.parquet`) has:
 - 80,497 files;
 - 71,622 images, of which 52,481 are unique asset_ids;
 - 1,905 videos;

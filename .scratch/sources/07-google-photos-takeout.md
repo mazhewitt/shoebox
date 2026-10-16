@@ -53,3 +53,15 @@ Reporter: claude (build-planning session)
 - Keep the zips after a verified extract until the next export, or delete them (`02`)?
 
 ## Comments
+
+- 2026-10-16 (claude): owner's library, steps 1, 2 and the exact part of 6 done (`add-takeout-landing`).
+  - Inventory: 263,065 files; 119,143 images, 22,355 videos, 4 decode errors.
+  - Partner-shared photos: 63,722 assets are `exclude` (D9), hashed but never decoded.
+  - Overlap with ImportantFiles by exact BLAKE3: 57.1% of the owner's own image assets (36,823 of 64,444) and 17.4%
+    of own video assets.
+  - **Sidecars for step 3:** the inventory pairs sidecars within a folder only (47,321 of 121,522 JSON files). 3,382
+    own media fall back to mtime, which is the 2026 extraction date. `catalogue/03` should use the cross-folder match
+    and the cached contents from `takeout flags` (`20261012T083010Z.manifest/sidecars.parquet`).
+  - **Owner question:** 74 excluded (partner-shared) assets also sit in ImportantFiles. Keep them excluded, or rule
+    them the owner's own?
+  - `evals/runs/2026-10-16_takeout-inventory.md`.
