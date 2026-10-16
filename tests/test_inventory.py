@@ -415,6 +415,16 @@ def test_exiftool_reads_local_copies_and_cleans_them(env, tmp_path, monkeypatch)
     assert row["asset_id"] == ids.asset_id(trip / "exif.jpg")
 
 
+def test_local_copies_leave_no_open_descriptors(env, tmp_path):
+    """A deleted local copy whose descriptor stays open keeps its disk space until the process exits: the
+    2026-10-15 Takeout run filled the disk that way (ENOSPC on 13,959 files)."""
+    cfg, _src, out = env
+    fds = lambda: len(os.listdir("/dev/fd"))
+    before = fds()
+    _run(cfg, out, tmp_dir=tmp_path / "scratch")
+    assert fds() == before
+
+
 def test_jpeg_named_nef_probed_as_jpeg_and_retry_errors(env, monkeypatch):
     """A JPEG with a .NEF name decodes as JPEG; --retry-errors re-probes only error records."""
     cfg, src, out = env

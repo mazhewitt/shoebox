@@ -407,7 +407,9 @@ def probe(cfg: Config, f: FileStat, settings: dict, max_read: int, tmp_dir: Path
             rec["taken_ts"] = int(ts) if ts not in (None, "") else None
             return rec
         if tmp_dir is not None:
-            tmp = Path(tempfile.mkstemp(dir=tmp_dir, suffix="." + (f.ext or "bin"))[1])
+            fd, name = tempfile.mkstemp(dir=tmp_dir, suffix="." + (f.ext or "bin"))
+            os.close(fd)  # an open descriptor keeps the deleted copy's disk space until the process exits
+            tmp = Path(name)
             rec["_tmp"] = str(tmp)
             keep = -1 if f.kind == "video" else max_read
             rec["asset_id"], data = _copy_and_hash(path, tmp, keep)
